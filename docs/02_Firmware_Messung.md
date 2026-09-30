@@ -17,7 +17,7 @@ vollständig, unabhängig von der Telegrammrate.
 - Neuer Parameter `ROLL_REV_EDGES` (= Inkremente je Umdrehung, z.B. 100). 0 = bisheriges Verfahren.
 - Liegt eine Umdrehung weiter zurück als `MAX_AVG_SPAN_MS` (sehr langsame Rolle), auf das bisherige
   Verfahren zurückfallen.
-- Wirkt wie ein gleitender Mittelwert über eine Umdrehung (bei 700 1/min: 86 ms). In SimpleDyno/LabVIEW
+- Wirkt wie ein gleitender Mittelwert über eine Umdrehung (bei 700 1/min: 86 ms). In PyST/LabVIEW
   kann MA dann kleiner werden.
 - **Test:** Host-Test mit künstlichem Teilungsfehler (z.B. ±2 % je Strich): Ergebnis muss konstant sein.
 
@@ -50,7 +50,7 @@ PA0 ist gleichzeitig TIM2_CH1 und **ADC1_IN0**; TIM2 kann auf **beide Flanken** 
 - **Abtastmodus:** ADC1 mit DMA auf PA0, ~1 MS/s, 20 ms Fenster, Start auf Flanke → Signal nach dem
   Optokoppler als Kurve (zeigt Prellen, Flankensteilheit, Störimpulse). Das analoge Zündsignal vor der
   Aufbereitung braucht dafür einen eigenen Eingang (Schritt 4).
-- In SimpleDyno: Reiter „Signal“ mit Anzeige, Speichern als CSV.
+- In PyST: Reiter „Signal“ mit Anzeige, Speichern als CSV.
 
 ## 2.4 Laufzeit-Einstellungen statt Neu-Flashen
 

@@ -7,7 +7,7 @@ rusEFI-Anbindung und später eine aktiv geregelte Wirbelstrombremse (WSB).
 |---|---|---|---|
 | 1 | [Vergleichstest und Zündsignal-Diagnose](01_Test_und_Zuendsignal.md) | Prüfstand | vorbereitet |
 | 2 | [Messverfahren in der Firmware verbessern (jetzige Hardware)](02_Firmware_Messung.md) | `PST-STM32-Firmware` | geplant |
-| 3 | [Binärprotokoll v2 mit Kanalbeschreibung](03_Protokoll_v2.md) | Firmware + `PST-SimpleDyno` | geplant |
+| 3 | [Binärprotokoll v2 mit Kanalbeschreibung](03_Protokoll_v2.md) | Firmware + `PyST` | geplant |
 | 4 | [Neue Messplatine (v3)](04_Hardware_Platine_v3.md) | Hardware | Konzept |
 | 5 | [CAN-Sensormodule und WSB-Leistungsteil – Vorbereitung](05_Vorbereitung_CAN_Module_WSB.md) | neues Projekt | Schnittstellen festlegen |
 | 5a | [Zahnriementrieb Rolle → Schenck W130](05a_Zahnriemen_Rolle_W130.md) | Mechanik | Vorauslegung |
@@ -18,7 +18,7 @@ rusEFI-Anbindung und später eine aktiv geregelte Wirbelstrombremse (WSB).
   STM-LabVIEW 0.2.0 automatisch, exakte Perioden-Messung (11 ns), Sperrzeit und Doppelimpulsfilter,
   Autostopp, Watchdog, BME280/BMP280, 2× MAX6675. Zwei Varianten: Standard (Doppelimpulsfilter 25 %)
   und `nucleo_f446re_dp70` (70 %). Host-Tests für Frequenzberechnung und Protokoll.
-- **SimpleDyno** (Python/Qt, Mac/Linux/Windows): rechnet nachweislich wie LabVIEW 3.2.1 (6 echte Läufe:
+- **PyST** (Python/Qt, Mac/Linux/Windows): rechnet nachweislich wie LabVIEW 3.2.1 (6 echte Läufe:
   gleiche Pmax auf 0,1 PS, gleiche n(Pmax)), Datenbank für Fahrzeuge/Setups/Läufe, Auswerter wie
   MegaLogViewer, Setup-Vergleich, PDF/CSV, Import von LabVIEW-XML, Simulator mit echtem Lauf 161802.
 

@@ -1,6 +1,6 @@
 # Schritt 3 – Binärprotokoll v2
 
-Ersetzt für SimpleDyno das ASCII-Mega-Protokoll. Die Firmware bleibt LabVIEW-kompatibel: nach dem
+Ersetzt für PyST das ASCII-Mega-Protokoll. Die Firmware bleibt LabVIEW-kompatibel: nach dem
 Start spricht sie das Mega-Protokoll und schaltet erst auf v2 um, wenn sie ein gültiges v2-Paket
 (`HELLO`) empfängt.
 
@@ -95,6 +95,6 @@ USB direkt (Full Speed, CDC): ~800 kB/s → Reserve für alles.
 ## Umsetzung
 
 1. Firmware: `src/proto_v2.c` (COBS, CRC, Pakete), Kanaltabelle, Umschaltung nach `HELLO`.
-2. SimpleDyno: `link_v2.py`, Kanäle aus `CHANNEL_DESC` → `channels.py` (Rohdaten-Spalten automatisch).
+2. PyST: `link_v2.py`, Kanäle aus `CHANNEL_DESC` → `channels.py` (Rohdaten-Spalten automatisch).
 3. Host-Test: Firmware-Protokoll gegen Python-Decoder (wie `test/check_protocol.py`).
 4. Baudrate auf 921600 anheben (ST-LINK), danach USB direkt (Schritt 4).

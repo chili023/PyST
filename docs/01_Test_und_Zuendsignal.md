@@ -1,7 +1,7 @@
 # Schritt 1 – Vergleichstest und Zündsignal-Diagnose
 
-Ablauf der Vergleichsmessung (alt/neu, LabVIEW/SimpleDyno): siehe
-[`PST-SimpleDyno/TESTPLAN.md`](../PST-SimpleDyno/TESTPLAN.md). Hier zusätzlich: was wir über das
+Ablauf der Vergleichsmessung (alt/neu, LabVIEW/PyST): siehe
+[`PyST/TESTPLAN.md`](../PyST/TESTPLAN.md). Hier zusätzlich: was wir über das
 Zündsignal herausfinden wollen und welche Daten wir danach brauchen.
 
 ## Ausgangslage
@@ -17,7 +17,7 @@ Signalform (Überschwinger/Nachschwingen) im Zusammenspiel mit der Schaltschwell
 ### Vorher
 - [ ] Aktuelle Firmware sichern: `st-flash --connect-under-reset read ~/pst_firmware_backup_alt.bin 0x08000000 0x80000`
 - [ ] Beide Firmware-Varianten gebaut: `pio run` (Standard) und `pio run -e nucleo_f446re_dp70`
-- [ ] SimpleDyno auf dem Mac startet, Simulator-Lauf funktioniert
+- [ ] PyST auf dem Mac startet, Simulator-Lauf funktioniert
 - [ ] Oszilloskop (wenn vorhanden), Tastkopf 10:1
 
 ### Messungen zum Zündsignal
@@ -35,7 +35,7 @@ Signalform (Überschwinger/Nachschwingen) im Zusammenspiel mit der Schaltschwell
    geschirmte Leitung → ändert sich der Anteil der Störimpulse?
 
 ### Mitbringen
-- alle LabVIEW-XML (Test A, B1, B2) und SimpleDyno-Ordner (Test C)
+- alle LabVIEW-XML (Test A, B1, B2) und PyST-Ordner (Test C)
 - Fotos/Screenshots vom Oszilloskop, Notizen zu Abgriff und Leitungsführung
 - Ausgabe von `v` für beide Firmware-Varianten
 
