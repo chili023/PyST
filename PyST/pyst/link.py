@@ -57,6 +57,32 @@ def list_serial_ports() -> List[Tuple[str, str]]:
     return ports
 
 
+# USB-Kennungen, unter denen das PST-Messboard auftaucht (fuer das automatische Verbinden)
+PST_USB_IDS = {
+    (0x0483, 0x374B), (0x0483, 0x374E), (0x0483, 0x374F), (0x0483, 0x3752), (0x0483, 0x3748),  # ST-Link (Nucleo)
+}
+PST_USB_VENDORS = {0x2341, 0x2A03}                                  # Arduino (Mega)
+
+
+def pst_board_ports() -> List[str]:
+    """Nur Ports, die nach USB-Kennung das PST-Messboard sein koennen (ST-Link des Nucleo, Arduino Mega)."""
+    if not list_ports:
+        return []
+    out = []
+    for p in list_ports.comports():
+        text = f"{p.manufacturer or ''} {p.product or ''} {p.description or ''}".lower()
+        if "rusefi" in text:
+            continue
+        if (p.vid, p.pid) in PST_USB_IDS or p.vid in PST_USB_VENDORS:
+            out.append(p.device)
+    return out
+
+
+def is_pst_firmware(info: str) -> bool:
+    """Antwort auf 'v': PST-STM32-Firmware oder Arduino-Mega-Sketch 3.x."""
+    return "PST-STM32" in info or info.lstrip().startswith("Version 3") or "\nVersion 3" in info
+
+
 def guess_port() -> Optional[str]:
     for dev, desc in list_serial_ports()[1:]:
         t = f"{dev} {desc}".lower()

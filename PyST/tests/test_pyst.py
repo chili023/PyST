@@ -275,3 +275,34 @@ class Rusefi(unittest.TestCase):
         out = rusefi.resample(snap, np.array([0.5, 1.5, 1.9, 2.5]))
         np.testing.assert_allclose(out["rusefi_a"], [np.nan, 5.0, 9.0, np.nan])
         np.testing.assert_allclose(out["rusefi_b"], [np.nan, 1.0, 1.0, np.nan])
+
+
+class GuiSmoke(unittest.TestCase):
+    """Hauptfenster startet (offscreen, eigener Datenordner) und die Kern-Aktionen sind vorhanden."""
+
+    def test_main_window(self):
+        with tempfile.TemporaryDirectory() as home:
+            old = {k: os.environ.get(k) for k in ("HOME", "QT_QPA_PLATFORM")}
+            os.environ["HOME"] = home
+            os.environ["QT_QPA_PLATFORM"] = "offscreen"
+            try:
+                from PySide6 import QtWidgets
+                app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+                import importlib
+                from pyst import gui
+                importlib.reload(gui)                      # Einstellungsdatei im Test-Ordner
+                w = gui.MainWindow()
+                for name in ("on_connect", "on_start", "on_abort", "on_replay", "on_climate", "on_measure_ratio",
+                             "on_import", "on_pdf", "on_csv", "_auto_connect"):
+                    self.assertTrue(callable(getattr(w, name, None)), name)
+                w.page_settings.port_combo.setEditText("SIM")
+                self.assertTrue(w.on_connect())
+                self.assertTrue(gui.is_pst_firmware(w.firmware))
+                w.close()
+                app.processEvents()
+            finally:
+                for k, v in old.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v

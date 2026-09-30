@@ -17,7 +17,8 @@ from . import physics, report, storage
 from .channels import lambda_from_afr, run_channels
 from .db import SETUP_SUMMARY_KEYS, VEHICLE_FIELDS, Database, base_dir, field_label
 from .dialogs import FieldForm, SetupForm
-from .link import DEFAULT_SIM_PORT, SIM_PORT, DynoLink, guess_port, list_serial_ports
+from .link import (DEFAULT_SIM_PORT, SIM_PORT, DynoLink, guess_port, is_pst_firmware, list_serial_ports,
+                   pst_board_ports)
 from .ratio_dialog import RatioDialog
 from .plots import EXTRA_PREFIX, LOWER_DEFAULT, MAX_LOWER, MAX_OVERLAYS, DynoPlot, fmt_value, run_color
 from .rusefi import COLUMN_PREFIX
@@ -1457,12 +1458,22 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if not self.page_settings.auto_connect.isChecked() or getattr(self, "_manual_off", False):
             return
-        port = guess_port()
-        if port and self._auto_failed.get(port, 0.0) < time.time():
-            if self.on_connect(port, quiet=True):
+        present = set(pst_board_ports())
+        # abgezogene Ports duerfen beim naechsten Anstecken wieder probiert werden
+        self._auto_failed = {p: t for p, t in self._auto_failed.items() if p in present}
+        for port in sorted(present):
+            if port in self._auto_failed:
+                continue
+            if not self.on_connect(port, quiet=True):
+                self._auto_failed[port] = time.time()
+                continue
+            if is_pst_firmware(self.firmware):
                 self._set_status("Messboard automatisch verbunden – START drücken (F1)", "#dddddd")
-            else:
-                self._auto_failed[port] = time.time() + 30.0      # nicht dauernd probieren
+                return
+            # anderes Geraet (oder alte Firmware ohne Kennung): wieder trennen, bis zum Abziehen in Ruhe lassen
+            self.on_connect(lost=True)
+            self._set_status("Nicht verbunden – „Verbinden“ drücken", "#dddddd")
+            self._auto_failed[port] = time.time()
 
     def on_replay(self, path: str = ""):
         if not path:
