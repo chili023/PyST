@@ -1,4 +1,4 @@
-# PyST
+# PyST 1.1
 
 Einfaches Prüfstandsprogramm zum Testen der neuen PST-STM32-Firmware – ohne Windows und ohne LabVIEW.
 Läuft auf **Mac**, **Linux/Raspberry Pi** (und Windows).
@@ -6,7 +6,8 @@ Läuft auf **Mac**, **Linux/Raspberry Pi** (und Windows).
 - steuert die Messelektronik: Klima lesen (`e`), Messung starten (`m`) und stoppen (`s`)
 - Lauf mit **fester Übersetzung**, Start bei *n vom Gas*, Ende bei **n Stop** (z.B. 8000 1/min) oder beim Gaswegnehmen
 - Prüfstandsdaten: Rollengeber, Rollenumfang, Trägheit, Zündimpulse, Filter, Verlustmoment
-- Übersetzung optional aus dem Zündsignal messen (5 s, getrimmter Mittelwert wie LabVIEW)
+- Übersetzung einmessen aus Zündsignal oder rusEFI-Drehzahl (Verlauf, getrimmter Mittelwert, von Hand anpassbar)
+- **rusEFI-Steuergerät** als zweite Datenquelle (Reiter „ECU“), Kanäle frei wählbar und mit jedem Lauf gespeichert
 - Live-Anzeige (Motor berechnet und gemessen, km/h, Messfrequenz, verlorene Telegramme), Live-Kurve
 - **Rechnet exakt wie LabVIEW 3.2.1.** Geprüft an sechs echten Läufen vom 26.05.26: gleiche Pmax auf 0,1 PS, gleiche n(Pmax).
 - Speichert jeden Lauf als CSV, JSON, PNG und **LabVIEW-XML** (öffnet in LabVIEW-Recalc)

@@ -19,7 +19,7 @@ from typing import Any, Dict
 
 import numpy as np
 
-from . import lvxml, physics, rusefi
+from . import __version__, lvxml, physics, rusefi
 
 
 def default_dir() -> str:
@@ -60,7 +60,7 @@ def save_run(ctrl, vehicle: str = "", firmware: str = "", base_dir: str = "") ->
                 w.writerow([f"{x:.3f}" for x in row])
 
     meta: Dict[str, Any] = {
-        "programm": "PyST",
+        "programm": f"PyST {__version__}",
         "datum": _dt.datetime.now().isoformat(timespec="seconds"),
         "fahrzeug": vehicle,
         "firmware": firmware,

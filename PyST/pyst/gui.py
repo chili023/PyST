@@ -13,7 +13,7 @@ from typing import Dict, Optional
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import physics, report, storage
+from . import __version__, physics, report, storage
 from .channels import lambda_from_afr, run_channels
 from .db import SETUP_SUMMARY_KEYS, VEHICLE_FIELDS, Database, base_dir, field_label
 from .dialogs import FieldForm, SetupForm
@@ -425,7 +425,7 @@ class DatabasePage(QtWidgets.QWidget):
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, db: Optional[Database] = None):
         super().__init__()
-        self.setWindowTitle("PyST – WildBugChilGru")
+        self.setWindowTitle(f"PyST {__version__} – WildBugChilGru")
         self.resize(1500, 920)
         self.settings = load_settings()
         self.db = db or Database()
