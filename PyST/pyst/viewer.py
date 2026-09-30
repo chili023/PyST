@@ -31,8 +31,10 @@ VIEW_GAUGES = [
     ("ps", "Leistung", "PS", "Leistung", 1), ("nm", "Drehmoment", "Nm", "Drehmoment", 1),
     ("n", "Motor (Rolle × i)", "1/min", "Drehzahl Motor", 0), ("ign", "Motor (Zündung)", "1/min", "Drehzahl Zündung", 0),
     ("v", "Rolle", "km/h", "Geschwindigkeit", 1), ("egt1", "EGT 1", "°C", "EGT 1", 0), ("egt2", "EGT 2", "°C", "EGT 2", 0),
-    ("lam", "Lambda", "λ", "Lambda", 3), ("tps", "TPS", "%", "tps", 1),
-    ("ratio", "Übersetzung", "", "Übersetzung gefiltert", 2), ("rate", "Messfrequenz", "Hz", "Messfrequenz", 2),
+    ("lam", "Lambda", "λ", "Lambda", 3), ("tps", "TPS (ECU)", "%", "TPS (ECU)", 1),
+    ("ratio", "Übersetzung", "", "Übersetzung gefiltert", 2),
+    ("ratio_ecu", "Übersetzung ECU/Rolle", "", "Übersetzung ECU/Rolle gefiltert", 3),
+    ("rate", "Messfrequenz", "Hz", "Messfrequenz", 2),
     ("t", "Zeit", "s", "Zeit", 2),
 ]
 
@@ -41,7 +43,8 @@ PALETTE = ["#c62828", "#1f5fbf", "#2e7d32", "#ef6c00", "#6a1b9a", "#00838f", "#a
 STYLES = [QtCore.Qt.SolidLine, QtCore.Qt.DashLine, QtCore.Qt.DotLine, QtCore.Qt.DashDotLine]
 STYLE_MARK = ["──", "╌╌", "┈┈", "─·"]
 DEFAULT_PANES = [["Drehzahl Motor", "Drehzahl Zündung"], ["Leistung", "Drehmoment"],
-                 ["Übersetzung gefiltert", "Übersetzung eingestellt"], ["Lambda", "EGT 1", "EGT 2", "tps", "TPS"]]
+                 ["Übersetzung gefiltert", "Übersetzung ECU/Rolle gefiltert", "Übersetzung eingestellt"],
+                 ["Lambda", "EGT 1", "EGT 2", "TPS (ECU)"]]
 MAX_PANES = 4
 
 
@@ -64,6 +67,9 @@ class LogViewer(QtWidgets.QWidget):
         self.data: Dict[int, tuple] = {}        # run_id -> (Kanaele, Kurvenbereich)
         self.cursor_idx = 0
         self.color_of: Dict[str, str] = {}
+        # Layout: Kanaele je Feld bleiben erhalten, auch wenn ein geladener Lauf einen Kanal nicht hat
+        self.pane_channels: List[List[str]] = [list(p) for p in DEFAULT_PANES]
+        self._applying = False
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(4, 4, 4, 4)
@@ -85,6 +91,16 @@ class LogViewer(QtWidgets.QWidget):
             bar.addWidget(w_)
         bar.addWidget(self.only_seg)
         bar.addStretch(1)
+        bar.addWidget(QtWidgets.QLabel("Layout"))
+        self.layout_combo = QtWidgets.QComboBox()
+        self.layout_combo.setMinimumWidth(160)
+        self.layout_combo.setToolTip("Gespeicherte Auswerte-Layouts (Felder, Kanäle, X-Achse, Anzeigen)")
+        bar.addWidget(self.layout_combo)
+        self.layout_save_btn = QtWidgets.QPushButton("Speichern")
+        self.layout_save_as_btn = QtWidgets.QPushButton("Speichern unter …")
+        self.layout_del_btn = QtWidgets.QPushButton("Löschen")
+        for b in (self.layout_save_btn, self.layout_save_as_btn, self.layout_del_btn):
+            bar.addWidget(b)
         cl.addLayout(bar)
         try:
             hidden = json.loads(self.db.get_meta("viewer_gauges_hidden", '["egt2", "tps", "rate"]'))
@@ -94,7 +110,8 @@ class LogViewer(QtWidgets.QWidget):
         self.gauge_run.setMinimumWidth(90)
         self.gauge_run.setWordWrap(True)
         self.gauge_bar = GaugeBar([(k, t, u) for k, t, u, _c, _d in VIEW_GAUGES], hidden,
-                                  lambda h: self.db.set_meta("viewer_gauges_hidden", json.dumps(sorted(h))),
+                                  lambda h: (self.db.set_meta("viewer_gauges_hidden", json.dumps(sorted(h))),
+                                             self._layout_changed()),
                                   prefix=self.gauge_run)
         root.addWidget(self.gauge_bar)                          # volle Breite ueber allem
         root.addWidget(split, 1)
@@ -119,15 +136,150 @@ class LogViewer(QtWidgets.QWidget):
         split.addWidget(self.right_tabs)
         split.setStretchFactor(1, 1)
         split.setSizes([300, 900, 320])
+        self.split = split
 
         self.plots: List[pg.PlotItem] = []
         self.lines: List[pg.InfiniteLine] = []
         self.glw.scene().sigMouseMoved.connect(self._mouse_moved)
-        self.xaxis.currentIndexChanged.connect(self._redraw)
-        self.only_seg.toggled.connect(self._redraw)
-        self.panes_spin.valueChanged.connect(self._redraw)
+        for sig in (self.xaxis.currentIndexChanged, self.only_seg.toggled, self.panes_spin.valueChanged):
+            sig.connect(lambda _=None: (self._layout_changed(), self._redraw()))
+        self.layout_combo.activated.connect(lambda _i: self._layout_chosen())
+        self.layout_save_btn.clicked.connect(self._layout_save)
+        self.layout_save_as_btn.clicked.connect(self._layout_save_as)
+        self.layout_del_btn.clicked.connect(self._layout_delete)
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
+        try:
+            cur = json.loads(self.db.get_meta("viewer_layout", "null"))
+        except ValueError:
+            cur = None
+        if cur:
+            self.apply_layout(cur, redraw=False)
+        self._fill_layout_combo()
         self.reload()
+
+    # ------------------------------------------------------------ Layout
+    def layout_state(self) -> dict:
+        return {"felder": self.panes_spin.value(), "x": self.xaxis.currentText(),
+                "nur_kurve": self.only_seg.isChecked(), "kanaele": [list(p) for p in self.pane_channels],
+                "anzeigen_aus": sorted(self.gauge_bar.hidden)}
+
+    def apply_layout(self, lay: dict, redraw: bool = True):
+        self._applying = True
+        try:
+            self.panes_spin.setValue(int(lay.get("felder", 4)))
+            i = self.xaxis.findText(lay.get("x", "Zeit"))
+            self.xaxis.setCurrentIndex(max(0, i))
+            self.only_seg.setChecked(bool(lay.get("nur_kurve", False)))
+            chans = lay.get("kanaele") or DEFAULT_PANES
+            self.pane_channels = [list(chans[i]) if i < len(chans) else [] for i in range(MAX_PANES)]
+            if "anzeigen_aus" in lay:
+                hidden = set(lay["anzeigen_aus"])
+                self.gauge_bar.hidden = hidden
+                for key, g in self.gauge_bar.gauges.items():
+                    g.setVisible(key not in hidden)
+        finally:
+            self._applying = False
+        self._layout_changed()
+        if redraw:
+            self._fill_lists()
+            self._redraw()
+
+    def _layout_changed(self):
+        """Aktuelles Layout merken (bleibt ueber das Beenden hinaus erhalten)."""
+        if self._applying:
+            return
+        self.db.set_meta("viewer_layout", json.dumps(self.layout_state(), ensure_ascii=False))
+        self._update_layout_dirty()
+
+    def _layouts(self) -> dict:
+        try:
+            return json.loads(self.db.get_meta("viewer_layouts", "{}")) or {}
+        except ValueError:
+            return {}
+
+    def _fill_layout_combo(self):
+        cur = self.db.get_meta("viewer_layout_name", "")
+        self.layout_combo.blockSignals(True)
+        self.layout_combo.clear()
+        self.layout_combo.addItem("(ungespeichert)", "")
+        for name in sorted(self._layouts(), key=str.lower):
+            self.layout_combo.addItem(name, name)
+        i = self.layout_combo.findData(cur)
+        self.layout_combo.setCurrentIndex(max(0, i))
+        self.layout_combo.blockSignals(False)
+        self._update_layout_dirty()
+
+    def _update_layout_dirty(self):
+        name = self.layout_combo.currentData() if hasattr(self, "layout_combo") else ""
+        saved = self._layouts().get(name) if name else None
+        dirty = bool(name) and saved != self.layout_state()
+        self.layout_save_btn.setEnabled(bool(name) and dirty)
+        self.layout_del_btn.setEnabled(bool(name))
+        self.layout_combo.setToolTip("Änderungen noch nicht im Layout gespeichert" if dirty else
+                                     "Gespeicherte Auswerte-Layouts (Felder, Kanäle, X-Achse, Anzeigen)")
+
+    def _layout_chosen(self):
+        name = self.layout_combo.currentData()
+        self.db.set_meta("viewer_layout_name", name or "")
+        if name and name in self._layouts():
+            self.apply_layout(self._layouts()[name])
+        self._update_layout_dirty()
+
+    def _store_layout(self, name: str):
+        lays = self._layouts()
+        lays[name] = self.layout_state()
+        self.db.set_meta("viewer_layouts", json.dumps(lays, ensure_ascii=False))
+        self.db.set_meta("viewer_layout_name", name)
+        self._fill_layout_combo()
+
+    def _layout_save(self):
+        name = self.layout_combo.currentData()
+        if name:
+            self._store_layout(name)
+        else:
+            self._layout_save_as()
+
+    def _layout_save_as(self):
+        name, ok = QtWidgets.QInputDialog.getText(self, "Layout speichern", "Name:",
+                                                  text=self.layout_combo.currentData() or "")
+        name = name.strip()
+        if not ok or not name:
+            return
+        if name in self._layouts() and name != self.layout_combo.currentData():
+            if QtWidgets.QMessageBox.question(self, "Layout", f"„{name}“ überschreiben?") \
+                    != QtWidgets.QMessageBox.Yes:
+                return
+        self._store_layout(name)
+
+    def _layout_delete(self):
+        name = self.layout_combo.currentData()
+        if not name or QtWidgets.QMessageBox.question(self, "Layout", f"Layout „{name}“ löschen?") \
+                != QtWidgets.QMessageBox.Yes:
+            return
+        lays = self._layouts()
+        lays.pop(name, None)
+        self.db.set_meta("viewer_layouts", json.dumps(lays, ensure_ascii=False))
+        self.db.set_meta("viewer_layout_name", "")
+        self._fill_layout_combo()
+
+    def _pane_changed(self, i: int, it: QtWidgets.QListWidgetItem):
+        name = it.text()
+        cur = [n for n in self.pane_channels[i] if n != name]
+        if it.checkState() == QtCore.Qt.Checked:
+            cur.append(name)
+        self.pane_channels[i] = cur
+        self._layout_changed()
+        self._redraw()
+
+    def current_run_id(self) -> Optional[int]:
+        """Markierter Lauf: zuerst in "In der Auswertung", sonst in der Auswahlliste, sonst der erste."""
+        it = self.sel_list.currentItem()
+        if it is not None:
+            return it.data(QtCore.Qt.UserRole)
+        it = self.pick_tree.currentItem()
+        if it is not None and it.data(0, QtCore.Qt.UserRole) is not None:
+            return it.data(0, QtCore.Qt.UserRole)
+        return self.selected[0] if self.selected else None
 
     # ------------------------------------------------------------ Laufauswahl
     def _build_left(self) -> QtWidgets.QWidget:
@@ -174,11 +326,23 @@ class LogViewer(QtWidgets.QWidget):
         sl.addLayout(hb)
         lay.addWidget(sel, 2)
 
+        # Import und Export (vom Hauptfenster verbunden)
+        hb = QtWidgets.QHBoxLayout()
+        self.import_btn = QtWidgets.QPushButton("Importieren …")
+        self.import_btn.setToolTip("LabVIEW-XML oder PyST-Läufe in die Datenbank übernehmen")
+        self.pdf_btn = QtWidgets.QPushButton("PDF-Bericht …")
+        self.pdf_btn.setToolTip("Leistungsdiagramm mit den im Reiter Messen angehakten Läufen und deren Setups")
+        self.csv_btn = QtWidgets.QPushButton("CSV-Export …")
+        self.csv_btn.setToolTip("Alle Kanäle des markierten Laufs als CSV (Excel)")
+        for b in (self.import_btn, self.pdf_btn, self.csv_btn):
+            hb.addWidget(b)
+        lay.addLayout(hb)
+
         self.tabs = QtWidgets.QTabWidget()
         self.lists: List[QtWidgets.QListWidget] = []
         for i in range(MAX_PANES):
             lw = QtWidgets.QListWidget()
-            lw.itemChanged.connect(self._redraw)
+            lw.itemChanged.connect(lambda it, i=i: self._pane_changed(i, it))
             self.lists.append(lw)
             self.tabs.addTab(lw, f"Feld {i + 1}")
         lay.addWidget(QtWidgets.QLabel("<b>Kanäle je Feld</b>"))
@@ -414,9 +578,7 @@ class LogViewer(QtWidgets.QWidget):
                     if n != "Zeit" and n not in names:
                         names.append(n)
         for i, lw in enumerate(self.lists):
-            checked = {lw.item(k).text() for k in range(lw.count()) if lw.item(k).checkState() == QtCore.Qt.Checked}
-            if not checked and lw.count() == 0:
-                checked = set(DEFAULT_PANES[i])
+            checked = set(self.pane_channels[i])
             lw.blockSignals(True)
             lw.clear()
             for n in names:
@@ -622,7 +784,7 @@ class LogViewer(QtWidgets.QWidget):
         ch = self.data[rid][0]
         sl = self._slice(rid)
         for key, _title, unit, name, dec in VIEW_GAUGES:
-            c = ch.get(name) or (ch.get("TPS") if name == "tps" else None)
+            c = ch.get(name)
             if c is None:
                 self.gauge_bar.set(key, "–")
                 continue

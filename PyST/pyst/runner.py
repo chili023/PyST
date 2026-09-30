@@ -30,8 +30,10 @@ class Live:
 
 
 class RunController:
-    def __init__(self, link: DynoLink, params: physics.DynoParams, auto_climate: bool = True):
+    def __init__(self, link: DynoLink, params: physics.DynoParams, auto_climate: bool = True, ecu=None):
         self.link = link
+        self.ecu = ecu                 # rusefi.RusefiLink oder None
+        self.ecu_data = None           # Ausschnitt der ECU-Werte zum letzten Lauf (rusefi.RusefiLink.snapshot)
         self.params = params
         self.auto_climate = auto_climate
         self.state = IDLE
@@ -49,6 +51,7 @@ class RunController:
     def start(self):
         self.result = self.live_result = None
         self.frames = []
+        self.ecu_data = None
         if self.auto_climate:
             self.climate = self.link.climate()
             if self.climate:
@@ -115,6 +118,9 @@ class RunController:
         n_roll, dt, n_meas, afr, egt = self.arrays()
         self.result = physics.evaluate(n_roll, dt, self.params, n_meas, afr, egt, require_end=False)
         self.state = DONE
+        self.ecu_data = None
+        if self.ecu is not None and self.frames:
+            self.ecu_data = self.ecu.snapshot(self.frames[0].t - 1.0, self.frames[-1].t + 1.0)
         if self.result is not None:
             self.message = self.result.end_reason
         # Messung laeuft fuer die Live-Anzeige weiter; neuer Lauf mit start()

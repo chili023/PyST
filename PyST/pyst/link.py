@@ -60,6 +60,8 @@ def list_serial_ports() -> List[Tuple[str, str]]:
 def guess_port() -> Optional[str]:
     for dev, desc in list_serial_ports()[1:]:
         t = f"{dev} {desc}".lower()
+        if "rusefi" in t:                      # Steuergeraet, eigener Reiter
+            continue
         if "stlink" in t or "st-link" in t or "usbmodem" in t or "acm" in t:
             return dev
     return None

@@ -7,13 +7,15 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from PySide6 import QtCore, QtWidgets
 
 CURSOR_BG = "#fff6cc"          # Hintergrund, solange Werte vom Cursor statt live angezeigt werden
+# Rahmen immer per Stylesheet (der Rahmen des Systems verschwindet sonst, sobald die Hervorhebung wechselt)
+GAUGE_STYLE = "QFrame#gauge {{ border: 1px solid #c4c4c4; border-radius: 4px; background: {bg}; }}"
 
 
 class Gauge(QtWidgets.QFrame):
     def __init__(self, title: str, unit: str):
         super().__init__()
         self.setObjectName("gauge")
-        self.setFrameShape(QtWidgets.QFrame.StyledPanel)
+        self.setStyleSheet(GAUGE_STYLE.format(bg="#ffffff"))
         self.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)   # darf schmaler werden
         self.setMinimumWidth(70)
         lay = QtWidgets.QVBoxLayout(self)
@@ -34,7 +36,7 @@ class Gauge(QtWidgets.QFrame):
         self.title.setText(title)
 
     def set_highlight(self, on: bool):
-        self.setStyleSheet(f"QFrame#gauge {{ background: {CURSOR_BG}; }}" if on else "")
+        self.setStyleSheet(GAUGE_STYLE.format(bg=CURSOR_BG if on else "#ffffff"))
 
 
 class GaugeBar(QtWidgets.QWidget):

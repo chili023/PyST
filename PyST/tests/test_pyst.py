@@ -4,12 +4,14 @@ import os
 import re
 import sys
 import tempfile
+import time
 import unittest
 
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from pyst import link, lvxml, physics, storage  # noqa: E402
+from pyst import link, lvxml, physics, runner, rusefi, storage  # noqa: E402
+from pyst.channels import run_channels  # noqa: E402
 from pyst.sim import SimEngine, SimSerial  # noqa: E402
 
 DATA = os.path.join(os.path.dirname(__file__), "data")
@@ -166,3 +168,110 @@ class Filters(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeEcu:
+    """Antwortet wie ein rusEFI auf 'S' und 'O' (CRC-Rahmen); Werte haengen von der Zeit ab."""
+
+    def __init__(self, signature="rusEFI test.2026.09.30.sim.1"):
+        self.sig = signature
+        self.out = b""
+        self.t0 = time.time()
+
+    def block(self):
+        import struct
+        t = time.time() - self.t0
+        return struct.pack("<IHhhHf", 1 << 5, int(3000 + 1000 * t), int(4250), int(8512), 9800, 13.8) \
+            + bytes(16)
+
+    def write(self, data):
+        import struct, zlib
+        n = struct.unpack(">H", data[:2])[0]
+        p = data[2:2 + n]
+        if p[:1] == b"S":
+            body = b"\x00" + self.sig.encode() + b"\x00"
+        elif p[:1] == b"O":
+            off, cnt = struct.unpack("<HH", p[1:5])
+            body = b"\x00" + self.block()[off:off + cnt]
+        else:
+            body = b"\x83"
+        self.out += struct.pack(">H", len(body)) + body + struct.pack(">I", zlib.crc32(body))
+
+    def read(self, n):
+        d, self.out = self.out[:n], self.out[n:]
+        return d
+
+    def reset_input_buffer(self):
+        self.out = b""
+
+    def close(self):
+        pass
+
+
+class Rusefi(unittest.TestCase):
+    INI = os.path.join(DATA, "rusefi_mini.ini")
+
+    def test_ini(self):
+        ini = rusefi.IniDef(self.INI)
+        self.assertEqual(ini.signature, "rusEFI test.2026.09.30.sim.1")
+        self.assertEqual(ini.block_size, 32)
+        self.assertEqual(ini.check(), "")
+        self.assertNotIn("someSetting", ini.channels)          # nur [OutputChannels]
+        self.assertNotIn("calcChannel", ini.channels)          # Ausdruecke werden nicht gelesen
+        self.assertEqual(ini.channels["coolant"].unit, "°C")     # #if/#else, Einheit uebersetzt
+        self.assertEqual(ini.channels["TPSValue"].title, "TPS")
+        self.assertEqual(ini.channels["VBatt"].title, "VBatt")   # ohne Datalog-Eintrag: Kanalname
+
+    def test_link_and_save(self):
+        ini = rusefi.IniDef(self.INI)
+        ecu = rusefi.RusefiLink("FAKE", ini, ["RPMValue", "TPSValue", "coolant", "checkEngine", "gibtsnicht"],
+                                rate_hz=100, ser=FakeEcu())
+        try:
+            time.sleep(0.4)
+            self.assertTrue(ecu.signature_ok)
+            self.assertEqual(ecu.channel_names(), ["RPMValue", "TPSValue", "coolant", "checkEngine"])
+            self.assertEqual(ecu._range, (0, 10))               # nur der benoetigte Bytebereich
+            self.assertAlmostEqual(ecu.value("TPSValue"), 42.5)
+            self.assertAlmostEqual(ecu.value("coolant"), 85.12)
+            self.assertEqual(ecu.value("checkEngine"), 1.0)
+            self.assertIsNone(ecu.value("VBatt"))               # nicht gewaehlt
+
+            # Lauf mit dem Pruefstands-Simulator, ECU-Werte werden mitgespeichert
+            dyno = link.DynoLink(link.SIM_PORT)
+            ctrl = runner.RunController(dyno, physics.DynoParams(n_stop=0), auto_climate=False, ecu=ecu)
+            ctrl.start()
+            t0 = time.time()
+            while time.time() - t0 < 1.0:
+                ctrl.poll()
+                time.sleep(0.02)
+            self.assertGreater(len(ctrl.frames), 20)
+            ctrl.finish()
+            dyno.close()
+            self.assertIsNotNone(ctrl.ecu_data)
+            with tempfile.TemporaryDirectory() as d:
+                folder = storage.save_run(ctrl, base_dir=d)
+                self.assertTrue(os.path.exists(os.path.join(folder, "rusefi.csv")))
+                run = storage.load_any(folder)
+            self.assertEqual(run["meta"]["rusefi"]["signatur"], ini.signature)
+            ch = run_channels(run, storage.recompute(run), run["params"])
+            self.assertEqual(ch["TPS (ECU)"].group, "ECU")
+            self.assertEqual(ch["TPS (ECU)"].unit, "%")
+            tps = ch["TPS (ECU)"].values
+            self.assertTrue(np.nanmin(tps) > 42.4 and np.nanmax(tps) < 42.6)
+            rpm = ch["RPM (ECU)"].values
+            self.assertTrue(np.all(np.diff(rpm[np.isfinite(rpm)]) >= 0))   # steigt mit der Zeit
+            self.assertNotIn("VBatt (ECU)", ch)
+        finally:
+            ecu.close()
+
+    def test_wrong_signature(self):
+        ecu = rusefi.RusefiLink("FAKE", rusefi.IniDef(self.INI), ser=FakeEcu("rusEFI anders.1"))
+        self.assertFalse(ecu.signature_ok)
+        ecu.close()
+
+    def test_resample_outside_is_nan(self):
+        snap = {"t": np.array([1.0, 2.0]), "values": np.array([[0.0, 1.0], [10.0, 0.0]]),
+                "channels": [{"name": "a", "bits": False}, {"name": "b", "bits": True}]}
+        out = rusefi.resample(snap, np.array([0.5, 1.5, 1.9, 2.5]))
+        np.testing.assert_allclose(out["rusefi_a"], [np.nan, 5.0, 9.0, np.nan])
+        np.testing.assert_allclose(out["rusefi_b"], [np.nan, 1.0, 1.0, np.nan])
