@@ -103,16 +103,50 @@ def field_label(key: str) -> str:
 
 
 def base_dir() -> str:
-    """Datenordner ~/PyST. Gibt es noch den Ordner der Vorversion (~/SimpleDyno) und kein ~/PyST,
-    wird der alte weiter benutzt – Datenbank und Pfade der Laeufe bleiben gueltig."""
+    """Datenordner ~/PyST (Datenordner von Vorversionen werden beim ersten Aufruf uebernommen)."""
     home = os.path.expanduser("~")
-    new, old = os.path.join(home, "PyST"), os.path.join(home, "SimpleDyno")
-    return old if os.path.isdir(old) and not os.path.isdir(new) else new
+    new = os.path.join(home, "PyST")
+    _migrate_old_dir(os.path.join(home, "SimpleDyno"), new)
+    return new
+
+
+def _migrate_old_dir(old: str, new: str):
+    """Einmaliger Umzug alter Datenordner nach ~/PyST: Ordner und Datenbank umbenennen, gespeicherte
+    absolute Pfade (Laeufe, Einstellungen) auf den neuen Ordner umschreiben."""
+    if not os.path.isdir(old) or os.path.exists(new):
+        return
+    os.rename(old, new)
+    old_db, new_db = os.path.join(new, "simpledyno.db"), os.path.join(new, "pyst.db")
+    if os.path.exists(old_db) and not os.path.exists(new_db):
+        os.rename(old_db, new_db)
+    if os.path.exists(new_db):
+        con = sqlite3.connect(new_db)
+        with con:
+            con.execute("UPDATE runs SET ordner = ? || substr(ordner, ?) WHERE substr(ordner, 1, ?) = ?",
+                        (new, len(old) + 1, len(old), old))
+        con.close()
+    runs = os.path.join(new, "messungen")
+    for name in (os.listdir(runs) if os.path.isdir(runs) else []):
+        path = os.path.join(runs, name, "lauf.json")
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if data.get("programm") == "SimpleDyno":
+                data["programm"] = "PyST"
+                with open(path, "w", encoding="utf-8") as fh:
+                    json.dump(data, fh, ensure_ascii=False, indent=2)
+        except (OSError, ValueError):
+            pass
+    settings = os.path.join(new, "einstellungen.json")
+    if os.path.exists(settings):
+        with open(settings, encoding="utf-8") as fh:
+            text = fh.read()
+        with open(settings, "w", encoding="utf-8") as fh:
+            fh.write(text.replace(json.dumps(old)[1:-1], json.dumps(new)[1:-1]))
 
 
 def db_file(folder: str) -> str:
-    old = os.path.join(folder, "simpledyno.db")
-    return old if os.path.exists(old) else os.path.join(folder, "pyst.db")
+    return os.path.join(folder, "pyst.db")
 
 
 @dataclass

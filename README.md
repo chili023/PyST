@@ -1,9 +1,8 @@
-# WildBugChilGru PST – PyST & STM32-Messelektronik
+# PyST – Rollenprüfstand: PC-Software & STM32-Messelektronik
 
-Open-Source-Leistungsprüfstand (Rollenprüfstand) – Weiterentwicklung von
-[WildBugChilGru](https://github.com/gruaGit/WildBugChilGru) (Arduino Mega + LabVIEW):
+Open-Source-Leistungsprüfstand (Rollenprüfstand):
 
-- **PyST** (früher SimpleDyno) – neue PC-Software in Python/Qt für **Mac, Linux (Raspberry Pi) und Windows**.
+- **PyST** – PC-Software in Python/Qt für **Mac, Linux (Raspberry Pi) und Windows**.
   Rechnet wie LabVIEW 3.2.1 (an echten Läufen geprüft: gleiche Pmax und n(Pmax)), mit Datenbank für
   Fahrzeuge/Setups/Läufe, Auswerter im Stil von MegaLogViewer, PDF/CSV-Export, Import von LabVIEW-Läufen.
 - **PST-STM32-Firmware** – neue Firmware für die Messelektronik auf **STM32F446RE (Nucleo-64)**.
@@ -64,6 +63,9 @@ docs/                  Roadmap, Protokoll v2, Hardware v3, WSB/CAN-Vorbereitung,
   der Haltedrehzahl liegen.
 - PyST steuert den Motor nicht. „n Stop“ beendet nur die Aufzeichnung und zeigt **GAS WEG**.
 
-## Lizenz
+## Herkunft und Lizenz
+
+PyST ist aus dem Open-Source-Projekt [WildBugChilGru](https://github.com/gruaGit/WildBugChilGru)
+(Arduino Mega + LabVIEW) hervorgegangen; Rechenweg und Mega-Protokoll sind daraus übernommen.
 
 GNU General Public License v3 – siehe [LICENSE](LICENSE).

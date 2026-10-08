@@ -165,10 +165,10 @@ class SettingsPage(QtWidgets.QScrollArea):
                 sp.setValue(float(getattr(defaults, key)))
                 sp.setKeyboardTracking(False)
                 self.fields[key] = sp
+                if key == "ratio":                 # wird im Dialog "Übersetzung" (Reiter Messen) gesetzt
+                    continue
                 fl.addRow(label, sp)
             if group == "Lauf":
-                self.ratio_btn = QtWidgets.QPushButton("Übersetzung einmessen …")
-                fl.addRow(self.ratio_btn)
                 note = QtWidgets.QLabel("n vom Gas: ab hier wird auf fallende Drehzahl (= Laufende) geprüft. "
                                         "Muss über der Haltedrehzahl liegen.")
                 note.setWordWrap(True)
@@ -425,7 +425,7 @@ class DatabasePage(QtWidgets.QWidget):
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, db: Optional[Database] = None):
         super().__init__()
-        self.setWindowTitle(f"PyST {__version__} – WildBugChilGru")
+        self.setWindowTitle(f"PyST {__version__}")
         self.resize(1500, 920)
         self.settings = load_settings()
         self.db = db or Database()
@@ -686,7 +686,6 @@ class MainWindow(QtWidgets.QMainWindow):
         s.auto_connect.toggled.connect(lambda on: (self.settings.update(auto_connect=on), save_settings(self.settings)))
         s.replay_btn.clicked.connect(lambda: self.on_replay())
         s.climate_btn.clicked.connect(self.on_climate)
-        s.ratio_btn.clicked.connect(self.on_measure_ratio)
         s.lambda_radio.toggled.connect(self._lambda_mode_changed)
         for k in ("ma", "dq", "ma_s", "dq_s"):
             s.fields[k].valueChanged.connect(lambda _=None: s.update_filter_label(self._current_rate()))
@@ -704,6 +703,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.b_view.clicked.connect(lambda: self._open_in_viewer(self._current_run_id()))
         self.b_del.clicked.connect(self.on_delete)
         self.b_ratio.clicked.connect(self.on_measure_ratio)
+        s.fields["ratio"].valueChanged.connect(self._show_ratio)
+        self._show_ratio(s.fields["ratio"].value())
         self.viewer.import_btn.clicked.connect(self.on_import)
         self.viewer.pdf_btn.clicked.connect(lambda: self.on_pdf())
         self.viewer.csv_btn.clicked.connect(lambda: self.on_csv(self.viewer.current_run_id()))
@@ -758,7 +759,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.link:
             self.link.close()
             self.link = None
-        os.environ.pop("SIMPLEDYNO_SCALED", None)
+        os.environ.pop("PYST_SCALED", None)
         os.environ.pop("QT_SCALE_FACTOR", None)
         os.execv(sys.executable, [sys.executable, "-m", "pyst"] + [a for a in sys.argv[1:]])
 
@@ -1098,8 +1099,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.abort_btn.setEnabled(busy)
         s = self.page_settings
         s.climate_btn.setEnabled(connected and not busy)
-        s.ratio_btn.setEnabled(connected and not busy)
-        self.b_ratio.setEnabled(connected and not busy)
+        self.b_ratio.setEnabled(not busy)
         s.connect_btn.setText("Trennen" if connected else "Verbinden")
         self.connect_main.setText("Trennen" if connected else "Verbinden")
         self.connect_main.setToolTip(f"Messboard: {self.link.port}" if connected else
@@ -1500,10 +1500,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.page_settings.live_check.isChecked():
             self.link.start()
 
+    def _show_ratio(self, v: float):
+        self.b_ratio.setText(f"Übersetzung {v:.3f} …")
+        self.b_ratio.setToolTip("Übersetzung nKW/nRolle eintragen oder einmessen – gehört zum Lauf, vor jedem "
+                                "Lauf prüfen")
+
     def on_measure_ratio(self):
-        if not self.ctrl or self.ctrl.state in (WAIT, RUN):
-            QtWidgets.QMessageBox.information(self, "Übersetzung", "Erst mit dem Prüfstand verbinden "
-                                                                   "(Knopf „Verbinden“).")
+        if self.ctrl and self.ctrl.state in (WAIT, RUN):
             return
 
         def apply(r: float):
@@ -1512,7 +1515,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_status(f"Übersetzung = {r:.3f}", "#b8e6b8")
 
         dlg = RatioDialog(self, self.ctrl, self.page_rusefi, self.page_settings.params, apply,
-                          source=self.settings.get("ratio_source", "board"))
+                          source=self.settings.get("ratio_source", "board"),
+                          current=self.page_settings.fields["ratio"].value())
         dlg.finished.connect(lambda _r: (self.settings.update(ratio_source=dlg.source()),
                                          save_settings(self.settings)))
         dlg.exec()
@@ -1795,7 +1799,7 @@ DESIGN_W, DESIGN_H = 1480, 880          # Groesse, fuer die das Layout gedacht i
 
 def _apply_ui_scale(app: QtWidgets.QApplication) -> bool:
     """Skalierung aus Einstellung/Bildschirmgroesse; True = Prozess wurde mit QT_SCALE_FACTOR neu gestartet."""
-    if os.environ.get("SIMPLEDYNO_SCALED"):
+    if os.environ.get("PYST_SCALED"):
         return False
     mode = str(load_settings().get("ui_scale", "auto"))
     if mode == "auto":
@@ -1810,7 +1814,7 @@ def _apply_ui_scale(app: QtWidgets.QApplication) -> bool:
     if abs(factor - 1.0) < 0.02:
         return False
     os.environ["QT_SCALE_FACTOR"] = f"{factor:.2f}"
-    os.environ["SIMPLEDYNO_SCALED"] = "1"
+    os.environ["PYST_SCALED"] = "1"
     os.execv(sys.executable, [sys.executable, "-m", "pyst"] + sys.argv[1:])
     return True
 

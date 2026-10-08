@@ -1,5 +1,7 @@
 """
-Uebersetzung einmessen: Motordrehzahl / Rollendrehzahl bei konstanter Drehzahl.
+Uebersetzung (nKW/nRolle) eintragen oder einmessen: Motordrehzahl / Rollendrehzahl bei konstanter Drehzahl.
+Oben steht die eingestellte Uebersetzung (direkt aenderbar); "Übernehmen" traegt den gemessenen Wert ein.
+Ohne verbundenes Messboard kann nur eingetragen, nicht gemessen werden.
 
 Quelle der Motordrehzahl: Zuendabnehmer des Messboards oder rusEFI (RPMValue). Ist das Steuergeraet
 verbunden, werden beide Quellen gleichzeitig gemessen – so faellt ein doppelt zaehlender Zuendabnehmer
@@ -23,9 +25,9 @@ COLORS = {"board": "#ef6c00", "ecu": "#1f5fbf"}
 
 class RatioDialog(QtWidgets.QDialog):
     def __init__(self, parent, ctrl, rusefi_page, params: Callable[[], physics.DynoParams],
-                 apply: Callable[[float], None], source: str = "board"):
+                 apply: Callable[[float], None], source: str = "board", current: float = 0.0):
         super().__init__(parent)
-        self.setWindowTitle("Übersetzung einmessen")
+        self.setWindowTitle("Übersetzung")
         self.ctrl = ctrl
         self.rusefi_page = rusefi_page
         self.params = params
@@ -37,7 +39,22 @@ class RatioDialog(QtWidgets.QDialog):
         self._last = None
 
         lay = QtWidgets.QVBoxLayout(self)
-        g = QtWidgets.QGroupBox("Quelle der Motordrehzahl")
+        top = QtWidgets.QHBoxLayout()
+        lbl = QtWidgets.QLabel("<b>Eingestellte Übersetzung nKW/nRolle</b>")
+        top.addWidget(lbl)
+        self.current_spin = QtWidgets.QDoubleSpinBox()
+        self.current_spin.setRange(0.01, 100.0)
+        self.current_spin.setDecimals(3)
+        self.current_spin.setSingleStep(0.01)
+        self.current_spin.setKeyboardTracking(False)
+        self.current_spin.setValue(current or 1.0)
+        self.current_spin.setMinimumWidth(110)
+        self.current_spin.setStyleSheet("font-size: 15px; font-weight: 600;")
+        self.current_spin.valueChanged.connect(self.apply_ratio)
+        top.addWidget(self.current_spin)
+        top.addStretch(1)
+        lay.addLayout(top)
+        g = QtWidgets.QGroupBox("Einmessen – Quelle der Motordrehzahl")
         gl = QtWidgets.QVBoxLayout(g)
         self.radios = {}
         for key, text in SOURCES:
@@ -112,13 +129,15 @@ class RatioDialog(QtWidgets.QDialog):
         vl.addWidget(hint, 1)
         lay.addLayout(vl)
 
-        self.info = QtWidgets.QLabel("Motor auf konstante Drehzahl bringen, dann „Messen“.")
+        self.info = QtWidgets.QLabel("Motor auf konstante Drehzahl bringen, dann „Messen“." if ctrl is not None
+                                     else "Messboard nicht verbunden – Übersetzung oben eintragen oder erst "
+                                          "verbinden, dann messen.")
         self.info.setWordWrap(True)
         lay.addWidget(self.info)
 
         bb = QtWidgets.QHBoxLayout()
         self.measure_btn = QtWidgets.QPushButton("Messen")
-        self.apply_btn = QtWidgets.QPushButton("Übernehmen")
+        self.apply_btn = QtWidgets.QPushButton("Messwert übernehmen")
         self.apply_btn.setEnabled(False)
         close_btn = QtWidgets.QPushButton("Schließen")
         bb.addWidget(self.measure_btn)
@@ -140,9 +159,9 @@ class RatioDialog(QtWidgets.QDialog):
 
         if ecu_ok:
             self._add_ecu_rpm()
-        link = self.ctrl.link
-        if not link.streaming():
-            link.start()
+        self.measure_btn.setEnabled(self.ctrl is not None)
+        if self.ctrl is not None and not self.ctrl.link.streaming():
+            self.ctrl.link.start()
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._tick)
         self.timer.start(50)
@@ -206,6 +225,8 @@ class RatioDialog(QtWidgets.QDialog):
 
     def _tick(self):
         self._check_ecu()
+        if self.ctrl is None:
+            return
         link = self.ctrl.link
         if link.received == self._last_received:
             return
@@ -359,5 +380,6 @@ class RatioDialog(QtWidgets.QDialog):
     def on_apply(self):
         v = self.value()
         if v:
+            self.current_spin.setValue(v)             # traegt ein (valueChanged -> apply_ratio)
             self.apply_ratio(v)
             self.info.setText(self.info.text() + "<br>✓ übernommen")

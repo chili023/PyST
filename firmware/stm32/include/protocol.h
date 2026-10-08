@@ -1,7 +1,7 @@
 /*
  * PC-Protokoll.
  *
- * 1) Arduino-Mega-Protokoll (LabVIEW WildBugChilGru 3.x, aktuelle Version):
+ * 1) Arduino-Mega-Protokoll (LabVIEW 3.x des Ursprungsprojekts, aktuelle Version):
  *    Befehle: einzelne Zeichen, optional mit '\n'
  *      e  -> "T;P;H\r\n"   Temperatur degC (1 Nachkommast.), Druck Pa (0), Feuchte % (1)
  *      m  -> Messung starten (siehe M_TOGGLES in config.h)

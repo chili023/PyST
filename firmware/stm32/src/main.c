@@ -1,5 +1,5 @@
 /*
- * WildBugChilGru PST – Messelektronik auf STM32F446RE (Nucleo-64)
+ * PyST – Messelektronik auf STM32F446RE (Nucleo-64)
  *
  * Erfasst Zuend- und Rollenfrequenz, Klimadaten und Abgastemperatur und
  * sendet sie im Protokoll des Arduino-Mega-Sketches an LabVIEW 3.x.

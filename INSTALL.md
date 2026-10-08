@@ -116,10 +116,10 @@ dafür 2 s.
    Übersetzung, n vom Gas (über Haltedrehzahl). Filter in Sekunden passen sich der Messfrequenz selbst an.
 3. Reiter **Messen**: Drehzahl halten → **START (F1)** → bei „GO“ Vollgas → Gas weg.
 4. Läufe landen in `~/PyST/` (Windows: `C:\Users\<Name>\PyST\`), Datenbank `pyst.db`.
-   Gibt es von der Vorversion noch `~/SimpleDyno/` (mit `simpledyno.db`), wird dieser Ordner weiter benutzt.
+   Datenordner älterer Versionen werden beim ersten Start automatisch nach `~/PyST/` übernommen.
 
 Kleiner Bildschirm? **Ansicht → Größe** (Automatisch/100/90/80/70 %), wirkt nach Neustart.
 
-LabVIEW weiter nutzen: LabVIEW 3.2.1 von
+LabVIEW weiter nutzen: LabVIEW 3.2.1 aus dem Ursprungsprojekt
 <https://github.com/gruaGit/WildBugChilGru/releases/tag/v3.2.1> (nur Windows; LabVIEW Runtime 2014 SP1
 und NI-VISA nötig). Mit der STM32-Firmware bei 60 Hz die Filter auf ca. MA 105 / dq 45 stellen.

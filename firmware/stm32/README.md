@@ -1,8 +1,8 @@
-# PST-STM32 – Messelektronik für WildBugChilGru
+# PST-STM32 – Messelektronik für PyST
 
 Neue Firmware für die STM32-Messelektronik (Nucleo-F446RE + PST-Aufsteckplatine).
 Sie spricht das **Protokoll des Arduino-Mega-Sketches** und läuft deshalb mit der
-aktuellen LabVIEW-Version **WildBugChilGru 3.2.1** von GitHub ohne Änderung an LabVIEW.
+aktuellen LabVIEW-Version **3.2.1** des Ursprungsprojekts ohne Änderung an LabVIEW.
 Die private STM-LabVIEW 0.2.0 (Binärprotokoll) wird automatisch erkannt und ebenfalls bedient.
 
 Das Lambda-Board (CJ125) ist in dieser Version bewusst nicht enthalten. Die Heizungsausgänge

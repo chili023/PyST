@@ -4,3 +4,5 @@ __pycache__/
 .DS_Store
 .pio/
 .vscode/
+# Hersteller-Unterlagen (Schenck) – nur lokal, nicht veröffentlichen
+docs/wsb_schenck_w130/privat/

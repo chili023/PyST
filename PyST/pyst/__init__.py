@@ -1,2 +1,2 @@
-"""PyST – Prüfstandsprogramm für WildBugChilGru."""
-__version__ = "1.1"
+"""PyST – Prüfstandsprogramm für Rollenprüfstände."""
+__version__ = "1.2"

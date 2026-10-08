@@ -1,7 +1,7 @@
 """
-Leistungsberechnung – Nachbildung von WildBugChilGru LabVIEW 3.2.1.
+Leistungsberechnung – Nachbildung der LabVIEW-Prüfstandssoftware 3.2.1 (Ursprungsprojekt, siehe README).
 
-Aus den Blockdiagrammen rekonstruiert (WildBugChilGru.vi, Messschleife):
+Aus den Blockdiagrammen rekonstruiert (Haupt-VI, Messschleife):
 
   nRolle[k] = 60 * f_Rolle / Inkr            Rollendrehzahl je Telegramm
   dT[k]     = 1 / Messfrequenz
