@@ -6,13 +6,17 @@
 #include "analog.h"
 #include "board.h"
 #include "config.h"
+#include "diag.h"
 #include "egt.h"
 #include "env_sensor.h"
 #include "fmt.h"
 #include "serial.h"
+#include "settings.h"
 #include "stm32f4xx_hal.h"
 
 #define BURST_GAP_MS 3u      /* Pause, die einen Befehl abschliesst */
+#define LINE_MAX 63u         /* #-Zeile: max. Zeichen nach dem '#' */
+#define LINE_TIMEOUT_MS 1000u /* unvollstaendige #-Zeile verwerfen */
 
 typedef enum { PROTO_ASCII, PROTO_LEGACY } proto_t;
 
@@ -32,6 +36,12 @@ static const uint32_t legacy_rate_mhz[6] = {20000, 33333, 50000, 66667, 100000, 
 
 static uint8_t burst[16];
 static unsigned burst_len;
+
+/* #-Zeilen (PST-Diag 1) */
+static char line_buf[LINE_MAX + 1u];
+static unsigned line_len;
+static bool in_line, line_overflow, skip_lf;
+static uint32_t line_tick;
 
 static void send(const fmt_t *f) { serial_write(f->buf, f->len); }
 
@@ -53,6 +63,23 @@ static void stop(void)
 }
 
 int protocol_streaming(void) { return streaming; }
+
+static uint32_t ascii_rate_mhz(void) { return (uint32_t)SET(S_RATE_HZ) * 1000u; }
+
+void protocol_run(int on)
+{
+    if (on)
+        start(PROTO_ASCII, ascii_rate_mhz());
+    else
+        stop();
+}
+
+void protocol_settings_changed(void)
+{
+    /* STM-LabVIEW behaelt ihre eigene Rate */
+    if (!(streaming && proto == PROTO_LEGACY))
+        capture_set_rate_mhz(ascii_rate_mhz());
+}
 
 /* ------------------------------------------------------------ Antworten */
 
@@ -101,25 +128,25 @@ static void reply_version(void)
 
     fmt_reset(&f);
     fmt_str(&f, "Messfrequenz [Hz]:");
-    fmt_u32(&f, FRAME_RATE_HZ);
+    fmt_u32(&f, (uint32_t)SET(S_RATE_HZ));
     fmt_str(&f, ";\r\n");
     send(&f);
 
     fmt_reset(&f);
     fmt_str(&f, "Zuendung: min. Perioden ");
-    fmt_u32(&f, IGN_MIN_PERIODS);
+    fmt_u32(&f, (uint32_t)SET(S_IGN_MIN_PERIODS));
     fmt_str(&f, ", Sperrzeit [us] ");
-    fmt_u32(&f, IGN_MIN_PERIOD_US);
+    fmt_u32(&f, (uint32_t)SET(S_IGN_MIN_PERIOD_US));
     fmt_str(&f, ", Doppelimpulsfilter [%] ");
-    fmt_u32(&f, IGN_REL_LOCKOUT_PCT);
+    fmt_u32(&f, (uint32_t)SET(S_IGN_LOCKOUT_PCT));
     fmt_str(&f, ";\r\n");
     send(&f);
 
     fmt_reset(&f);
     fmt_str(&f, "Rolle: min. Perioden ");
-    fmt_u32(&f, ROLL_MIN_PERIODS);
+    fmt_u32(&f, (uint32_t)SET(S_ROLL_MIN_PERIODS));
     fmt_str(&f, ", Sperrzeit [us] ");
-    fmt_u32(&f, ROLL_MIN_PERIOD_US);
+    fmt_u32(&f, (uint32_t)SET(S_ROLL_MIN_PERIOD_US));
     fmt_str(&f, ";\r\n");
     send(&f);
 
@@ -145,7 +172,7 @@ static void reply_version(void)
     fmt_str(&f, ";\r\n");
     send(&f);
 
-    line("AFR-Quelle:", AFR_SOURCE == 1 ? "ADC_CH1 (PB0)" : AFR_SOURCE == 2 ? "ADC_CH2 (PA1)" : "keine");
+    line("AFR-Quelle:", SET(S_AFR_SRC) == 1 ? "ADC_CH1 (PB0)" : SET(S_AFR_SRC) == 2 ? "ADC_CH2 (PA1)" : "keine");
 
     fmt_reset(&f);
     fmt_str(&f, "Impulse Zuendung/Rolle:");
@@ -173,7 +200,7 @@ static void ascii_command(char c)
         if (M_TOGGLES && streaming && proto == PROTO_ASCII)
             stop();
         else
-            start(PROTO_ASCII, FRAME_RATE_HZ * 1000u);
+            start(PROTO_ASCII, ascii_rate_mhz());
         break;
     case 's':
         stop();
@@ -240,13 +267,61 @@ static void handle_burst(void)
 void protocol_init(void)
 {
     burst_len = 0;
+    in_line = false;
+    diag_init();
     stop();
+}
+
+/* Zeichen einer #-Zeile; \r oder \n schliesst sie ab */
+static void line_char(int b)
+{
+    if (b == '\r' || b == '\n') {
+        in_line = false;
+        skip_lf = b == '\r';
+        if (line_overflow) {
+            diag_line_too_long();
+        } else {
+            while (line_len && line_buf[line_len - 1u] == ' ')
+                line_len--;
+            line_buf[line_len] = '\0';
+            diag_line(line_buf);
+        }
+    } else if (line_len < LINE_MAX) {
+        line_buf[line_len++] = (char)b;
+    } else {
+        line_overflow = true;
+    }
 }
 
 void protocol_poll(void)
 {
     int b;
     while ((b = serial_read()) >= 0) {
+        /* PST-Diag 1: '#' beginnt eine Zeile, die bis \n getrennt geparst wird.
+         * LabVIEW sendet nie '#'; deren Befehle laufen unveraendert weiter. */
+        if (in_line && HAL_GetTick() - line_tick >= LINE_TIMEOUT_MS)
+            in_line = false;              /* angefangene Zeile ohne Ende verwerfen */
+        if (in_line) {
+            line_char(b);
+            line_tick = HAL_GetTick();
+            continue;
+        }
+        if (skip_lf && b == '\n') {
+            skip_lf = false;              /* \r\n: \n gehoert noch zur Zeile */
+            continue;
+        }
+        skip_lf = false;
+        if (b == '#') {
+            if (burst_len) {              /* vorher empfangene Zeichen zuerst (Reihenfolge) */
+                handle_burst();
+                burst_len = 0;
+            }
+            in_line = true;
+            line_overflow = false;
+            line_len = 0;
+            line_tick = HAL_GetTick();
+            continue;
+        }
         if (burst_len < sizeof burst)
             burst[burst_len++] = (uint8_t)b;
         else
@@ -257,8 +332,13 @@ void protocol_poll(void)
         burst_len = 0;
     }
 
+    if (in_line && HAL_GetTick() - line_tick >= LINE_TIMEOUT_MS)
+        in_line = false;                  /* angefangene Zeile ohne Ende verwerfen */
+
     if (BREAK_STOPS_STREAM && serial_take_break() && proto == PROTO_ASCII)
         stop();
+
+    diag_poll();
 }
 
 /* ------------------------------------------------------------ Telegramme */
@@ -280,13 +360,13 @@ static void send_ascii(const capture_frame_t *fr)
     fmt_char(&f, ';');
     fmt_fixed(&f, fr->rate_hz, 2);
     fmt_char(&f, ';');
-    fmt_fixed(&f, fr->ign_hz, ASCII_FREQ_DECIMALS);
+    fmt_fixed(&f, fr->ign_hz, (unsigned)SET(S_FREQ_DEC));
     fmt_char(&f, ';');
-    fmt_fixed(&f, fr->roll_hz, ASCII_FREQ_DECIMALS);
+    fmt_fixed(&f, fr->roll_hz, (unsigned)SET(S_FREQ_DEC));
     fmt_char(&f, ';');
     fmt_fixed(&f, egt1, 0);
     fmt_char(&f, ';');
-    fmt_fixed(&f, afr_value(AFR_SOURCE), 2);
+    fmt_fixed(&f, afr_value((unsigned)SET(S_AFR_SRC)), 2);
     fmt_char(&f, ';');
     fmt_fixed(&f, egt2, 0);
     fmt_char(&f, '\n');
@@ -341,18 +421,25 @@ void protocol_on_frame(const capture_frame_t *fr)
         return;
 
     cycle++;                      /* erstes Telegramm = 1, wie beim Mega */
-    if (proto == PROTO_ASCII)
+    bool mode_d = proto == PROTO_ASCII && diag_mode_d();
+    if (diag_output_busy())
+        diag_note_displaced();    /* Flanken-Ausgabe laeuft: Telegramm aussetzen */
+    else if (mode_d)
+        diag_send_frame(fr, cycle);
+    else if (proto == PROTO_ASCII)
         send_ascii(fr);
     else
         send_legacy(fr);
 
-    if (AUTOSTOP_S) {
+    /* Autostopp nur im Normalmodus (Ersatz fuer den Reset des Mega, LabVIEW) */
+    uint32_t autostop_s = (uint32_t)SET(S_AUTOSTOP_S);
+    if (autostop_s && !mode_d) {
         bool active = fr->ign_hz > 0.0f || fr->roll_hz > 0.0f;
         if (active) {
             activity_seen = true;
             idle_frames = 0;
         } else if (activity_seen) {
-            float limit = (float)AUTOSTOP_S * fr->rate_hz;
+            float limit = (float)autostop_s * fr->rate_hz;
             if (++idle_frames >= (uint32_t)limit)
                 stop();
         }

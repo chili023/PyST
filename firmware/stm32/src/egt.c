@@ -1,6 +1,7 @@
 #include "egt.h"
 
 #include "config.h"
+#include "settings.h"
 #include "stm32f4xx_hal.h"
 
 #define READ_INTERVAL_MS 250u
@@ -12,9 +13,8 @@ static bool valid[2];
 static bool pa13_ready;
 static uint32_t last_read;
 
-static const bool enabled[2] = {EGT1_ENABLE, EGT2_ENABLE};
-
-bool egt_enabled(unsigned ch) { return ch < 2 && enabled[ch]; }
+/* Kanaele aus den Einstellungen (egt1/egt2), zur Laufzeit umschaltbar */
+bool egt_enabled(unsigned ch) { return ch < 2 && SET(ch ? S_EGT2 : S_EGT1) != 0; }
 
 static void cs(unsigned ch, GPIO_PinState s)
 {
@@ -87,16 +87,16 @@ void egt_poll(void)
 {
     uint32_t now = HAL_GetTick();
 
-    if (enabled[0] && !pa13_ready && now >= PA13_DELAY_MS)
+    if (egt_enabled(0) && !pa13_ready && now >= PA13_DELAY_MS)
         configure_pa13();
 
     if (now - last_read < READ_INTERVAL_MS)
         return;
     last_read = now;
 
-    if (enabled[0] && pa13_ready)
+    if (egt_enabled(0) && pa13_ready)
         read_channel(0);
-    if (enabled[1])
+    if (egt_enabled(1))
         read_channel(1);
 }
 

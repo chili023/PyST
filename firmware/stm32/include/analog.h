@@ -12,7 +12,7 @@ void analog_init(void);
 /* Gemittelter Rohwert 0..4095. ch: 1 = PB0, 2 = PA1. */
 uint16_t analog_read(unsigned ch);
 
-/* Rohwert -> AFR nach AFR_AT_0V / AFR_AT_FULLSCALE aus config.h */
+/* Rohwert -> AFR nach den Einstellungen afr_0v / afr_fs (Standard: config.h) */
 float analog_to_afr(uint16_t raw);
 
 #endif /* ANALOG_H */

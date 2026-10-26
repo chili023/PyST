@@ -1,6 +1,7 @@
 #include "analog.h"
 
 #include "config.h"
+#include "settings.h"
 #include "stm32f4xx_hal.h"
 
 #define SAMPLES 8u
@@ -56,5 +57,6 @@ uint16_t analog_read(unsigned ch)
 
 float analog_to_afr(uint16_t raw)
 {
-    return AFR_AT_0V + (AFR_AT_FULLSCALE - AFR_AT_0V) * (float)raw / 4096.0f;
+    float a0 = (float)SET(S_AFR_0V) / 100.0f, fs = (float)SET(S_AFR_FS) / 100.0f;
+    return a0 + (fs - a0) * (float)raw / 4096.0f;
 }
