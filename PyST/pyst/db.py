@@ -169,6 +169,7 @@ class RunRow:
     farbe: str
     sichtbar: bool
     params: Dict[str, Any] = field(default_factory=dict)
+    fehler: Optional[Dict[str, float]] = None      # Fehleranteile in % (channels.fault_summary)
 
     @property
     def path(self) -> str:
@@ -210,6 +211,11 @@ class Database:
             q = ",".join("?" * len(OLD_AUTO_COLORS))
             self.con.execute(f"UPDATE runs SET farbe='' WHERE farbe IN ({q})", OLD_AUTO_COLORS)
             self.set_meta("colors_v2", "1")
+        # v3 (PyST 1.3): Fehleranteile je Lauf (JSON, leer = noch nicht berechnet)
+        cols = {r["name"] for r in self.con.execute("PRAGMA table_info(runs)")}
+        if "fehler" not in cols:
+            self.con.execute("ALTER TABLE runs ADD COLUMN fehler TEXT")
+            self.con.commit()
 
     def runs_dir(self) -> str:
         d = os.path.join(os.path.dirname(self.path), "messungen")
@@ -288,7 +294,8 @@ class Database:
                       setup_id=r["setup_id"], p_max=r["p_max"] or 0.0, n_pmax=r["n_pmax"] or 0.0,
                       m_max=r["m_max"] or 0.0, n_mmax=r["n_mmax"] or 0.0, ka=r["ka"] or 0.0,
                       rate=r["rate"] or 0.0, notiz=r["notiz"] or "", farbe=r["farbe"] or "",
-                      sichtbar=bool(r["sichtbar"]), params=json.loads(r["params"] or "{}"))
+                      sichtbar=bool(r["sichtbar"]), params=json.loads(r["params"] or "{}"),
+                      fehler=json.loads(r["fehler"]) if r["fehler"] else None)
 
     def runs(self, vehicle_id: Optional[int] = None, setup_id: Optional[int] = None) -> List[RunRow]:
         q, args = "SELECT * FROM runs", []
@@ -322,6 +329,8 @@ class Database:
             kw["params"] = json.dumps(kw["params"])
         if "sichtbar" in kw:
             kw["sichtbar"] = int(kw["sichtbar"])
+        if "fehler" in kw and kw["fehler"] is not None:
+            kw["fehler"] = json.dumps(kw["fehler"])
         cols = ", ".join(f"{k}=?" for k in kw)
         self.con.execute(f"UPDATE runs SET {cols} WHERE id=?", (*kw.values(), rid))
         self.con.commit()
@@ -334,36 +343,130 @@ class Database:
             shutil.rmtree(r.ordner, ignore_errors=True)
 
     # ------------------------------------------------------------ Import
-    def import_file(self, path: str, vehicle_id=None, setup_id=None) -> int:
-        """LabVIEW-XML oder PyST-Ordner in die Datenbank uebernehmen (Datei wird kopiert)."""
-        from . import physics, storage
-        run = storage.load_any(path)
-        res = storage.recompute(run)
-        src = path if not os.path.isdir(path) else os.path.join(path, "lauf.json")
-        name = os.path.splitext(os.path.basename(src))[0] if run["source"] == "LabVIEW" else run["name"]
-        target = os.path.join(self.runs_dir(), name.strip().replace(" ", "_"))
+    def _target(self, name: str) -> str:
+        base = name.strip().replace(" ", "_") or "lauf"
+        target = os.path.join(self.runs_dir(), base)
         n = 1
         while os.path.exists(target):
             n += 1
-            target = os.path.join(self.runs_dir(), f"{name.strip().replace(' ', '_')}_{n}")
+            target = os.path.join(self.runs_dir(), f"{base}_{n}")
+        return target
+
+    @staticmethod
+    def _iso(datum: str) -> str:
+        for fmt in ("%d.%m.%Y %H:%M", "%d.%m.%Y %H:%M:%S"):
+            try:
+                return _dt.datetime.strptime(datum.strip(), fmt).isoformat(timespec="seconds")
+            except ValueError:
+                pass
+        return datum
+
+    def _add_loaded(self, run, target: str, datei: str, name: str, vehicle_id=None, setup_id=None,
+                    notiz: str = "", farbe: str = "", params=None, sichtbar: bool = False) -> int:
+        from . import physics, storage
+        from .channels import run_faults
+        p = params or run["params"]
+        res = None if run.get("kind") == "dauermessung" else storage.recompute(run, p)
+        datum = self._iso(run.get("date", "") or self._now())
+        try:
+            fehler = run_faults(run)[1]
+        except Exception:
+            fehler = None
+        quelle = "Dauermessung" if run.get("kind") == "dauermessung" else run["source"]
+        rid = self.add_run(target, datei, quelle, name, datum, res, params=p.__dict__,
+                           rate=physics.sample_rate(run["dt"]), vehicle_id=vehicle_id, setup_id=setup_id,
+                           notiz=notiz, farbe=farbe, sichtbar=sichtbar)
+        if fehler is not None:
+            self.update_run(rid, fehler=fehler)
+        return rid
+
+    def import_file(self, path: str, vehicle_id=None, setup_id=None, params=None) -> int:
+        """LabVIEW-XML, PyST-Ordner oder Terminal-Mitschnitt in die Datenbank uebernehmen (wird kopiert bzw.
+        umgewandelt). params: Pruefstandsparameter fuer Mitschnitte (die keine enthalten).
+        .pyst-Dateien: import_pyst (mehrere Laeufe)."""
+        from . import storage
+        if path.lower().endswith(storage.PYST_EXT):
+            return self.import_pyst(path, vehicle_id, setup_id)[0]
+        if storage.is_terminal_log(path):
+            run = storage.parse_terminal_log(path, params)
+            target = self._target(run["name"])
+            storage.write_imported_log(run, target)
+            return self._add_loaded(run, target, "lauf.json", run["name"], vehicle_id, setup_id,
+                                    notiz=run["meta"].get("hinweis", ""))
+        run = storage.load_any(path)
+        src = path if not os.path.isdir(path) else os.path.join(path, "lauf.json")
+        name = os.path.splitext(os.path.basename(src))[0] if run["source"] == "LabVIEW" else run["name"]
+        target = self._target(name)
         if os.path.isdir(path):
             shutil.copytree(path, target)
+            datei = "lauf.json"
+        elif path.lower().endswith(".json"):
+            shutil.copytree(os.path.dirname(os.path.abspath(path)), target)
             datei = "lauf.json"
         else:
             os.makedirs(target)
             datei = os.path.basename(path)
             shutil.copy2(path, os.path.join(target, datei))
         notiz = " ".join(x for x in (run.get("vehicle", ""), run.get("title", "")) if x)
-        datum = run.get("date", "") or self._now()
-        for fmt in ("%d.%m.%Y %H:%M", "%d.%m.%Y %H:%M:%S"):
-            try:
-                datum = _dt.datetime.strptime(datum.strip(), fmt).isoformat(timespec="seconds")
-                break
-            except ValueError:
-                pass
-        return self.add_run(target, datei, run["source"], name, datum, res, params=run["params"].__dict__,
-                            rate=physics.sample_rate(run["dt"]), vehicle_id=vehicle_id, setup_id=setup_id,
-                            notiz=notiz, sichtbar=False)
+        return self._add_loaded(run, target, datei, name, vehicle_id, setup_id, notiz=notiz)
+
+    def add_folder(self, folder: str, vehicle_id=None, setup_id=None, sichtbar: bool = False) -> int:
+        """Bereits im Datenordner liegenden Lauf (z.B. beendete Dauermessung) eintragen."""
+        from . import storage
+        run = storage.load_any(folder)
+        return self._add_loaded(run, folder, "lauf.json", run["name"], vehicle_id, setup_id, sichtbar=sichtbar)
+
+    def _find_vehicle(self, data: Dict[str, Any]) -> Optional[int]:
+        name = self.vehicle_name(data)
+        for r in self.vehicles():
+            if r["name"] == name:
+                return r["id"]
+        return None
+
+    def import_pyst(self, path: str, vehicle_id=None, setup_id=None) -> List[int]:
+        """Alle Laeufe einer .pyst-Datei uebernehmen. Fahrzeug/Setup aus der Datei werden angelegt (bzw. ein
+        gleichnamiges verwendet), sonst gelten vehicle_id/setup_id. Schon vorhandene Laeufe (gleicher Name,
+        Datum, Quelle) werden nicht doppelt angelegt."""
+        from . import physics, storage
+        ids = []
+        for run in storage.load_pyst(path):
+            e = run["pyst"]
+            datum = self._iso(e.get("datum") or run.get("date", ""))
+            quelle = e.get("quelle") or run["source"]
+            dup = self.con.execute("SELECT id FROM runs WHERE name=? AND datum=? AND quelle=?",
+                                   (e.get("name", run["name"]), datum, quelle)).fetchone()
+            if dup:
+                ids.append(dup["id"])
+                continue
+            vid, sid = vehicle_id, setup_id
+            veh = e.get("fahrzeug") or {}
+            if veh:
+                vdata = {k: v for k, v in veh.items() if k not in ("id", "notiz")}
+                vid = self._find_vehicle(vdata) or self.save_vehicle({**vdata, "notiz": veh.get("notiz", "")})
+                sid = None
+                st = e.get("setup") or {}
+                if st:
+                    for r in self.setups(vid):
+                        if (r["name"] or "") == st.get("name", ""):
+                            sid = r["id"]
+                            break
+                    if sid is None:
+                        sdata = {k: v for k, v in st.items() if k not in ("id", "vehicle_id", "name", "notiz")}
+                        sid = self.save_setup(vid, st.get("name", ""), sdata, st.get("notiz", ""))
+            target = self._target(e.get("name") or run["name"])
+            os.makedirs(target)
+            storage.extract_pyst_entry(path, e, target)
+            datei = "lauf.json" if os.path.exists(os.path.join(target, "lauf.json")) else \
+                next((f for f in os.listdir(target) if f.lower().endswith(".xml")), "lauf.json")
+            p = run["params"]
+            res = None if run.get("kind") == "dauermessung" else storage.recompute(run, p)
+            rid = self.add_run(target, datei, quelle, e.get("name", run["name"]), datum, res, params=p.__dict__,
+                               rate=physics.sample_rate(run["dt"]), vehicle_id=vid, setup_id=sid,
+                               notiz=e.get("notiz", ""), farbe=e.get("farbe", ""), sichtbar=False)
+            if e.get("fehler"):
+                self.update_run(rid, fehler=e["fehler"])
+            ids.append(rid)
+        return ids
 
     # ------------------------------------------------------------ Einstellungen
     def get_meta(self, key: str, default: str = "") -> str:

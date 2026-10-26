@@ -2,6 +2,7 @@
 # Raspberry Pi / Linux: richtet beim ersten Mal alles ein und startet PyST.
 #   sudo apt install python3-venv          (falls noch nicht vorhanden)
 #   sudo usermod -aG dialout $USER         (Zugriff auf /dev/ttyACM0, danach neu anmelden)
+export PYST_CWD="$PWD"          # Dateien auf der Kommandozeile relativ zum Aufrufort
 cd "$(dirname "$0")"
 if [ ! -x .venv/bin/python ]; then
   echo "Erster Start: Python-Umgebung wird eingerichtet ..."

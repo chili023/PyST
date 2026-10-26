@@ -403,7 +403,8 @@ class LogViewer(QtWidgets.QWidget):
         by_setup = self.sort_combo.currentIndex() == 1
         groups: Dict[str, QtWidgets.QTreeWidgetItem] = {}
         for row in runs:
-            it = QtWidgets.QTreeWidgetItem([row.datum.replace("T", " ")[:16], f"{row.p_max:.1f}",
+            it = QtWidgets.QTreeWidgetItem([row.datum.replace("T", " ")[:16],
+                                            "Dauer" if row.quelle == "Dauermessung" else f"{row.p_max:.1f}",
                                             setups.get(row.setup_id, "")])
             it.setData(0, QtCore.Qt.UserRole, row.id)
             it.setToolTip(0, f"{row.name}\n{row.notiz}" if row.notiz else row.name)
@@ -467,7 +468,9 @@ class LogViewer(QtWidgets.QWidget):
             if row is None:
                 continue
             text = " · ".join(x for x in (vehicles.get(row.vehicle_id, ""), setups.get(row.setup_id, ""),
-                                          row.datum.replace("T", " ")[:16], f"{row.p_max:.1f} PS") if x)
+                                          row.datum.replace("T", " ")[:16],
+                                          "Dauermessung" if row.quelle == "Dauermessung" else f"{row.p_max:.1f} PS")
+                            if x)
             it = QtWidgets.QListWidgetItem(_icon(run_color(row)), text)
             it.setData(QtCore.Qt.UserRole, rid)
             it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
@@ -650,6 +653,8 @@ class LogViewer(QtWidgets.QWidget):
                 pi.showAxis(ax)
                 pi.getAxis(ax).setStyle(showValues=False, tickLength=0)
             pi.setYRange(-0.05, 1.05, padding=0)
+            pi.setDownsampling(auto=True, mode="peak")         # lange Dauermessungen
+            pi.setClipToView(True)
             pi.vb.setMouseEnabled(x=True, y=False)
             if prev is not None:
                 pi.setXLink(prev)
@@ -684,6 +689,15 @@ class LogViewer(QtWidgets.QWidget):
                     color = colors[rid] if multi else self.color_of.get(n, "#000")
                     style = STYLES[ci % 4] if multi else QtCore.Qt.SolidLine
                     pi.plot(x, y, pen=pg.mkPen(color, width=1.6, style=style), connect="finite")
+            # Marker der Dauermessung (Text nur im obersten Feld)
+            if self.xaxis.currentText() == "Zeit" and not self.only_seg.isChecked():
+                for rid in runs:
+                    d = self.data[rid]
+                    for t, text in (d[2] if len(d) > 2 else []):
+                        pi.addItem(pg.InfiniteLine(t, angle=90, pen=pg.mkPen("#2e7d32", width=1.2),
+                                                   label=text if p == 0 else None,
+                                                   labelOpts={"position": 0.92, "color": "#2e7d32"}),
+                                   ignoreBounds=True)
             line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("#444", width=1))
             pi.addItem(line, ignoreBounds=True)
             self.plots.append(pi)
