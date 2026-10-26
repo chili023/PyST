@@ -85,7 +85,7 @@ static void test_float_print()
 static void test_fmt_normal()
 {
   PstSensors s;
-  // Kunden-Mitschnitt 3.0.0 mit thermo=1, Thermoelement offen, ohne Spartan:
+  // Mitschnitt 3.0.0 mit thermo=1, Thermoelement offen, ohne Spartan:
   //   "1;41.67;49;869;nan;20.00;740\n"
   s.thermo = 1; s.egt_c = NAN; s.lambda_temp = 740; s.afr100 = 2000;
   char b[160];

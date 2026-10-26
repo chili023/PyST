@@ -67,15 +67,17 @@ cd PyST
 
 | Datei | Wann |
 |---|---|
-| `PST-STM32_v1.0.0.bin` | Standard (Doppelimpulsfilter Zündung 25 %) |
-| `PST-STM32_v1.0.0_dp70.bin` | Zündsignal liefert Störimpulse (z.B. 2 Impulse pro Umdrehung) – nur Einzylinder/gleichmäßige Zündfolge |
+| `PST-STM32_v1.1.0.bin` | Standard (Doppelimpulsfilter Zündung 25 %) + Oszi-/Diagnosemodus [PST-Diag 1](docs/04_PST_Diag_1.md); Filter per `#SET` ohne Neu-Flashen änderbar (z.B. `#SET ign_lockout_pct 70`) |
+| `PST-STM32_v1.1.0_dp70.bin` | wie oben, Doppelimpulsfilter ab Werk 70 % |
+| `PST-STM32_v1.0.0.bin` | bisherige Version (zum Zurückwechseln) |
+| `PST-STM32_v1.0.0_dp70.bin` | bisherige Version, Zündsignal liefert Störimpulse (z.B. 2 Impulse pro Umdrehung) – nur Einzylinder/gleichmäßige Zündfolge |
 
 **Flashen – auf allen Systemen gleich:** Nucleo per USB anschließen, es erscheint ein Laufwerk
 **NODE_F446RE**. Die `.bin`-Datei darauf kopieren/ziehen. Die LED auf dem ST-LINK blinkt, danach startet
 die neue Firmware. Fertig.
 
 Alternativen:
-- **Mac/Linux:** `st-flash --connect-under-reset write PST-STM32_v1.0.0.bin 0x08000000`
+- **Mac/Linux:** `st-flash --connect-under-reset write PST-STM32_v1.1.0.bin 0x08000000`
   (`brew install stlink` bzw. `sudo apt install stlink-tools`)
 - **Windows:** STM32CubeProgrammer, Verbindung „Under Reset“, Adresse 0x08000000
 - **Selbst bauen** (PlatformIO, alle Systeme): `cd firmware/stm32 && pio run -t upload`

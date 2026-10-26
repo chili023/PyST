@@ -8,6 +8,10 @@ Open-Source-Leistungsprüfstand (Rollenprüfstand):
 - **PST-STM32-Firmware** – neue Firmware für die Messelektronik auf **STM32F446RE (Nucleo-64)**.
   Spricht das Protokoll des Arduino-Mega-Sketches → läuft mit **LabVIEW 3.2.1**, mit der
   **STM-LabVIEW 0.2.0** (automatisch erkannt) und mit **PyST**.
+- **Oszi-/Diagnosemodus [PST-Diag 1](docs/04_PST_Diag_1.md)** (Mega 3.1.0, PST-STM32 1.1.0, PyST 1.3):
+  Dauermessung, Linienschreiber, Ereignis-Trigger, Flanken-Ansicht und Geräte-Einstellungen – per Befehl
+  umschaltbar, ohne Neu-Flashen; nach jedem Neustart wieder LabVIEW-kompatibel.
+- **Läufe weitergeben**: als `.pyst`-Datei oder als einzelne HTML-Datei, die offline in jedem Browser läuft.
 - **Arduino-Mega-Sketch 3.1.0** – der bisherige Mega-Aufbau läuft ebenfalls mit PyST; 3.1.0 misst jede
   Periode, meldet 0 Hz nach Signalausfall und hat den Oszi-/Diagnosemodus [PST-Diag 1](docs/04_PST_Diag_1.md).
 
@@ -18,14 +22,24 @@ Open-Source-Leistungsprüfstand (Rollenprüfstand):
 | Messelektronik | LabVIEW 3.2.1 | STM-LabVIEW 0.2.0 | PyST |
 |---|---|---|---|
 | STM32 + PST-STM32-Firmware 1.0 | ✅ am Prüfstand | ✅ Protokoll geprüft¹ | ✅ am Prüfstand |
+| STM32 + PST-STM32-Firmware 1.1 | ✅ Format byte-identisch⁴ | ✅ Format byte-identisch⁴ | ✅ + PST-Diag 1 (ab PyST 1.3) |
 | Arduino Mega + Sketch 3.0.0 | ✅ (Original) | Arduino-Modus² | ✅ im Simulator geprüft³ |
 | Arduino Mega + Sketch 3.1.0 | ✅ Format byte-identisch⁴ | Arduino-Modus² | ✅ + PST-Diag 1 (ab PyST 1.3) |
 
 ¹ 8-Byte-Befehle und 20-Byte-Binärtelegramm per Host-Test gegen die aus LabVIEW rekonstruierte Auswertung.
 ² Umschalter „Arduino<>STM“ der STM-LabVIEW, nicht getestet.
 ³ `SIM:mega` bildet den Sketch nach (Umschalten mit `m`, ganze Hz, 61 Hz); am echten Mega noch zu bestätigen.
-⁴ Normales Telegramm per Host-Test und im AVR-Simulator gegen Arduino `Serial.print` geprüft; am echten
-  Mega mit LabVIEW noch zu bestätigen.
+⁴ Normales Telegramm per Host-Test geprüft (F446: gegen 1.0.0; Mega: zusätzlich im AVR-Simulator gegen
+  Arduino `Serial.print`); am echten Gerät mit LabVIEW noch zu bestätigen.
+
+## Download
+
+Diese Version (Beta, noch nicht an allen Geräten geprüft) liegt im Branch **`release/1.3-beta`**:
+auf GitHub den Branch `release/1.3-beta` wählen → **Code → Download ZIP**, oder
+
+```bash
+git clone -b release/1.3-beta https://github.com/chili023/PyST.git
+```
 
 ## Schnellstart
 
@@ -38,7 +52,7 @@ cd PyST
 ./start_mac.command --sim    # ohne Hardware: Simulator spielt einen echten Lauf ab
 ```
 
-STM32 flashen: `firmware/stm32/bin/PST-STM32_v1.0.0.bin` auf das Laufwerk **NODE_F446RE** ziehen.
+STM32 flashen: `firmware/stm32/bin/PST-STM32_v1.1.0.bin` (bisher `PST-STM32_v1.0.0.bin`) auf das Laufwerk **NODE_F446RE** ziehen.
 
 ## Inhalt
 
@@ -46,7 +60,7 @@ STM32 flashen: `firmware/stm32/bin/PST-STM32_v1.0.0.bin` auf das Laufwerk **NODE
 PyST/            PC-Software (Python 3.9+, PySide6, pyqtgraph)
 firmware/stm32/        Firmware STM32F446RE (PlatformIO), fertige .bin in firmware/stm32/bin/
 firmware/arduino-mega/ Arduino-Mega-Sketch 3.1.0 (PlatformIO/Arduino IDE), 3.0.0 + Bibliotheken
-docs/                  Roadmap, Protokoll v2, Hardware v3, WSB/CAN-Vorbereitung, Zahnriementrieb W130
+docs/                  Roadmap, Zündsignal-Diagnose, Firmware-Messung, Protokoll v2, PST-Diag 1
 ```
 
 ## Dokumentation
@@ -56,7 +70,7 @@ docs/                  Roadmap, Protokoll v2, Hardware v3, WSB/CAN-Vorbereitung,
 - [firmware/stm32/README.md](firmware/stm32/README.md) – Firmware, Protokoll, Anschlussbelegung, Einstellungen
 - [PyST/TESTPLAN.md](PyST/TESTPLAN.md) – Vergleichstest alt/neu
 - [docs/04_PST_Diag_1.md](docs/04_PST_Diag_1.md) – Oszi-/Diagnosemodus PST-Diag 1 (Befehle, Telegramme, Burst)
-- [docs/ROADMAP.md](docs/ROADMAP.md) – Weiterentwicklung (Protokoll v2, Platine v3, rusEFI, Wirbelstrombremse)
+- [docs/ROADMAP.md](docs/ROADMAP.md) – Weiterentwicklung (Protokoll v2, rusEFI, Wirbelstrombremse)
 
 ## Wichtige Hinweise
 
