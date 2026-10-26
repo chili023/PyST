@@ -69,6 +69,27 @@ class Parser(unittest.TestCase):
         self.assertFalse(f.is_basis or f.is_zange_usb)
         self.assertEqual(f.ign_source, "")
 
+    def test_esp_bruecke_ausgelassen(self):
+        from types import SimpleNamespace as P
+        mess = P(device="/dev/ttyACM0", description="PyST Basis rev31", interface="PyST Basis", vid=0x1209,
+                 pid=0x0001, location="1-2:1.0", hwid="USB VID:PID=1209:0001")
+        esp = P(device="/dev/ttyACM1", description="PyST Basis rev31", interface="PyST Basis ESP-Bruecke",
+                vid=0x1209, pid=0x0001, location="1-2:1.2", hwid="USB VID:PID=1209:0001")
+        win = P(device="COM7", description="USB Serial Device (COM7)", interface=None, vid=0x1209, pid=0x0001,
+                location=None, hwid="USB VID:PID=1209:0001 SER=1 LOCATION=1-2:x.2 MI_02")
+        self.assertFalse(link.is_esp_bridge(mess))
+        self.assertTrue(link.is_esp_bridge(esp))
+        self.assertTrue(link.is_esp_bridge(win))
+        orig = link.list_ports
+        link.list_ports = P(comports=lambda: [mess, esp, win])
+        try:
+            devs = [d for d, _ in link.list_serial_ports()]
+        finally:
+            link.list_ports = orig
+        self.assertIn("/dev/ttyACM0", devs)
+        self.assertNotIn("/dev/ttyACM1", devs)
+        self.assertNotIn("COM7", devs)
+
     def test_mehrere_zangen(self):
         z1 = ("#ZANGE;id=1;mac=34:85:18:00:00:01;akku_mv=;akku_pct=;vbus=;rssi=;funken=;log=;blitz=;phi=;fw=0.1.0;"
               "sync_us=-1;verbunden=0")

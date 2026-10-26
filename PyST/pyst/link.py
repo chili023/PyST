@@ -149,11 +149,28 @@ class TcpSerial:
             pass
 
 
+BASIS_USB_ID = (0x1209, 0x0001)                                     # PyST-Basis (Testkennung, pid.codes)
+
+
+def is_esp_bridge(p) -> bool:
+    """Zweiter USB-Port der Basis: Bruecke zum Flashen des Basis-ESP, kein Messport.
+    Erkennung am Interface-Namen bzw. an Interface 2 (Linux 'x-y:1.2', Windows 'MI_02')."""
+    text = f"{getattr(p, 'interface', None) or ''} {p.description or ''}".lower()
+    if "esp-bruecke" in text or "esp-brücke" in text:
+        return True
+    if (p.vid, p.pid) != BASIS_USB_ID:
+        return False
+    loc = (getattr(p, "location", None) or "").lower()
+    return loc.endswith(":1.2") or "mi_02" in (p.hwid or "").lower()
+
+
 def list_serial_ports() -> List[Tuple[str, str]]:
     ports = [(name, desc) for name, (_f, desc) in SIM_RUNS.items()]
     ports += SIM_VARIANTS
     if list_ports:
         for p in list_ports.comports():
+            if is_esp_bridge(p):
+                continue
             desc = p.description or ""
             if (p.vid, p.pid) == ZANGE_USB_ID:
                 desc = "PyST-Zange per USB? (ESP32-USB) – " + desc
