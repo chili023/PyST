@@ -91,21 +91,51 @@ PyST verbinden → unter „Verbindung“ steht „PST-STM32 Version 1.0.0“.
 Einstellungen (Messrate, Filter, EGT, AFR-Eingang …): `firmware/stm32/include/config.h`, dann neu bauen.
 Details und Anschlussbelegung: [firmware/stm32/README.md](firmware/stm32/README.md).
 
-### Variante B: Arduino Mega 2560 mit Sketch 3.0.0
+### Variante B: Arduino Mega 2560 mit Sketch 3.1.0
 
-1. [Arduino IDE 2](https://www.arduino.cc/en/software) installieren (Mac/Linux/Windows).
+Sketch 3.1.0 (`firmware/arduino-mega/PST_V3.1.0/`) verhält sich nach dem Start wie 3.0.0 (LabVIEW 3.2.1
+läuft unverändert), misst aber jede Periode, meldet 0 Hz nach Signalausfall und kann zusätzlich den
+Oszi-/Diagnosemodus [PST-Diag 1](docs/04_PST_Diag_1.md). Einstellungen werden **nicht mehr im Quelltext**
+geändert, sondern über die serielle Schnittstelle gesetzt und im EEPROM gespeichert.
+
+**Mit der Arduino IDE 2** (Mac/Linux/Windows):
+
+1. [Arduino IDE 2](https://www.arduino.cc/en/software) installieren.
 2. Bibliotheken: *Sketch → Bibliothek einbinden → .ZIP-Bibliothek hinzufügen* – alle drei aus
    `firmware/arduino-mega/libraries/` (SparkFun BME280, Adafruit MAX31855, Adafruit BusIO).
-   Alternativ über den Bibliotheksverwalter mit denselben Namen.
-3. `firmware/arduino-mega/240328_PST_V3.0.0/240328_PST_V3.0.0.ino` öffnen.
-4. Oben im Sketch anpassen: `BMEADDRESS` (0x76 oder 0x77 je nach Platine), `thermo = true`, wenn ein
-   MAX31855-Thermoelement angeschlossen ist, `RINGSIZE5` passend zum Rollengeber.
-5. *Werkzeuge → Board: „Arduino Mega or Mega 2560“*, Port wählen, **Hochladen**.
-6. Test im seriellen Monitor (115200 Baud, „Neue Zeile“): `v` → Version, `e` → Klimadaten, `m` → Messung an/aus.
+3. `firmware/arduino-mega/PST_V3.1.0/PST_V3.1.0.ino` öffnen (die Dateien `pst_core.h/.cpp` und
+   `pst_isr.h` im selben Ordner gehören dazu).
+4. *Werkzeuge → Board: „Arduino Mega or Mega 2560“*, Port wählen, **Hochladen**.
 
-PyST erkennt den Mega automatisch (er antwortet mit „Version 3.0.0“) und berücksichtigt, dass `m`
-beim Mega die Messung umschaltet. Der Mega startet beim Öffnen des Ports neu (DTR) – PyST wartet
-dafür 2 s.
+**Oder mit PlatformIO** (nimmt die Bibliotheken direkt aus den ZIPs):
+
+```bash
+cd firmware/arduino-mega/PST_V3.1.0
+pio run -t upload            # nur bauen: pio run
+make -C test                 # Host-Tests (g++), ohne Hardware
+```
+
+**Einrichten** im seriellen Monitor (115200 Baud, Zeilenende „Neue Zeile“):
+
+```
+v                      → Version 3.1.0 vom 26.10.26; …
+#GET                   → alle Einstellungen
+#SET bme_addr 0x77     → BME280-Adresse (Platine 0x76 oder 0x77)
+#SET thermo 1          → MAX31855-Thermoelement vorhanden
+#SET ring_roll 30      → Ringspeicher Rolle (30–50 je nach Striche/Umdrehung)
+#SAVE                  → im EEPROM speichern (nur bei gestoppter Messung)
+e                      → Klimadaten, m → Messung an/aus
+```
+
+Ohne `#SAVE` gelten nach dem Neustart wieder die gespeicherten bzw. Standardwerte (= 3.0.0: BME280 0x76,
+kein Thermoelement, Ringspeicher 5/50, fallende Flanke, Pull-ups an). Alle Schlüssel:
+[docs/04_PST_Diag_1.md](docs/04_PST_Diag_1.md#9-umsetzung-arduino-mega-310).
+
+PyST erkennt den Mega automatisch (Antwort auf `v`) und berücksichtigt, dass `m` beim Mega die Messung
+umschaltet. Der Mega startet beim Öffnen des Ports neu (DTR) – PyST wartet dafür 2 s.
+
+**Sketch 3.0.0** (alt, `firmware/arduino-mega/240328_PST_V3.0.0/`) wird genauso hochgeladen; dort werden
+`BMEADDRESS`, `thermo` und `RINGSIZE5` oben im Quelltext angepasst.
 
 ---
 

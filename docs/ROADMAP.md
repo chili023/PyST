@@ -18,6 +18,10 @@ rusEFI-Anbindung und später eine aktiv geregelte Wirbelstrombremse (WSB).
   STM-LabVIEW 0.2.0 automatisch, exakte Perioden-Messung (11 ns), Sperrzeit und Doppelimpulsfilter,
   Autostopp, Watchdog, BME280/BMP280, 2× MAX6675. Zwei Varianten: Standard (Doppelimpulsfilter 25 %)
   und `nucleo_f446re_dp70` (70 %). Host-Tests für Frequenzberechnung und Protokoll.
+- **Arduino-Mega-Sketch 3.1.0**: Normalmodus byte-identisch zu 3.0.0 (LabVIEW 3.2.1), aber jede Periode
+  gemessen (3.0.0: jede zweite), 0 Hz nach Timeout, Pull-ups am richtigen Port, I²C-Timeout für AFR.
+  Neu: Oszi-/Diagnosemodus [PST-Diag 1](04_PST_Diag_1.md) (D-Telegramm, Flanken-Burst mit Trigger,
+  Einstellungen per `#SET`/`#SAVE` im EEPROM). Host-Tests und AVR-Simulator-Tests; am echten Mega noch zu prüfen.
 - **PyST** (Python/Qt, Mac/Linux/Windows): rechnet nachweislich wie LabVIEW 3.2.1 (6 echte Läufe:
   gleiche Pmax auf 0,1 PS, gleiche n(Pmax)), Datenbank für Fahrzeuge/Setups/Läufe, Auswerter wie
   MegaLogViewer, Setup-Vergleich, PDF/CSV, Import von LabVIEW-XML, Simulator mit echtem Lauf 161802.
