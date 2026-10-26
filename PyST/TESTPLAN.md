@@ -132,3 +132,34 @@ Haken „mit aktuellen Parametern rechnen“ für einen fairen Vergleich.
 
 Streuung zwischen drei Läufen derselben Konfiguration zuerst anschauen – nur Unterschiede,
 die deutlich größer sind, sind echte Unterschiede zwischen den Konfigurationen.
+
+## PyST 1.3: Oszi / Dauermessung, Fehlerkanäle, Weitergeben
+
+Ohne Hardware (Simulator) – alles muss vorführbar sein:
+
+1. Port `SIM:stoerung` verbinden → Reiter „Oszi / Dauermessung“ → Gerät zeigt „PST-Diag 1“.
+   „● Dauermessung starten“: Linienschreiber läuft, Ereignisliste füllt sich (Rollensprung, Doppelimpuls …).
+2. Marker „Kabel bewegt“ (F2) → grüne Linie. Ereignis doppelklicken → Anzeige springt dorthin, „Live“ zurück.
+3. Trigger-Modus „Einzelschuss“, nur „Doppelimpuls“ anhaken → Anzeige bleibt beim ersten Doppelimpuls stehen.
+4. Flanken-Ansicht: beide, 300, beide Flanken, Trigger 25 %, Vorlauf 100 → Burst zeigt Doppelimpuls am Trigger (t = 0).
+5. „Geräte-Einstellungen …“: `ign_lockout_pct` = 50 übernehmen → „Zündung verworfen“ zählt, Doppelimpulse weg.
+6. „Dauermessung beenden“ → Lauf „Dauer“ in der Liste, Auswertung zeigt Marker und Fehlerkanäle.
+7. Port `SIM:mega300:stoerung` (alter Mega ohne `#CAP`): Flanken-Ansicht gesperrt, Software-Trigger meldet trotzdem.
+8. Abstürzen simulieren (PyST während der Dauermessung beenden mit `kill`): Ordner per „Öffnen“ importieren → Daten bis auf Sekunden da.
+
+Mit Hardware (Mega 3.1.0 / F446 1.1.0 neben Mega 3.0.0 / F446 1.0.0):
+
+| Prüfung | erwartet |
+|---|---|
+| Verbinden 3.0.0 / 1.0.0 | kein `#CAP` → „Gerät ohne PST-Diag 1“, Läufe wie bisher, LabVIEW-identisch |
+| Verbinden 3.1.0 / 1.1.0 | `#CAP` erkannt, Modus D nur während der Dauermessung |
+| Leistungslauf mit 3.1.0 | identisch zu 3.0.0 (Normalmodus) |
+| Kabel bewegen während Dauermessung | Marker + Rollensprung/Wackelkontakt im Linienschreiber, Fehler Rolle > 0 |
+| Burst Zündung, Flanke B | Pulsbreite des Zündimpulses, ggf. zweiter Impuls ~142° danach sichtbar |
+
+Kunden-Mitschnitte (nur lokal, nicht im Repo): `PYST_KUNDEN_LOGS=… python -m pytest tests -k kunden`.
+Ergebnis 26.10.26: Lauf 5 Fehler Rolle 58 %, Zündung 11 % (Doppelimpuls 2 %), 109 Ereignisse;
+Lauf 6 keine Fehler, keine Ereignisse.
+
+Weitergeben: Datei → Läufe weitergeben → `.pyst` → in einem zweiten PyST (anderer Benutzer/Rechner) öffnen:
+Fahrzeug/Setup/Notiz/Werte gleich. HTML-Ansicht am Handy öffnen (offline): Werte, Zoom, Kanäle, Vergleich.
