@@ -37,9 +37,15 @@ ROH_HEADER = ["zyklus", "pc_zeit_s", "messfrequenz_hz", "zuendung_hz", "rolle_hz
               "egt1_c", "afr", "egt2_c", "n_rolle_1_min", "dt_s", "n_zuendung_1_min"]
 DIAG_HEADER = ["diag_t_ms", "diag_ign_n", "diag_ign_pmin_us", "diag_ign_pmax_us", "diag_ign_rej",
                "diag_roll_n", "diag_roll_pmin_us", "diag_roll_pmax_us", "diag_roll_rej", "diag_flags"]
+# PyST-Basis/Zange: angehaengte Felder des D-Telegramms (Zuendstaerke, Zuendquelle)
+ZANGE_HEADER = ["diag_ign_peak_mv", "diag_ign_src"]
 
 
-def frame_row(f, t0: float, p: physics.DynoParams, diag: bool = False) -> list:
+def has_zange_fields(frames) -> bool:
+    return any(f.diag and "ign_peak_mv" in f.diag for f in frames)
+
+
+def frame_row(f, t0: float, p: physics.DynoParams, diag: bool = False, zange: bool = False) -> list:
     """Eine Zeile der roh.csv aus einem Telegramm (link.Frame)."""
     d = 1.0 / f.rate if f.rate > 0 else 0.0
     row = [f.cycle, f"{f.t - t0:.4f}", f.rate, f.ign_hz, f.roll_hz, f.egt1, f.afr, f.egt2,
@@ -47,7 +53,30 @@ def frame_row(f, t0: float, p: physics.DynoParams, diag: bool = False) -> list:
     if diag:
         g = f.diag or {}
         row += [f"{g.get(k[5:], float('nan')):g}" for k in DIAG_HEADER]
+        if zange:
+            row += [f"{g.get(k[5:], float('nan')):g}" for k in ZANGE_HEADER]
     return row
+
+
+def write_side_events(folder: str, t0: float, events) -> Tuple[int, int]:
+    """Ereignisse der Basis (basis.BasisEvent mit t_pc) eines Laufs: Marker -> marker.csv,
+    sonstige (Zange verbunden/verloren, Steckdosen) -> ereignisse.csv. Liefert (Marker, Ereignisse)."""
+    marks = [e for e in events if e.is_marker]
+    other = [e for e in events if not e.is_marker]
+    if marks:
+        with open(os.path.join(folder, "marker.csv"), "w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh, delimiter=";")
+            w.writerow(["zeit_s", "text"])
+            for e in marks:
+                w.writerow([f"{e.t_pc - t0:.3f}", e.text])
+    if other:
+        with open(os.path.join(folder, "ereignisse.csv"), "w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh, delimiter=";")
+            w.writerow(["zeit_s", "art", "text"])
+            for e in other:
+                w.writerow([f"{e.t_pc - t0:.3f}", "Zange" if e.kind in ("ZANGE", "PAIR") else
+                            "Steckdose" if e.kind == "DOSE" else e.kind, e.text])
+    return len(marks), len(other)
 
 
 def default_dir() -> str:
@@ -68,11 +97,15 @@ def save_run(ctrl, vehicle: str = "", firmware: str = "", base_dir: str = "") ->
     ecu = getattr(ctrl, "ecu_data", None)
     ecu_cols = rusefi.resample(ecu, np.array([f.t for f in ctrl.frames])) if ecu and ctrl.frames else {}
     has_diag = any(getattr(f, "diag", None) for f in ctrl.frames)
+    zange = has_diag and has_zange_fields(ctrl.frames)
     with open(os.path.join(folder, "roh.csv"), "w", newline="") as fh:
         w = csv.writer(fh, delimiter=";")
-        w.writerow(ROH_HEADER + (DIAG_HEADER if has_diag else []) + list(ecu_cols))
+        w.writerow(ROH_HEADER + (DIAG_HEADER if has_diag else []) + (ZANGE_HEADER if zange else []) + list(ecu_cols))
         for i, f in enumerate(ctrl.frames):
-            w.writerow(frame_row(f, t0, p, has_diag) + [f"{v[i]:.6g}" for v in ecu_cols.values()])
+            w.writerow(frame_row(f, t0, p, has_diag, zange) + [f"{v[i]:.6g}" for v in ecu_cols.values()])
+    basis_events = getattr(ctrl, "basis_events", None) or []
+    if basis_events and ctrl.frames:
+        write_side_events(folder, t0, basis_events)
     if ecu:
         with open(os.path.join(folder, "rusefi.csv"), "w", newline="") as fh:
             w = csv.writer(fh, delimiter=";")
@@ -427,8 +460,9 @@ def parse_terminal_log(path: str, params: Optional[physics.DynoParams] = None) -
             f.t = acc
             acc += 1.0 / f.rate if f.rate > 0 else 0.0
     has_diag = any(f.diag for f in frames)
-    header = ROH_HEADER + (DIAG_HEADER if has_diag else [])
-    rows = [frame_row(f, 0.0, p, has_diag) for f in frames]
+    zange = has_diag and has_zange_fields(frames)
+    header = ROH_HEADER + (DIAG_HEADER if has_diag else []) + (ZANGE_HEADER if zange else [])
+    rows = [frame_row(f, 0.0, p, has_diag, zange) for f in frames]
     cols = {h: np.array([_float(str(r[i])) for r in rows]) for i, h in enumerate(header)}
     date = _dt.datetime.fromtimestamp(first_stamp if first_stamp is not None else os.path.getmtime(path))
     meta = {"programm": f"PyST {__version__} – Import Terminal-Mitschnitt", "quelle": os.path.basename(path),

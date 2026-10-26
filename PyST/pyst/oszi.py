@@ -42,11 +42,12 @@ LIVE_CHANNELS = {
     "Zündung verworfen": ("verworfen", "#c62828"),
     "Rolle verworfen": ("verworfen", "#1f5fbf"),
     "Geräte-Flags": ("Flags", "#000000"),
+    "Zündstärke": ("mV", "#ff6f00"),
 }
 DIAG_LIVE = {"Flanken Zündung": "ign_n", "Flanken Rolle": "roll_n", "Zündung kürzeste Periode": "ign_pmin_us",
              "Zündung längste Periode": "ign_pmax_us", "Rolle kürzeste Periode": "roll_pmin_us",
              "Rolle längste Periode": "roll_pmax_us", "Zündung verworfen": "ign_rej", "Rolle verworfen": "roll_rej",
-             "Geräte-Flags": "flags"}
+             "Geräte-Flags": "flags", "Zündstärke": "ign_peak_mv"}
 DEFAULT_LIVE = ["Drehzahl Zündung", "Rolle × Übersetzung", "Übersetzung"]
 WINDOWS = [("10 s", 10.0), ("30 s", 30.0), ("1 min", 60.0), ("5 min", 300.0), ("30 min", 1800.0), ("alles", 0.0)]
 KEEP_S = 1800.0                     # so viel bleibt fuer die Anzeige im Speicher (alles steht auf der Platte)
@@ -135,6 +136,8 @@ def live_values(f, p: DynoParams) -> Dict[str, float]:
     if f.diag:
         for name, key in DIAG_LIVE.items():
             v[name] = f.diag.get(key, np.nan)
+        if not (v.get("Zündstärke", 0) > 0):
+            v["Zündstärke"] = np.nan                     # 0 = kein Funke im Fenster / keine Zange
         v["flags"] = f.diag.get("flags", 0)
         v["ign_pmin_us"] = f.diag.get("ign_pmin_us", 0)
     return v
@@ -525,6 +528,11 @@ class OsziPage(QtWidgets.QWidget):
         diag = bool(link and link.has_diag)
         if link is None:
             text = "kein Gerät verbunden"
+        elif diag and link.is_zange_usb:
+            text = f"{link.caps.get('fw', 'Zange')} · Zange per USB (nur Zündung) – galvanische Verbindung!"
+        elif diag and link.is_basis:
+            text = f"{link.caps.get('fw', 'PyST-Basis')} · " + ("Funk-Zange gekoppelt" if link.ign_source == "zange"
+                                                                 else "ohne Zündquelle (Zange koppeln)")
         elif diag:
             text = f"{link.caps.get('fw', 'PST-Diag 1')} · PST-Diag 1"
         else:
@@ -539,6 +547,15 @@ class OsziPage(QtWidgets.QWidget):
             self.b_n.setMaximum(mx)
             self.b_pre.setMaximum(mx - 1)
             self.b_state.setText(f"Burst bis {mx} Flanken, Auflösung {link.caps.get('tick_ns', '?')} ns.")
+            chans = link.channels.split(",")
+            for i in range(self.b_ch.count()):
+                ok = self.b_ch.itemData(i) == "A" and len(chans) > 1 or self.b_ch.itemData(i) in chans
+                self.b_ch.model().item(i).setEnabled(ok)
+            if not self.b_ch.model().item(self.b_ch.currentIndex()).isEnabled():
+                for i in range(self.b_ch.count()):
+                    if self.b_ch.model().item(i).isEnabled():
+                        self.b_ch.setCurrentIndex(i)
+                        break
         else:
             self.b_state.setText("Flanken-Ansicht braucht PST-Diag 1 (Mega ab 3.1.0, F446 ab 1.1.0). "
                                  "Der Software-Trigger arbeitet mit jedem Gerät.")
@@ -585,7 +602,8 @@ class OsziPage(QtWidgets.QWidget):
         if diag:
             link.set_mode("D")
         self.rec = Recorder(self.runs_dir(), self.get_params(), port=link.port,
-                            firmware=link.caps.get("fw", "") or "", diag=link.has_diag, vehicle=self.get_vehicle())
+                            firmware=link.caps.get("fw", "") or "", diag=link.has_diag, vehicle=self.get_vehicle(),
+                            zange=link.ign_source == "zange" or link.is_zange_usb)
         self.clear(keep_settings=True)
         while self.tap is not None and not self.tap.empty():      # Telegramme von vor dem Start verwerfen
             self.tap.get_nowait()
@@ -600,8 +618,8 @@ class OsziPage(QtWidgets.QWidget):
         folder = self.rec.close()
         self.rec = None
         self.rec_btn.setText("●  Dauermessung starten")
-        if self.link is not None and self.link.has_diag and self.link.mode != "N":
-            self.link.set_mode("N")
+        if self.link is not None and self.link.has_diag and self.link.mode != self.link.default_mode:
+            self.link.set_mode(self.link.default_mode)
         self.rec_label.setText(f"gespeichert: {os.path.basename(folder)}")
         self.saved.emit(folder)
 
@@ -613,6 +631,21 @@ class OsziPage(QtWidgets.QWidget):
         self.markers.append((t, text))
         self.marker_edit.clear()
         self._draw(force=True)
+
+    def basis_event(self, ev):
+        """Ereignis der Basis (basis.BasisEvent): Marker (Zange-Taste, Markieren) als Marker, sonst
+        (Zange verbunden/verloren, Steckdose an/aus) in die Ereignisliste."""
+        if self.t0 is None:
+            return
+        t = max(0.0, ev.t_pc - self.t0)
+        if ev.is_marker:
+            if self.rec is not None:
+                self.rec.add_marker(ev.text, t)
+            self.markers.append((t, ev.text))
+            self._draw(force=True)
+        else:
+            kind = "Zange" if ev.kind in ("ZANGE", "PAIR") else "Steckdose" if ev.kind == "DOSE" else dg.EV_DEVICE
+            self._on_event(dg.Event(t, kind, ev.text))
 
     def _now_rel(self) -> float:
         if self.t0 is None:

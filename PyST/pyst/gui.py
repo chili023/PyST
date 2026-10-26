@@ -1,7 +1,8 @@
 """
 PyST – Oberflaeche (PySide6 + pyqtgraph). Mac, Linux (Raspberry Pi), Windows.
 
-Reiter:  Messen | Fahrzeuge & Setups | Auswertung | Oszi / Dauermessung | ECU | Einstellungen
+Reiter:  Messen | Fahrzeuge & Setups | Auswertung | Oszi / Dauermessung | Zange · Netz · Steckdosen | ECU |
+         Einstellungen
 """
 import json
 import os
@@ -17,8 +18,10 @@ from . import __version__, htmlexport, physics, report, storage
 from .channels import fault_text, lambda_from_afr, run_channels, run_faults
 from .db import SETUP_SUMMARY_KEYS, VEHICLE_FIELDS, Database, base_dir, field_label
 from .dialogs import FieldForm, SetupForm
+from .basis import ZANGE_USB_WARNUNG
+from .hw_page import HardwarePage
 from .link import (DEFAULT_SIM_PORT, SIM_PORT, DynoLink, guess_port, is_pst_firmware, list_serial_ports,
-                   pst_board_ports)
+                   pst_board_ports, zange_usb_ports)
 from .oszi import OsziPage
 from .ratio_dialog import RatioDialog
 from .share_ui import FORMAT_FOLDER, FORMAT_HTML, ExportDialog, ImportParamsDialog
@@ -456,6 +459,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self.page_db, "Fahrzeuge && Setups")
         self.tabs.addTab(self.viewer, "Auswertung")
         self.tabs.addTab(self.page_oszi, "Oszi / Dauermessung")
+        self.page_hw = HardwarePage(self.settings, lambda: save_settings(self.settings), lambda: self.link,
+                                    lambda: self.page_settings.params(), self.db.runs_dir)
+        self.tabs.addTab(self.page_hw, "Zange · Netz · Steckdosen")
         self.tabs.addTab(self.page_rusefi, "ECU")
         self.tabs.addTab(self.page_settings, "Einstellungen")
         self.page_settings.data_label.setText(self.db.path)
@@ -482,6 +488,12 @@ class MainWindow(QtWidgets.QMainWindow):
         QtGui.QShortcut(QtGui.QKeySequence("Escape"), self, activated=self.on_abort)
         self.setAcceptDrops(True)                  # .pyst, Laeufe, Mitschnitte per Drag & Drop oeffnen
         self.page_oszi.saved.connect(self._dauer_saved)
+        self.page_hw.log_saved.connect(lambda folder: self._dauer_saved(folder, "Zange-Log"))
+        self.page_hw.connect_port.connect(self._connect_port)
+        self.zange_status = QtWidgets.QLabel("")
+        self.statusBar().addPermanentWidget(self.zange_status)
+        self.page_hw.zange_text.connect(self.zange_status.setText)
+        self._warn_box = None
         self._fault_todo = [r.id for r in self.db.runs() if r.fehler is None]
         self.fault_timer = QtCore.QTimer(self)     # Fehleranteile alter Laeufe nach und nach berechnen
         self.fault_timer.timeout.connect(self._fault_backfill)
@@ -1210,7 +1222,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if e is None:
             return None
         run, res, ch, _p = e
-        return ch, (res.segment if res is not None else None), run.get("markers", [])
+        # Marker + Ereignisse der Zange/Steckdosen (PyST-Basis) als Linien im Auswerter
+        extra = [(t, f"{kind}: {text}") for t, kind, text in run.get("events", []) if kind in ("Zange", "Steckdose")]
+        return ch, (res.segment if res is not None else None), list(run.get("markers", [])) + extra
 
     def _run_label(self, row) -> str:
         d = row.datum.replace("T", " ")[:16]
@@ -1469,6 +1483,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.ctrl = RunController(self.link, s.params(), auto_climate=s.climate_auto.isChecked(),
                                   ecu=self.page_rusefi.active_link())
         self._set_status("Verbunden – START drücken (F1)", "#dddddd")
+        if self.link.default_mode != "N":
+            self.link.set_mode(self.link.default_mode)       # Basis mit Zange: Zuendstaerke im D-Telegramm
+        if self.link.is_basis:
+            s.fw_label.setText(f"{port}: PyST-Basis – {self.link.caps.get('fw', '')} · Zündung: "
+                               + ("Funk-Zange" if self.link.ign_source == "zange" else "keine (Zange koppeln)"))
+        if self.link.is_zange_usb:
+            s.fw_label.setText(f"{port}: Zange per USB – {self.link.caps.get('fw', '')}")
+            self._set_status("Zange per USB – nur Auslesen/Testen", "#f4b6b6")
+            self._warn_box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Warning, "Zange per USB",
+                                                   ZANGE_USB_WARNUNG, QtWidgets.QMessageBox.Ok, self)
+            self._warn_box.open()                          # nicht blockierend
         if s.live_check.isChecked():
             self.link.start()
         self._persist()
@@ -1479,7 +1504,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _auto_connect(self):
         """Alle 5 s: abgezogenes Messboard erkennen, angestecktes automatisch verbinden."""
         if self.link is not None:
-            if not self.link.port.startswith(SIM_PORT) and self.link.port not in {d for d, _ in list_serial_ports()}:
+            if self.link.is_tcp:
+                if not self.link.alive:                    # WLAN-Verbindung zur Basis abgerissen
+                    self.on_connect(lost=True)
+            elif not self.link.port.startswith(SIM_PORT) and self.link.port not in {d for d, _ in list_serial_ports()}:
                 self.on_connect(lost=True)
             return
         if not self.page_settings.auto_connect.isChecked() or getattr(self, "_manual_off", False):
@@ -1500,6 +1528,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.on_connect(lost=True)
             self._set_status("Nicht verbunden – „Verbinden“ drücken", "#dddddd")
             self._auto_failed[port] = time.time()
+        if self.link is None:
+            zp = zange_usb_ports()
+            if zp:                                         # Zange per USB nie automatisch (galvanische Verbindung)
+                self.statusBar().showMessage(f"Zange per USB an {zp[0]}? Zum Auslesen in den Einstellungen "
+                                             f"diesen Port wählen und verbinden.", 6000)
 
     def on_replay(self, path: str = ""):
         if not path:
@@ -1808,13 +1841,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._fault_todo:
             self._reload_runs()
 
-    def _dauer_saved(self, folder: str):
+    def _connect_port(self, port: str):
+        """Mit einem anderen Port verbinden (z.B. Basis per WLAN)."""
+        if self.link:
+            self.on_connect()
+        self.page_settings.port_combo.setEditText(port)
+        self.on_connect()
+
+    def _dauer_saved(self, folder: str, note: str = "Dauermessung"):
         try:
             rid = self.db.add_folder(folder, self.vehicle_combo.currentData(), self.setup_combo.currentData())
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "Dauermessung", f"{folder}:\n{exc}")
             return
-        self.db.update_run(rid, notiz="Dauermessung")
+        self.db.update_run(rid, notiz=note)
         self._reload_runs()
         self.statusBar().showMessage(f"Dauermessung gespeichert: {folder} – in der Laufliste und Auswertung", 10000)
 
@@ -1904,7 +1944,16 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------ Zyklus
     def _tick(self):
         self._show_ecu_live()
+        if self.link is not None:
+            for ev in self.link.drain_events():            # Ereignisse der Basis: Marker, Zange, Steckdosen
+                self.page_oszi.basis_event(ev)
+                if self.ctrl:
+                    self.ctrl.add_event(ev)
+                self.page_hw.on_event(ev)
+                self.statusBar().showMessage(ev.text, 4000)
         self.page_oszi.poll()
+        lauf = bool(self.ctrl and self.ctrl.state in (WAIT, RUN))
+        self.page_hw.automatic(lauf, self.page_oszi.rec is not None)
         if not self.ctrl:
             return
         new = self.ctrl.poll()
@@ -1985,6 +2034,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.save_window_layout()
         self._persist()
         self.page_oszi.close_page()
+        self.page_hw.close_page()
         if self.link:
             self.link.close()
         self.page_rusefi.close_link()

@@ -42,6 +42,7 @@ class RunController:
         self.live_result: Optional[physics.RunResult] = None
         self.climate: Optional[tuple] = None
         self.frames: List[Frame] = []
+        self.basis_events: list = []     # Ereignisse der Basis waehrend des Laufs (Marker der Zange …)
         self._t_start = 0.0
         self._since_eval = 0
         self._last_eval = 0.0
@@ -51,6 +52,7 @@ class RunController:
     def start(self):
         self.result = self.live_result = None
         self.frames = []
+        self.basis_events = []
         self.ecu_data = None
         if self.auto_climate:
             self.climate = self.link.climate()
@@ -59,9 +61,17 @@ class RunController:
                 self.message = f"Klima: {self.climate[0]:.1f} °C, {self.climate[1]:.1f} mbar, {self.climate[2]:.0f} %"
             else:
                 self.message = "Keine Klimadaten – manuelle Werte werden verwendet"
+        dm = getattr(self.link, "default_mode", "N")
+        if dm != "N" and self.link.mode != dm:
+            self.link.set_mode(dm)                    # Basis mit Zange: Zuendstaerke mit aufzeichnen
         self.link.start()
         self._t_start = time.time()
         self.state = WAIT
+
+    def add_event(self, ev):
+        """Ereignis der Basis (basis.BasisEvent) – gehoert zum Lauf, solange er laeuft."""
+        if self.state in (WAIT, RUN):
+            self.basis_events.append(ev)
 
     def abort(self):
         if self.state in (WAIT, RUN):

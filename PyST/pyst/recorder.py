@@ -20,7 +20,7 @@ from dataclasses import asdict
 from typing import List, Optional, Tuple
 
 from . import __version__, physics
-from .storage import DIAG_HEADER, ROH_HEADER, burst_to_csv, frame_row
+from .storage import DIAG_HEADER, ROH_HEADER, ZANGE_HEADER, burst_to_csv, frame_row
 
 ABSCHNITT_S = 60.0
 FLUSH_S = 2.0
@@ -28,12 +28,13 @@ FLUSH_S = 2.0
 
 class Recorder:
     def __init__(self, base_dir: str, params: physics.DynoParams, port: str = "", firmware: str = "",
-                 diag: bool = False, vehicle: str = ""):
+                 diag: bool = False, vehicle: str = "", zange: bool = False):
         stamp = _dt.datetime.now()
         self.folder = os.path.join(base_dir, stamp.strftime("%y%m%d_%H%M%S") + "_Dauermessung")
         os.makedirs(self.folder, exist_ok=True)
         self.params = params
         self.diag = diag
+        self.zange = diag and zange              # Zuendstaerke/Zuendquelle (PyST-Basis mit Zange, Zange per USB)
         self.t0: Optional[float] = None
         self.n = 0
         self.part = 0
@@ -66,7 +67,10 @@ class Recorder:
         self.part_start = t
         self._fh = open(os.path.join(self.folder, f"teil_{self.part:04d}.csv"), "w", newline="")
         self._w = csv.writer(self._fh, delimiter=";")
-        self._w.writerow(ROH_HEADER + (DIAG_HEADER if self.diag else []))
+        self._w.writerow(self._header())
+
+    def _header(self) -> List[str]:
+        return ROH_HEADER + (DIAG_HEADER if self.diag else []) + (ZANGE_HEADER if self.zange else [])
 
     def _close_part(self):
         if self._fh:
@@ -84,7 +88,7 @@ class Recorder:
             rel = f.t - self.t0
             if self._fh is None or rel - self.part_start >= ABSCHNITT_S:
                 self._new_part(rel)
-            self._w.writerow(frame_row(f, self.t0, self.params, self.diag))
+            self._w.writerow(frame_row(f, self.t0, self.params, self.diag, self.zange))
             self.n += 1
         self.meta["com_verloren"] = lost
         now = time.time()
@@ -150,7 +154,7 @@ class Recorder:
         roh = os.path.join(self.folder, "roh.csv")
         with open(roh + ".tmp", "w", newline="") as out:
             if not parts:
-                csv.writer(out, delimiter=";").writerow(ROH_HEADER + (DIAG_HEADER if self.diag else []))
+                csv.writer(out, delimiter=";").writerow(self._header())
             for k, name in enumerate(parts):
                 with open(os.path.join(self.folder, name), newline="") as fh:
                     lines = fh.read().splitlines(True)

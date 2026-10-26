@@ -568,14 +568,31 @@ class SimSerial:
                 factors[ch] = 1.0
         return factors
 
+    # --- Erweiterungspunkte (Basis/Zange, siehe BasisSimSerial)
+    def _background(self):
+        """Wird auch ohne laufende Ausgabe regelmaessig aufgerufen (Uhren, Steckdosen, Funk)."""
+
+    def _extra_flags(self) -> int:
+        return 0
+
+    def _diag_tail(self) -> str:
+        """Angehaengte Felder des D-Telegramms (';…'), Standard: keine."""
+        return ""
+
+    def _frame_hook(self, f_ign: float, f_roll: float, dt: float):
+        """Werte des Telegramm-Intervalls vor der Ausgabe (Basis: Funkverlust, Zange weg)."""
+        return f_ign, f_roll
+
     def tick(self) -> float:
         """Ein Telegramm erzeugen. Liefert dessen Dauer [s] (fuer die Echtzeit-Taktung)."""
+        self._background()
         if not self.streaming:
             return 0.05
         dt, rate, f_ign, f_roll, egt1, afr, egt2 = self.engine.next_frame()
+        f_ign, f_roll = self._frame_hook(f_ign, f_roll, dt)
         self.cycle = (self.cycle + 1) & 0xFFFF
         faults_on = any(float(self.settings.get(k, 0) or 0) > 0 for k in SIM_KEYS)
-        flags = self.flags_extra
+        flags = self.flags_extra | self._extra_flags()
         self.flags_extra = 0
         if faults_on or self.mode == "D" or self.burst is not None or self.edges.episode:
             if not self._edges_on:                           # Flankenerzeugung (wieder) aufnehmen
@@ -616,7 +633,8 @@ class SimSerial:
             st_i.rejected = st_r.rejected = 0
             nan = lambda x: "nan" if x != x else f"{x:.0f}"
             self._out(f"D;{self.cycle};{t_ms};{rate:.2f};{f_ign:.3f};{f_roll:.3f};{nan(egt1)};{afr:.2f};{nan(egt2)};"
-                      f"{len(st_i.win)};{stats(st_i)};{rej_i};{len(st_r.win)};{stats(st_r)};{rej_r};{flags:X}\r\n")
+                      f"{len(st_i.win)};{stats(st_i)};{rej_i};{len(st_r.win)};{stats(st_r)};{rej_r};{flags:X}"
+                      f"{self._diag_tail()}\r\n")
         elif self.mega:
             # Mega ohne Thermoelement: cycle;timer;f_Zuend;f_Rolle;Temp_Sonde;AFR (ganze Hz, AFR 20.00 ohne Sonde)
             self._out(f"{self.cycle};{rate:.2f};{int(f_ign)};{int(f_roll)};0;20.00\n")
@@ -645,3 +663,414 @@ class SimSerial:
                 time.sleep(max(0.0, nxt - time.time()))
             else:
                 time.sleep(0.1)
+
+
+# ================================================================================================ PyST-Basis
+# Stoerungen der Funkstrecke fuer 'SIM:basis:stoerung': Paketverlust [%], Zange weg [je Minute]
+BASIS_FAULTS = {"sim_funkverlust": 8.0, "sim_zange_weg": 1.0}
+BASIS_SIM_KEYS = {"sim_funkverlust": "0", "sim_zange_weg": "0", "sim_zange_mark": "1"}
+PLUG_LOAD_W = {"SHELLY2": 180.0, "SHELLY1": 650.0, "TASMOTA": 2000.0, "ESPHOME": 40.0}
+
+
+class BasisSimSerial(SimSerial):
+    """PyST-Basis (G473 + ESP) mit gekoppelter Funk-Zange, WLAN und Steckdosen – nach
+    docs/04_PST_Diag_1.md §10: '#CAP' mit ign=zange|none und hw=, D-Telegramm mit ign_peak_mv;ign_src,
+    '#ZANGE', '#PAIR', '#NET', '#DOSE' und Ereigniszeilen 'E;…'. Simuliert Paketverlust der Funkstrecke
+    (Zuendung 'stale'), Abbrueche der Zange, Akku, Signal, Marker-Tasten und Steckdosen mit Totmann."""
+
+    def __init__(self, paired: bool = True, faults: Optional[Dict[str, float]] = None, seed: int = 11, **kw):
+        from .basis import ZANGE_KEYS
+        self.brng = random.Random(seed)
+        self.z_paired = paired
+        self.z_conn = paired
+        self.z_back_at: Optional[float] = None          # Zange kommt wieder (nach Abbruch/Aus)
+        self.z_akku = 87.0
+        self.z_rssi = -58.0
+        self.z_sparks = 0.0
+        self.z_log_head = 52000
+        self.z_rec = False
+        self.z_settings = {k: d for k, (_t, d) in ZANGE_KEYS.items()}
+        self.z_peak = 0.0
+        self.z_stale = False
+        self.z_last_ign = 0.0
+        self.pair_until = 0.0
+        self.pair_done_at: Optional[float] = None
+        self.net = {"mode": "AP", "kanal": 6, "ssid": "PyST-Basis", "ip": "192.168.4.1", "clients": 1, "rssi": "",
+                    "tcp": 0, "err": 0}
+        self.plugs: Dict[int, dict] = {
+            1: {"typ": "SHELLY2", "host": "192.168.4.20", "on": False, "until": None, "sek": 0},
+            2: {"typ": "SHELLY1", "host": "192.168.4.21", "on": False, "until": None, "sek": 0},
+        }
+        self._wall = time.time()
+        super().__init__(engine=SimEngine(rate=60.0), mega=False, diag=True, faults=None, seed=seed, **kw)
+        self.tick_ns = 6.25
+        self.tick_offset = (1 << 32) - int(2.0e9 / self.tick_ns)
+        self.defaults.update(BASIS_SIM_KEYS)
+        self.defaults["ign_delay_ms"] = "60"
+        self.settings.update({k: v for k, v in self.defaults.items() if k not in self.settings})
+        for k, v in (faults or {}).items():
+            self.settings[k] = f"{v:g}"
+
+    def burst_max(self) -> int:
+        return 4096
+
+    # --- Hilfen
+    def _ms(self) -> int:
+        return (int(self.t_sim * 1000) + self.ms_offset) & 0xFFFFFFFF
+
+    def _event(self, *parts):
+        self._out("E;" + ";".join([str(self._ms())] + [str(p) for p in parts]) + "\r\n")
+
+    def _setf(self, key: str) -> float:
+        try:
+            return float(self.settings.get(key, 0) or 0)
+        except ValueError:
+            return 0.0
+
+    def _zange_lost(self, back_after: Optional[float]):
+        if self.z_conn:
+            self.z_conn = False
+            self._event("ZANGE", "verloren")
+        self.z_back_at = time.time() + back_after if back_after else None
+
+    def _zange_back(self):
+        self.z_back_at = None
+        if self.z_paired and not self.z_conn:
+            self.z_conn = True
+            self.z_rssi = -60.0
+            self._event("ZANGE", "verbunden")
+
+    # --- Hintergrund: Uhren, Funk, Steckdosen
+    def _background(self):
+        now = time.time()
+        dt = max(0.0, min(1.0, now - self._wall))
+        self._wall = now
+        if not self.streaming:
+            self.t_sim += dt                                   # Geraeteuhr laeuft weiter
+        r = self.brng
+        if self.z_conn:
+            self.z_akku = max(3.0, self.z_akku - dt * 0.004)
+            self.z_rssi = max(-90.0, min(-40.0, self.z_rssi + r.gauss(0.0, 0.6) * math.sqrt(dt * 10)
+                                         + (-58.0 - self.z_rssi) * 0.2 * dt))
+            if r.random() < self._setf("sim_zange_weg") / 60.0 * dt:
+                self._zange_lost(r.uniform(2.0, 6.0))
+            if r.random() < self._setf("sim_zange_mark") / 60.0 * dt:
+                self._event("MARK", "zange", r.choice(["T1", "T2"]))
+        if self.z_back_at is not None and now >= self.z_back_at:
+            self._zange_back()
+        if self.pair_done_at is not None and now >= self.pair_done_at:
+            self.pair_done_at = None
+            self.pair_until = 0.0
+            self.z_paired = True
+            self._zange_back()
+        if self.pair_until and now > self.pair_until:
+            self.pair_until = 0.0
+        for p in self.plugs.values():
+            if p["on"] and p["sek"] and p["until"] - now < p["sek"] / 3.0:
+                p["until"] = now + p["sek"]                    # Totmann: die Basis erneuert, solange sie lebt
+
+    def _frame_hook(self, f_ign: float, f_roll: float, dt: float):
+        self.z_stale = False
+        if not (self.z_paired and self.z_conn):
+            self.z_peak = 0.0
+            return 0.0, f_roll
+        if f_ign > 0 and self.brng.random() < self._setf("sim_funkverlust") / 100.0:
+            self.z_stale = True                                 # Paket fehlt: letzte bekannte Frequenz
+            f_ign = self.z_last_ign
+        self.z_last_ign = f_ign
+        self.z_sparks += f_ign * dt
+        rpm = f_ign * 60.0
+        self.z_peak = max(0.0, 4300.0 - 0.07 * rpm + self.brng.gauss(0.0, 70.0)) if f_ign > 0 else 0.0
+        return f_ign, f_roll
+
+    def _extra_flags(self) -> int:
+        fl = 0
+        if not (self.z_paired and self.z_conn):
+            fl |= 1                                             # Zuendung Timeout
+        if self.z_stale:
+            fl |= 1 << 4
+        return fl
+
+    def _diag_tail(self) -> str:
+        src = 1 if self.z_paired and self.z_conn and self.z_peak > 0 else 0
+        return f";{self.z_peak:.0f};{src}"
+
+    # --- Befehle
+    def _command(self, c: str):
+        if c in "v?":
+            self._out("PyST-Basis SIMULATOR 0.1.0;\r\nMessfrequenz [Hz]:60;\r\n")
+            return
+        super()._command(c)
+
+    def _zange_line(self) -> str:
+        mv = 3300 + int(self.z_akku * 9)
+        z = self.z_settings
+        return (f"#ZANGE;id=1;mac=34:85:18:a1:b2:c3;akku_mv={mv};akku_pct={self.z_akku:.0f};vbus=0;"
+                f"rssi={self.z_rssi:.0f};funken={int(self.z_sparks)};log={self.z_log_head + int(self.z_sparks)}/"
+                f"{self.z_log_head + 400000};blitz={z['blitz_mode']};phi={int(z['blitz_phi_x10']) / 10:.1f};"
+                f"fw=0.1.0 SIM;sync_us={120 + self.brng.randint(0, 150) if self.z_conn else -1};"
+                f"verbunden={1 if self.z_conn else 0}\r\n")
+
+    def _diag_command(self, line: str):
+        from .basis import PLUG_TYPES, ZANGE_KEYS
+        parts = line[1:].strip().split()
+        cmd = parts[0].upper() if parts else ""
+        a = parts[1:]
+        now = time.time()
+        if cmd == "?":
+            ch = "I,R" if self.z_paired else "R"
+            ign = "zange" if self.z_paired else "none"
+            self._out(f"#CAP;proto=1;fw=PyST-Basis 0.1.0 SIM;tick_ns=6.25;ch={ch};burst_max={self.burst_max()};"
+                      f"modes=N,D;set=1;hw=rev31;ign={ign}\r\n")
+        elif cmd == "ZANGE":
+            sub = a[0].upper() if a else ""
+            if not self.z_paired:
+                self._out("#ERR;ZANGE;keine zange\r\n")
+            elif not sub:
+                self._out(self._zange_line())
+            elif not self.z_conn:
+                self._out("#ERR;ZANGE;nicht erreichbar\r\n")
+            elif sub in ("SET", "GET") and len(a) >= 2:
+                k = a[1]
+                if k not in ZANGE_KEYS:
+                    self._out(f"#ERR;ZANGE;unbekannt {k}\r\n")
+                elif sub == "GET":
+                    self._out(f"#OK;ZANGE;GET;{k}={self.z_settings[k]}\r\n")
+                else:
+                    try:
+                        v = int(float(a[2]))
+                    except (IndexError, ValueError):
+                        self._out("#ERR;ZANGE;wert\r\n")
+                        return
+                    if (k == "blitz_pulse_us" and not 1 <= v <= 25) or (k == "blitz_mode" and v not in (0, 1, 2)):
+                        self._out("#ERR;ZANGE;bereich\r\n")
+                        return
+                    self.z_settings[k] = str(v)
+                    self._out(f"#OK;ZANGE;SET;{k}={v}\r\n")
+            elif sub == "MARK":
+                self._out("#OK;ZANGE;MARK\r\n")
+                self._event("MARK", "pyst", "Marker")
+            elif sub == "REC" and a[1:2] in (["0"], ["1"]):
+                self.z_rec = a[1] == "1"
+                self._out(f"#OK;ZANGE;REC;{a[1]}\r\n")
+            elif sub in ("LOG", "IDENT"):
+                self._out(f"#OK;ZANGE;{sub}\r\n")
+            elif sub == "OFF":
+                self._out("#OK;ZANGE;OFF\r\n")
+                self._zange_lost(15.0)
+            else:
+                self._out("#ERR;ZANGE;parameter\r\n")
+        elif cmd == "PAIR":
+            sub = a[0].upper() if a else ""
+            if sub == "1":
+                self.pair_until = now + 30.0
+                if not self.z_paired:
+                    self.pair_done_at = now + 3.0             # Zange: T1+T2 gedrueckt
+                self._out("#OK;PAIR;1\r\n")
+            elif sub == "0":
+                self.pair_until = 0.0
+                self.pair_done_at = None
+                self._out("#OK;PAIR;0\r\n")
+            elif sub == "LIST":
+                if self.z_paired:
+                    self._out(f"#PAIR;id=1;mac=34:85:18:a1:b2:c3;typ=zange;sn=Z-0001;fw=0.1.0;"
+                              f"verbunden={1 if self.z_conn else 0}\r\n")
+                self._out("#OK;PAIR;LIST\r\n")
+            elif sub == "DEL" and a[1:2] == ["1"] and self.z_paired:
+                self._zange_lost(None)
+                self.z_paired = False
+                self._out("#OK;PAIR;DEL;1\r\n")
+            else:
+                self._out("#ERR;PAIR;parameter\r\n")
+        elif cmd == "NET":
+            sub = a[0].upper() if a else ""
+            n = self.net
+            if not sub:
+                self._out(f"#NET;mode={n['mode']};kanal={n['kanal']};ssid={n['ssid']};ip={n['ip']};"
+                          f"clients={n['clients']};rssi={n['rssi']};tcp={n['tcp']};err={n['err']}\r\n")
+            elif sub == "AP" and len(a) >= 3 and a[1].isdigit() and 1 <= int(a[1]) <= 13:
+                n.update(mode="AP", kanal=int(a[1]), ssid=a[2], ip="192.168.4.1", clients=0, rssi="", err=0)
+                self._out("#OK;NET;AP\r\n")
+            elif sub == "STA" and len(a) >= 2:
+                n.update(mode="STA", ssid=a[1], ip="192.168.178.57", clients=0, rssi=-63, kanal=11, err=0)
+                self._out("#OK;NET;STA\r\n")
+            elif sub == "OFF":
+                n.update(mode="OFF", ip="", clients=0, rssi="")
+                self._out("#OK;NET;OFF\r\n")
+            else:
+                self._out("#ERR;NET;parameter\r\n")
+        elif cmd == "DOSE":
+            self._dose_command(a, now, PLUG_TYPES)
+        else:
+            super()._diag_command(line)
+
+    def _dose_command(self, a: List[str], now: float, plug_types):
+        sub = a[0].upper() if a else ""
+        if not sub:
+            for nr in sorted(self.plugs):
+                p = self.plugs[nr]
+                on = p["on"]
+                mw = int(PLUG_LOAD_W.get(p["typ"], 100.0) * 1000 * (1 + self.brng.gauss(0, 0.01))) if on else 0
+                rest = max(0, int(p["until"] - now)) if on and p["sek"] else 0
+                self._out(f"#DOSE;nr={nr};typ={p['typ']};host={p['host']};an={1 if on else 0};p_mw={mw};"
+                          f"erreichbar=1;rest_s={rest};fehler=0\r\n")
+            self._out("#OK;DOSE\r\n")
+        elif sub == "ADD" and len(a) >= 4 and a[1].isdigit():
+            nr, typ = int(a[1]), a[2].upper()
+            if not 1 <= nr <= 8 or typ not in plug_types:
+                self._out("#ERR;DOSE;parameter\r\n")
+                return
+            self.plugs[nr] = {"typ": typ, "host": a[3], "on": False, "until": None, "sek": 0}
+            self._out(f"#OK;DOSE;ADD;{nr}\r\n")
+        elif sub == "DEL" and len(a) >= 2 and a[1].isdigit():
+            if self.plugs.pop(int(a[1]), None) is None:
+                self._out("#ERR;DOSE;unbekannt\r\n")
+            else:
+                self._out(f"#OK;DOSE;DEL;{a[1]}\r\n")
+        elif sub == "SCAN":
+            for k, (typ, host) in enumerate((("SHELLY2", "shellyplugsg3-a1b2c3.local"),
+                                             ("TASMOTA", "tasmota-4f2a1c.local"),
+                                             ("ESPHOME", "werkstatt-licht.local"))):
+                self._out(f"#DOSE;SCAN;nr=0;typ={typ};host={host};ip=192.168.4.{30 + k}\r\n")
+            self._out("#OK;DOSE;SCAN\r\n")
+        elif sub.isdigit() and len(a) >= 2:
+            nr = int(sub)
+            p = self.plugs.get(nr)
+            v = a[1].upper()
+            if p is None or v not in ("0", "1", "TOGGLE"):
+                self._out("#ERR;DOSE;parameter\r\n")
+                return
+            on = (not p["on"]) if v == "TOGGLE" else v == "1"
+            sek = int(a[2]) if len(a) > 2 and a[2].isdigit() else 0
+            changed = on != p["on"]
+            p.update(on=on, sek=sek if on else 0, until=now + sek if on and sek else None)
+            self._out(f"#OK;DOSE;{nr};{1 if on else 0}\r\n")
+            if changed:
+                self._event("DOSE", nr, 1 if on else 0)
+        else:
+            self._out("#ERR;DOSE;parameter\r\n")
+
+
+# ================================================================================================ Zange per USB
+ZANGE_GET_KEYS = ("edge_ign", "timeout_ign_ms", "imp_per_rev_x10", "deadtime_us", "plaus_lo_pct", "plaus_hi_pct",
+                  "agc_mode", "probe_enable", "probe_edge", "blitz_mode", "blitz_phi_x10", "blitz_pulse_us",
+                  "status_rate_hz", "tx_power")
+
+
+def make_zange_log(seed: int = 5, start_idx: int = 1000, t0_us: int = 5_000_000, duration: float = 40.0) -> List[str]:
+    """Log einer simulierten Aufnahme: Funken (mit Spitzenwert), Marker-Tasten, Sync-Paare, Status.
+    -> Textzeilen 'L;idx;art;lokal_us;…' (Format siehe basis.LogEntry)."""
+    rng = random.Random(seed)
+    eng = SimEngine(rate=200.0, seed=seed)
+    eng.reset()
+    lines = []
+    idx = start_idx
+    t = 0.0
+    phase = 0.0
+    dt = 1.0 / 200.0
+    next_sync, next_status = 0.0, 0.0
+    marks = {12.0: 1, 25.0: 2}
+    akku = 91.0
+    while t < duration:
+        _d, _r, f_ign, _f_roll, *_x = eng.next_frame()
+        rpm = f_ign * 60.0
+        if f_ign > 0:
+            p0 = phase
+            phase += f_ign * dt
+            k = math.floor(p0) + 1
+            while k <= phase:
+                ts = t + (k - p0) / f_ign
+                peak = max(0, int(4300 - 0.07 * rpm + rng.gauss(0, 70)))
+                lines.append(f"L;{idx};F;{t0_us + int(ts * 1e6)};0;0;{peak}")
+                idx += 1
+                if rng.random() < 0.004:                          # Nachschwinger: verworfen gemeldet
+                    lines.append(f"L;{idx};F;{t0_us + int((ts + 0.2 / f_ign) * 1e6)};0;1;{peak // 3}")
+                    idx += 1
+                k += 1
+        for tm, key in list(marks.items()):
+            if t >= tm:
+                lines.append(f"L;{idx};M;{t0_us + int(t * 1e6)};{key}")
+                idx += 1
+                del marks[tm]
+        if t >= next_sync:
+            lines.append(f"L;{idx};Y;{t0_us + int(t * 1e6)};{123456789 + int(t * 1e6) + rng.randint(-40, 40)}")
+            idx += 1
+            next_sync += 1.0
+        if t >= next_status:
+            akku -= 0.05
+            lines.append(f"L;{idx};S;{t0_us + int(t * 1e6)};{3300 + int(akku * 9)};{akku:.0f};16")
+            idx += 1
+            next_status += 5.0
+        t += dt
+    return lines
+
+
+class ZangeUsbSimSerial(SimSerial):
+    """Zange direkt per USB (USB-Serial-JTAG): Mega-kompatibles ASCII + PST-Diag 1 mit ch=I, tick_ns=1000,
+    Rolle = 0. Dazu '#LOG INFO' / '#LOG GET von n' (Logzeilen 'L;…')."""
+
+    def __init__(self, seed: int = 3, **kw):
+        from .basis import ZANGE_KEYS
+        self.log = make_zange_log()
+        self.log_tail = int(self.log[0].split(";")[1])
+        self.log_head = int(self.log[-1].split(";")[1]) + 1
+        self.zrng = random.Random(seed)
+        self.peak = 0.0
+        super().__init__(engine=SimEngine(rate=50.0, n_hold=1800.0), mega=True, diag=True, seed=seed, **kw)
+        self.tick_ns = 1000.0
+        self.tick_offset = (1 << 32) - int(2.0e9 / self.tick_ns)
+        self.defaults.update({k: d for k, (_t, d) in ZANGE_KEYS.items()})
+        self.settings = dict(self.defaults)
+
+    def burst_max(self) -> int:
+        return 2000
+
+    def _frame_hook(self, f_ign: float, f_roll: float, dt: float):
+        self.peak = max(0.0, 4300.0 - 4.2 * f_ign + self.zrng.gauss(0, 70)) if f_ign > 0 else 0.0
+        return f_ign, 0.0
+
+    def _diag_tail(self) -> str:
+        return f";{self.peak:.0f};{1 if self.peak > 0 else 0}"
+
+    def _command(self, c: str):
+        if c == "v":
+            self._out("Version PyST-Zange 0.1.0 SIM;\r\n")
+        elif c == "e":
+            pass                                                  # kein Klimasensor
+        else:
+            super()._command(c)
+
+    def _diag_command(self, line: str):
+        parts = line[1:].strip().split()
+        cmd = parts[0].upper() if parts else ""
+        a = parts[1:]
+        if cmd == "?":
+            self._out(f"#CAP;proto=1;fw=PyST-Zange 0.1.0 SIM;tick_ns=1000;ch=I;burst_max={self.burst_max()};"
+                      f"modes=N,D;set=1;hw=zange-c3\r\n")
+        elif cmd == "GET":
+            for k in ZANGE_GET_KEYS:
+                self._out(f"#SET;{k}={self.settings[k]}\r\n")
+            self._out("#OK;GET\r\n")
+        elif cmd == "LOG":
+            sub = a[0].upper() if a else ""
+            if sub == "INFO":
+                self._out(f"#LOG;head={self.log_head};tail={self.log_tail};n={self.log_head - self.log_tail}\r\n")
+                self._out("#OK;LOG;INFO\r\n")
+            elif sub == "GET" and len(a) >= 3:
+                try:
+                    start, n = int(a[1]), int(a[2])
+                except ValueError:
+                    self._out("#ERR;LOG;parameter\r\n")
+                    return
+                a0 = max(start, self.log_tail) - self.log_tail
+                part = self.log[a0:a0 + max(0, n)]
+                self._out("".join(x + "\r\n" for x in part))
+                self._out(f"#OK;LOG;GET;n={len(part)}\r\n")
+            elif sub == "CLEAR":
+                self.log_tail = self.log_head
+                self.log = []
+                self._out("#OK;LOG;CLEAR\r\n")
+            else:
+                self._out("#ERR;LOG;parameter\r\n")
+        else:
+            super()._diag_command(line)

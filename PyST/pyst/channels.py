@@ -31,10 +31,13 @@ DIAG_COLUMNS = [
     ("diag_roll_pmax_us", "Rolle längste Periode", "µs"), ("diag_roll_rej", "Rolle verworfen", ""),
     ("diag_flags", "Geräte-Flags", "bits"),
 ]
+# PyST-Basis mit Funk-Zange bzw. Zange per USB: Zuendstaerke (Spitzenwert) und Zuendquelle
+ZANGE_COLUMNS = [("diag_ign_peak_mv", "Zündstärke", "mV"), ("diag_ign_src", "Zündquelle", "0/1/2")]
 
 # Spalten der roh.csv, die bereits als eigene Kanaele abgebildet werden
 _KNOWN_COLUMNS = {"zyklus", "pc_zeit_s", "messfrequenz_hz", "zuendung_hz", "rolle_hz", "egt1_c", "afr",
-                  "egt2_c", "n_rolle_1_min", "dt_s", "n_zuendung_1_min", "diag_t_ms"} | {c for c, _n, _u in DIAG_COLUMNS}
+                  "egt2_c", "n_rolle_1_min", "dt_s", "n_zuendung_1_min", "diag_t_ms"} | \
+    {c for c, _n, _u in DIAG_COLUMNS + ZANGE_COLUMNS}
 
 
 @dataclass
@@ -238,6 +241,12 @@ def run_channels(run: Dict, res: Optional[physics.RunResult], p: physics.DynoPar
     for col, name, unit in DIAG_COLUMNS:
         if col in cols and len(cols[col]) == N:
             ch[name] = Channel(np.asarray(cols[col], float), unit, "Diagnose")
+    for col, name, unit in ZANGE_COLUMNS:
+        if col in cols and len(cols[col]) == N:
+            v = np.asarray(cols[col], float)
+            if col == "diag_ign_peak_mv":
+                v = np.where(v > 0, v, np.nan)                  # 0 = kein Funke im Fenster
+            ch[name] = Channel(v, unit, "Zange")
     for name, values in cols.items():
         if name not in _KNOWN_COLUMNS and len(values) == N:
             if name.startswith("rusefi_"):

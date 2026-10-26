@@ -151,3 +151,61 @@ Gemeinsam festgelegt, damit PyST beide Geräte gleich behandeln kann:
   Bursts mit `edge=B` und Trigger bis 1080 Takte → ≈ 15 000 Flanken/s. Bei `edge=B` muss ein Impuls
   länger als ≈ 7 µs sein (Zeit bis zum Umschalten der Flankenrichtung, mit anderen Interrupts bis ≈ 15 µs),
   sonst wird die Gegenflanke verpasst und in `lost` gezählt.
+
+## 10 Erweiterungen PyST-Basis
+
+Gilt zusätzlich für die PyST-Basis (Funk-Zündzange, WLAN, Steckdosen) und die Zange direkt per USB; PyST ab 1.3
+(Branch `feature/pyst-zange`). Alles Bisherige bleibt gültig, PyST ignoriert Unbekanntes. Die Befehle gelten auf
+allen Ports der Basis: USB, Debug-UART und **TCP-Port 2323** (WLAN; PyST-Portname `tcp://192.168.4.1:2323` bzw.
+`tcp://<name>.local:2323`, `.local` per mDNS).
+
+**`#CAP`** zusätzlich `hw=<Platine>` und `ign=zange` (Zange gekoppelt, `ch=I,R`) bzw. `ign=none` (`ch=R`, Zündung 0,
+D-Flag Bit 0). Ändert sich die Kopplung, fragt PyST `#?` neu.
+
+**D-Telegramm**: zwei Felder **angehängt** – `ign_peak_mv` (Mittel der Funken-Spitzenwerte im Fenster, 0 = kein
+Funke) und `ign_src` (0 keine, 1 Zange-Ferrit, 2 Zange-Probe). Wegen der Funklatenz gibt die Basis alle Telegramme
+mit fester Verzögerung aus (Einstellung `ign_delay_ms`), Rolle und Zündung liegen zeitrichtig im selben Fenster.
+`#BURST I|A` liefert die Zündflanken aus den Zeitstempeln der Zange (Masterzeit, `tick_ns=6.25`).
+PyST nutzt bei einer Basis mit Zange auch für Leistungsläufe Modus D (Kanal „Zündstärke“).
+
+**Ereigniszeilen** (unaufgefordert, beginnen mit `E;`, `master_ms` = Gerätezeit in ms wie `t_ms`):
+`E;<master_ms>;MARK;<quelle>;<text>` · `E;…;ZANGE;verbunden|verloren` · `E;…;DOSE;<nr>;<zustand>`.
+
+**Befehle** (Antworten beginnen mit `#`; Fehler `#ERR;<befehl>;<grund>`). Wo nur der Befehl festgelegt ist, erwartet
+PyST die angegebene Antwortform als Schlüssel=Wert-Felder in beliebiger Reihenfolge (*erwartet*):
+
+| Befehl | Antwort |
+|---|---|
+| `#ZANGE` | `#ZANGE;id=1;mac=..;akku_mv=..;akku_pct=..;vbus=0/1;rssi=..;funken=..;log=..;blitz=0/1/2;phi=<°KW>;fw=..;sync_us=..` (*erwartet zusätzlich* `verbunden=0/1`; ohne Zange `#ERR;ZANGE;…`) |
+| `#ZANGE SET <key> <wert>` / `#ZANGE GET <key>` | nach Quittung der Zange; *erwartet* `#OK;ZANGE;SET;<key>=<wert>` bzw. `#OK;ZANGE;GET;<key>=<wert>` (auch `#ZANGE;<key>=<wert>`) |
+| `#ZANGE MARK` · `REC 1` · `REC 0` · `LOG` · `IDENT` · `OFF` | *erwartet* `#OK;ZANGE;<befehl>` |
+| `#PAIR 1` / `#PAIR 0` | Kopplungsfenster (30 s) auf/zu, `#OK;PAIR;1/0`; Ergebnis als Ereignis `ZANGE;verbunden` |
+| `#PAIR LIST` / `#PAIR DEL <id>` | *erwartet* je Gerät `#PAIR;id=..;mac=..;typ=..;sn=..;fw=..;verbunden=0/1`, dann `#OK;PAIR;LIST` |
+| `#NET` | *erwartet* `#NET;mode=AP/STA/OFF;kanal=..;ssid=..;ip=..;clients=..;rssi=..;tcp=0/1;err=0` |
+| `#NET AP <kanal> <ssid> <pw>` · `#NET STA <ssid> <pw>` · `#NET OFF` | `#OK;NET;…` (SSID/Passwort ohne Leerzeichen, Zeile ≤ 63 Zeichen) |
+| `#DOSE` | *erwartet* je Steckdose `#DOSE;nr=..;typ=..;host=..;an=0/1;p_mw=..;erreichbar=0/1;rest_s=..;fehler=0`, dann `#OK;DOSE` |
+| `#DOSE ADD <nr> <typ> <ip/name>` · `#DOSE <nr> 1/0/TOGGLE [sek]` · `#DOSE DEL <nr>` | `#OK;DOSE;…`; `sek` = Rückfallzeit (Totmann) |
+| `#DOSE SCAN` | *erwartet* je Fund `#DOSE;SCAN;nr=0;typ=..;host=..;ip=..`, dann `#OK;DOSE;SCAN` |
+
+Steckdosen-Typen: `SHELLY2` (Gen2/3/4, RPC), `SHELLY1` (Gen1), `TASMOTA`, `ESPHOME` (Web-Server-REST), höchstens 8.
+Einschalten mit Rückfallzeit, die laufend erneuert wird; je Steckdose „fällt aus“ oder „bleibt an“.
+Komfortfunktion, **keine Sicherheitsfunktion**, kein Not-Aus. PyST kann dieselben Typen auch **direkt** per HTTP
+schalten, wenn PC und Steckdosen im selben Netz sind (ohne Basis).
+
+**Zange direkt per USB** (ESP32-C3 USB-Serial-JTAG, VID 0x303A / PID 0x1001): Mega-kompatibles ASCII + PST-Diag 1
+mit `ch=I`, `tick_ns=1000`, Rolle = 0 → Zündungs-Oszi allein. **USB = galvanische Verbindung** – PyST warnt, nur zum
+Auslesen/Testen. Da viele ESP32-Boards dieselbe USB-Kennung haben, entscheidet `#CAP`; PyST verbindet die Zange nicht
+automatisch. Log der Zange:
+
+- `#LOG INFO` → *erwartet* `#LOG;head=<nächster idx>;tail=<ältester idx>;n=..` (auch als `#OK;LOG;INFO;…`)
+- `#LOG GET <von> <n>` → `n` Zeilen `L;<idx>;<art>;<lokal_us>;…`, *erwartet* danach `#OK;LOG;GET`.
+  *Erwartete* Arten: `F` Funke (`;src;flags;peak_mv`, flags Bit 0 = verworfen), `M` Marker (`;taste`, 1–4, 10 = fern),
+  `Y` Sync-Paar (`;master_us`), `S` Status (`;akku_mv;akku_pct;flags`). Auch die Namen `FUNKE/MARK/SYNC/STATUS` bzw.
+  `1…4` werden verstanden; unbekannte Arten bleiben im Rohlog.
+
+PyST macht daraus eine Dauermessung (50 Hz, Zündfrequenz aus den Funken-Abständen, Zündstärke, Marker, Akku,
+Rohlog `zange_log.csv`), die wie jede Messung als `.pyst` weitergegeben werden kann.
+
+**Simulator**: `SIM:basis` (Basis mit gekoppelter Zange und zwei Steckdosen), `SIM:basis:stoerung` (Paketverlust,
+Zange zeitweise weg), `SIM:basis:ohne` (Koppeln vorführen), `SIM:zange` (Zange per USB mit Log). Einstellungen
+`sim_funkverlust` (%), `sim_zange_weg`, `sim_zange_mark` (je Minute).
