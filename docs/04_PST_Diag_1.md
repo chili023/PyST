@@ -176,7 +176,7 @@ PyST die angegebene Antwortform als Schlüssel=Wert-Felder in beliebiger Reihenf
 
 | Befehl | Antwort |
 |---|---|
-| `#ZANGE` | `#ZANGE;id=1;mac=..;akku_mv=..;akku_pct=..;vbus=0/1;rssi=..;funken=..;log=..;blitz=0/1/2;phi=<°KW>;fw=..;sync_us=..` (*erwartet zusätzlich* `verbunden=0/1`; ohne Zange `#ERR;ZANGE;…`) |
+| `#ZANGE` | `#ZANGE;id=1;mac=..;akku_mv=..;akku_pct=..;vbus=0/1;rssi=..;funken=..;log=..;blitz=0/1/2;phi=<°KW>;fw=..;sync_us=..` (*erwartet zusätzlich* `verbunden=0/1`); je gekoppelter Zange eine Zeile, Abschluss `#OK;ZANGE;n=<Anzahl>`; ohne Zange `#ERR;ZANGE;…` |
 | `#ZANGE SET <key> <wert>` / `#ZANGE GET <key>` | nach Quittung der Zange; *erwartet* `#OK;ZANGE;SET;<key>=<wert>` bzw. `#OK;ZANGE;GET;<key>=<wert>` (auch `#ZANGE;<key>=<wert>`) |
 | `#ZANGE MARK` · `REC 1` · `REC 0` · `LOG` · `IDENT` · `OFF` | *erwartet* `#OK;ZANGE;<befehl>` |
 | `#PAIR 1` / `#PAIR 0` | Kopplungsfenster (30 s) auf/zu, `#OK;PAIR;1/0`; Ergebnis als Ereignis `ZANGE;verbunden` |

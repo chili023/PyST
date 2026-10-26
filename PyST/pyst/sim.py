@@ -828,6 +828,7 @@ class BasisSimSerial(SimSerial):
                 self._out("#ERR;ZANGE;keine zange\r\n")
             elif not sub:
                 self._out(self._zange_line())
+                self._out("#OK;ZANGE;n=1\r\n")
             elif not self.z_conn:
                 self._out("#ERR;ZANGE;nicht erreichbar\r\n")
             elif sub in ("SET", "GET") and len(a) >= 2:

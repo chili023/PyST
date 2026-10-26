@@ -30,6 +30,16 @@ class FakeLink(basis.BasisCommands):
         self.caps = caps
 
 
+
+class ReplyLink(FakeLink):
+    """Liefert feste Antwortzeilen auf command() (wie die Basis-Firmware)."""
+    def __init__(self, replies):
+        super().__init__({"ign": "zange"})
+        self.replies = replies
+
+    def command(self, cmd, timeout=1.0, done=None, **kw):
+        return list(self.replies)
+
 def wait_until(cond, timeout=5.0):
     end = time.time() + timeout
     while time.time() < end:
@@ -58,6 +68,21 @@ class Parser(unittest.TestCase):
         f = FakeLink(link.parse_caps("#CAP;proto=1;fw=PST-Mega 3.1.0;tick_ns=62.5;ch=I,R;burst_max=800;modes=N,D;set=1"))
         self.assertFalse(f.is_basis or f.is_zange_usb)
         self.assertEqual(f.ign_source, "")
+
+    def test_mehrere_zangen(self):
+        z1 = ("#ZANGE;id=1;mac=34:85:18:00:00:01;akku_mv=;akku_pct=;vbus=;rssi=;funken=;log=;blitz=;phi=;fw=0.1.0;"
+              "sync_us=-1;verbunden=0")
+        z2 = ("#ZANGE;id=2;mac=34:85:18:00:00:02;akku_mv=3900;akku_pct=80;vbus=0;rssi=-55;funken=1234;log=10;"
+              "blitz=0;phi=0.0;fw=0.1.0;sync_us=150;verbunden=1")
+        f = ReplyLink([z1, z2, "#OK;ZANGE;n=2"])
+        zs = f.zangen_status()
+        self.assertEqual([z.id for z in zs], [1, 2])
+        st = f.zange_status()                                              # Hauptzange = erste verbundene
+        self.assertEqual((st.id, st.connected, st.sync_ok), (2, True, True))
+        self.assertFalse(zs[0].sync_ok)
+        f = ReplyLink(["#ERR;ZANGE;keine gekoppelt"])
+        self.assertFalse(f.zange_status().connected)
+        self.assertIsNone(basis.main_zange([]))
 
     def test_diag_appended(self):
         fr = link.parse_diag(D_BASIS, 1.0)

@@ -19,7 +19,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import storage
 from .basis import (MAX_PLUGS, PLUG_TYPE_TEXT, PLUG_TYPES, ZANGE_KEYS, ZANGE_USB_WARNUNG, NetState, ZangeStatus,
-                    net_commands)
+                    main_zange, net_commands)
 from .plugs import NO_FALLBACK, PlugConfig, PlugManager, start_demo_plugs
 
 RED_BANNER = "background: #c62828; color: white; font-weight: 700; padding: 6px; border-radius: 4px;"
@@ -270,6 +270,11 @@ class HardwarePage(QtWidgets.QScrollArea):
             grid.addWidget(v, (i // 4) * 2 + 1, i % 4)
             self.z_vals[k] = v
         lay.addLayout(grid)
+        self.z_weitere = QtWidgets.QLabel("")
+        self.z_weitere.setStyleSheet("color: #555;")
+        self.z_weitere.setToolTip("Weitere gekoppelte Zangen; den Zündkanal liefert die Hauptzange (Basis: zange_id).")
+        self.z_weitere.setVisible(False)
+        lay.addWidget(self.z_weitere)
         row = QtWidgets.QHBoxLayout()
         self.b_pair = QtWidgets.QPushButton("Koppeln …")
         self.b_pair.setToolTip("Kopplungsfenster der Basis öffnen (30 s). An der Zange T1 + T2 gleichzeitig 3 s halten.")
@@ -767,7 +772,7 @@ class HardwarePage(QtWidgets.QScrollArea):
         link = self.link
         if link is not None and link.is_basis and link.ign_source == "zange" and now - self._last_zange > 2.0:
             self._last_zange = now
-            self.bg.submit("zst", link.zange_status, self._zange_result)
+            self.bg.submit("zst", link.zangen_status, self._zange_result)
         if link is not None and link.is_basis and now - self._last_net > 10.0:
             self._last_net = now
             self._refresh_net()
@@ -777,11 +782,19 @@ class HardwarePage(QtWidgets.QScrollArea):
                 self._last_plugs = now
                 self.plugs.refresh()
 
-    def _zange_result(self, st, err):
-        if err is not None or st is None:
+    def _zange_result(self, zangen, err):
+        if err is not None or zangen is None:
+            return
+        st = main_zange(zangen)
+        if st is None:
             return
         self.zst = st
         self._show_zange(st)
+        weitere = [z for z in zangen if z is not st]
+        self.z_weitere.setText("\n".join(f"ID {z.id}: " + z.summary().replace("Zange: ", "") for z in weitere))
+        self.z_weitere.setVisible(bool(weitere))
+        if weitere:
+            self.zange_text.emit(st.summary() + f" (+{len(weitere)} weitere)")
 
     def close_page(self):
         self.plugs.close()

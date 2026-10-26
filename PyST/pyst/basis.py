@@ -168,6 +168,14 @@ class ZangeStatus:
         return "Zange: " + " · ".join(parts)
 
 
+def main_zange(zangen: List[ZangeStatus]) -> Optional[ZangeStatus]:
+    """Hauptzange aus der Liste: erste verbundene, sonst die erste."""
+    for st in zangen:
+        if st.connected:
+            return st
+    return zangen[0] if zangen else None
+
+
 def parse_zange(line: str) -> Optional[ZangeStatus]:
     if not line.startswith("#ZANGE;"):
         return None
@@ -421,15 +429,18 @@ class BasisCommands:
         return self.caps.get("ch", "I,R") if self.caps else "I,R"
 
     # --- Zange
+    def zangen_status(self, timeout: float = 1.5) -> List[ZangeStatus]:
+        """Alle gekoppelten Zangen: je Zange eine '#ZANGE;id=…'-Zeile, Ende '#OK;ZANGE;n=…' bzw. '#ERR;ZANGE;…'.
+        Ohne Abschlusszeile (aeltere Basis-Firmware) endet die Antwort erst nach timeout."""
+        lines = self.command("#ZANGE", timeout=timeout)
+        out = [st for st in (parse_zange(line) for line in lines) if st is not None]
+        if not out and lines and lines[-1].startswith("#ERR"):
+            return [ZangeStatus(connected=False, extra={"fehler": lines[-1]})]
+        return out
+
     def zange_status(self, timeout: float = 1.5) -> Optional[ZangeStatus]:
-        lines = self.command("#ZANGE", timeout=timeout, done=_done_prefix("#ZANGE;"))
-        for line in lines:
-            st = parse_zange(line)
-            if st is not None:
-                return st
-        if lines and lines[-1].startswith("#ERR"):
-            return ZangeStatus(connected=False, extra={"fehler": lines[-1]})
-        return None
+        """Hauptzange (erste verbundene, sonst erste gekoppelte)."""
+        return main_zange(self.zangen_status(timeout))
 
     def zange_set(self, key: str, value) -> List[str]:
         return self.command(f"#ZANGE SET {key} {value}", timeout=2.5)
@@ -501,7 +512,7 @@ class BasisCommands:
     def dose_delete(self, nr: int) -> List[str]:
         return self.command(f"#DOSE DEL {int(nr)}", timeout=2.0)
 
-    def dose_scan(self, timeout: float = 6.0) -> List[PlugState]:
+    def dose_scan(self, timeout: float = 8.0) -> List[PlugState]:
         out = []
         for line in self.command("#DOSE SCAN", timeout=timeout):
             st = parse_dose(line)
