@@ -8,7 +8,8 @@ Open-Source-Leistungsprüfstand (Rollenprüfstand):
 - **PST-STM32-Firmware** – neue Firmware für die Messelektronik auf **STM32F446RE (Nucleo-64)**.
   Spricht das Protokoll des Arduino-Mega-Sketches → läuft mit **LabVIEW 3.2.1**, mit der
   **STM-LabVIEW 0.2.0** (automatisch erkannt) und mit **PyST**.
-- **Arduino-Mega-Sketch 3.0.0** – der bisherige Mega-Aufbau läuft ebenfalls mit PyST.
+- **Arduino-Mega-Sketch 3.1.0** – der bisherige Mega-Aufbau läuft ebenfalls mit PyST; 3.1.0 misst jede
+  Periode, meldet 0 Hz nach Signalausfall und hat den Oszi-/Diagnosemodus [PST-Diag 1](docs/04_PST_Diag_1.md).
 
 ![PyST – Messen](docs/bilder/pyst_messen.png)
 
@@ -18,10 +19,13 @@ Open-Source-Leistungsprüfstand (Rollenprüfstand):
 |---|---|---|---|
 | STM32 + PST-STM32-Firmware 1.0 | ✅ am Prüfstand | ✅ Protokoll geprüft¹ | ✅ am Prüfstand |
 | Arduino Mega + Sketch 3.0.0 | ✅ (Original) | Arduino-Modus² | ✅ im Simulator geprüft³ |
+| Arduino Mega + Sketch 3.1.0 | ✅ Format byte-identisch⁴ | Arduino-Modus² | ✅ + PST-Diag 1 (ab PyST 1.3) |
 
 ¹ 8-Byte-Befehle und 20-Byte-Binärtelegramm per Host-Test gegen die aus LabVIEW rekonstruierte Auswertung.
 ² Umschalter „Arduino<>STM“ der STM-LabVIEW, nicht getestet.
 ³ `SIM:mega` bildet den Sketch nach (Umschalten mit `m`, ganze Hz, 61 Hz); am echten Mega noch zu bestätigen.
+⁴ Normales Telegramm per Host-Test und im AVR-Simulator gegen Arduino `Serial.print` geprüft; am echten
+  Mega mit LabVIEW noch zu bestätigen.
 
 ## Schnellstart
 
@@ -41,7 +45,7 @@ STM32 flashen: `firmware/stm32/bin/PST-STM32_v1.0.0.bin` auf das Laufwerk **NODE
 ```
 PyST/            PC-Software (Python 3.9+, PySide6, pyqtgraph)
 firmware/stm32/        Firmware STM32F446RE (PlatformIO), fertige .bin in firmware/stm32/bin/
-firmware/arduino-mega/ Arduino-Mega-Sketch 3.0.0 + Bibliotheken
+firmware/arduino-mega/ Arduino-Mega-Sketch 3.1.0 (PlatformIO/Arduino IDE), 3.0.0 + Bibliotheken
 docs/                  Roadmap, Protokoll v2, Hardware v3, WSB/CAN-Vorbereitung, Zahnriementrieb W130
 ```
 
@@ -51,6 +55,7 @@ docs/                  Roadmap, Protokoll v2, Hardware v3, WSB/CAN-Vorbereitung,
 - [PyST/README.md](PyST/README.md) – Bedienung, Rechenweg, Kommandozeile
 - [firmware/stm32/README.md](firmware/stm32/README.md) – Firmware, Protokoll, Anschlussbelegung, Einstellungen
 - [PyST/TESTPLAN.md](PyST/TESTPLAN.md) – Vergleichstest alt/neu
+- [docs/04_PST_Diag_1.md](docs/04_PST_Diag_1.md) – Oszi-/Diagnosemodus PST-Diag 1 (Befehle, Telegramme, Burst)
 - [docs/ROADMAP.md](docs/ROADMAP.md) – Weiterentwicklung (Protokoll v2, Platine v3, rusEFI, Wirbelstrombremse)
 
 ## Wichtige Hinweise
