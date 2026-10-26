@@ -1,5 +1,6 @@
 @echo off
 rem PyST fuer Windows: beim ersten Start wird die Python-Umgebung eingerichtet.
+set "PYST_CWD=%CD%"
 cd /d "%~dp0"
 if exist .venv\Scripts\python.exe goto run
 echo Erster Start: Python-Umgebung wird eingerichtet (einmalig, 1-2 Minuten) ...

@@ -1,5 +1,6 @@
 #!/bin/bash
 # Doppelklick im Finder: richtet beim ersten Mal alles ein und startet PyST.
+export PYST_CWD="$PWD"          # Dateien auf der Kommandozeile relativ zum Aufrufort
 cd "$(dirname "$0")"
 if [ ! -x .venv/bin/python ]; then
   echo "Erster Start: Python-Umgebung wird eingerichtet (einmalig, ca. 1-2 Minuten) ..."

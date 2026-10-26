@@ -1,7 +1,7 @@
 """
 PyST – Oberflaeche (PySide6 + pyqtgraph). Mac, Linux (Raspberry Pi), Windows.
 
-Reiter:  Messen | Fahrzeuge & Setups | Auswertung | ECU | Einstellungen
+Reiter:  Messen | Fahrzeuge & Setups | Auswertung | Oszi / Dauermessung | ECU | Einstellungen
 """
 import json
 import os
@@ -13,13 +13,15 @@ from typing import Dict, Optional
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import __version__, physics, report, storage
-from .channels import lambda_from_afr, run_channels
+from . import __version__, htmlexport, physics, report, storage
+from .channels import fault_text, lambda_from_afr, run_channels, run_faults
 from .db import SETUP_SUMMARY_KEYS, VEHICLE_FIELDS, Database, base_dir, field_label
 from .dialogs import FieldForm, SetupForm
 from .link import (DEFAULT_SIM_PORT, SIM_PORT, DynoLink, guess_port, is_pst_firmware, list_serial_ports,
                    pst_board_ports)
+from .oszi import OsziPage
 from .ratio_dialog import RatioDialog
+from .share_ui import FORMAT_FOLDER, FORMAT_HTML, ExportDialog, ImportParamsDialog
 from .plots import EXTRA_PREFIX, LOWER_DEFAULT, MAX_LOWER, MAX_OVERLAYS, DynoPlot, fmt_value, run_color
 from .rusefi import COLUMN_PREFIX
 from .runner import ABORTED, DONE, IDLE, RUN, WAIT, RunController
@@ -447,9 +449,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.page_db = DatabasePage(self.db)
         self.viewer = LogViewer(self.db, self._viewer_channels)
         self.page_rusefi = RusefiPage(self.settings, lambda: save_settings(self.settings))
+        self.page_oszi = OsziPage(self.settings, lambda: save_settings(self.settings), lambda: self.link,
+                                  lambda: self.page_settings.params(), self.db.runs_dir,
+                                  lambda: self.vehicle_combo.currentText() if self.vehicle_combo.currentData() else "")
         self.tabs.addTab(self._build_measure(), "Messen")
         self.tabs.addTab(self.page_db, "Fahrzeuge && Setups")
         self.tabs.addTab(self.viewer, "Auswertung")
+        self.tabs.addTab(self.page_oszi, "Oszi / Dauermessung")
         self.tabs.addTab(self.page_rusefi, "ECU")
         self.tabs.addTab(self.page_settings, "Einstellungen")
         self.page_settings.data_label.setText(self.db.path)
@@ -474,6 +480,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_buttons()
         QtGui.QShortcut(QtGui.QKeySequence("F1"), self, activated=self.on_start)
         QtGui.QShortcut(QtGui.QKeySequence("Escape"), self, activated=self.on_abort)
+        self.setAcceptDrops(True)                  # .pyst, Laeufe, Mitschnitte per Drag & Drop oeffnen
+        self.page_oszi.saved.connect(self._dauer_saved)
+        self._fault_todo = [r.id for r in self.db.runs() if r.fehler is None]
+        self.fault_timer = QtCore.QTimer(self)     # Fehleranteile alter Laeufe nach und nach berechnen
+        self.fault_timer.timeout.connect(self._fault_backfill)
+        self.fault_timer.start(80)
 
     # ------------------------------------------------------------------ Aufbau Messen
     def _build_measure(self) -> QtWidgets.QWidget:
@@ -627,7 +639,7 @@ class MainWindow(QtWidgets.QMainWindow):
         hb.addWidget(self.run_filter, 1)
         rl.addLayout(hb)
         self.run_tree = QtWidgets.QTreeWidget()
-        self.run_tree.setHeaderLabels(["Lauf", "PS", "bei", "Nm", "Hz", "Notiz"])
+        self.run_tree.setHeaderLabels(["Lauf", "PS", "bei", "Nm", "Fehler", "Hz", "Notiz"])
         self.run_tree.setRootIsDecorated(False)
         self.run_tree.setAlternatingRowColors(True)
         self.run_tree.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
@@ -666,7 +678,11 @@ class MainWindow(QtWidgets.QMainWindow):
             a.triggered.connect(lambda _c=False, val=val: self._set_ui_scale(val))
         v.addAction("Jetzt neu starten", self._restart)
         m = self.menuBar().addMenu("Datei")
-        for text, slot, key in (("Läufe importieren …", self.on_import, "Ctrl+I"),
+        for text, slot, key in (("Öffnen / importieren (.pyst, Läufe, Mitschnitte) …", self.on_import, "Ctrl+O"),
+                                ("Läufe importieren …", self.on_import, "Ctrl+I"),
+                                ("Läufe weitergeben (.pyst) …", lambda: self.on_share(), "Ctrl+S"),
+                                ("Als HTML-Ansicht exportieren (ohne PyST ansehbar) …", lambda: self.on_share(html=True),
+                                 "Ctrl+H"),
                                 ("PDF-Bericht der sichtbaren Läufe …", self.on_pdf, "Ctrl+P"),
                                 ("CSV-Export des markierten Laufs …", self.on_csv, "Ctrl+E"),
                                 ("Beenden", self.close, "Ctrl+Q")):
@@ -1178,10 +1194,14 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Lauf laden", f"{row.path}:\n{exc}")
             return None
         p = physics.DynoParams(**row.params) if row.params else run["params"]
-        res = physics.evaluate(run["n_roll"], run["dt"], p, run["n_meas"], run["afr"], run["egt"],
-                               require_end=False)
+        res = None
+        if run.get("kind") != "dauermessung" and len(run["dt"]):
+            res = physics.evaluate(run["n_roll"], run["dt"], p, run["n_meas"], run["afr"], run["egt"],
+                                   require_end=False)
         ch = run_channels(run, res, p)
         self.cache[rid] = (run, res, ch, p)
+        if row.fehler is None:
+            self.db.update_run(rid, fehler=run_faults(run)[1])
         return self.cache[rid]
 
     def _viewer_channels(self, rid):
@@ -1189,8 +1209,8 @@ class MainWindow(QtWidgets.QMainWindow):
         e = self._entry(rid)
         if e is None:
             return None
-        _run, res, ch, _p = e
-        return ch, (res.segment if res is not None else None)
+        run, res, ch, _p = e
+        return ch, (res.segment if res is not None else None), run.get("markers", [])
 
     def _run_label(self, row) -> str:
         d = row.datum.replace("T", " ")[:16]
@@ -1229,9 +1249,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.run_tree.blockSignals(True)
         self.run_tree.clear()
         for row in rows:
+            dauer = row.quelle == "Dauermessung"
             it = QtWidgets.QTreeWidgetItem([
-                self._run_label(row), f"{row.p_max:.1f}", f"{row.n_pmax:.0f}", f"{row.m_max:.1f}",
-                f"{row.rate:.0f}", " ".join(x for x in (vehicles.get(row.vehicle_id, ""), row.notiz) if x)])
+                self._run_label(row), "Dauer" if dauer else f"{row.p_max:.1f}", "" if dauer else f"{row.n_pmax:.0f}",
+                "" if dauer else f"{row.m_max:.1f}", self._fault_cell(row), f"{row.rate:.0f}",
+                " ".join(x for x in (vehicles.get(row.vehicle_id, ""), row.notiz) if x)])
+            if row.fehler:
+                it.setToolTip(4, "Fehleranteil (Messfehler Rolle/Zündung): " + fault_text(row.fehler))
+                if max(row.fehler.values()) >= 1.0:
+                    it.setForeground(4, QtGui.QBrush(QtGui.QColor("#c62828")))
             it.setData(0, QtCore.Qt.UserRole, row.id)
             it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
             it.setCheckState(0, QtCore.Qt.Checked if row.sichtbar else QtCore.Qt.Unchecked)
@@ -1242,7 +1268,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Spaltenbreiten automatisch – ausser der Benutzer hat seine gespeichert (beim Beenden).
         # Spalte "Lauf" hoechstens so breit wie Datum + Uhrzeit (LabVIEW-Namen abgeschnitten, voll im Tooltip)
         if not (self.settings.get("fenster") or {}).get("laufliste_spalten"):
-            for c in range(1, 5):
+            for c in range(1, 6):
                 self.run_tree.resizeColumnToContents(c)
             self.run_tree.setColumnWidth(0, min(self.run_tree.sizeHintForColumn(0),
                                                 self.run_tree.fontMetrics().horizontalAdvance("00.00.00 00:00") + 64))
@@ -1606,23 +1632,191 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------ Datenverwaltung
     def on_import(self):
         files, _ = QtWidgets.QFileDialog.getOpenFileNames(
-            self, "Läufe importieren (LabVIEW-XML oder PyST lauf.json)", os.path.expanduser("~"),
-            "Läufe (*.xml *.json);;Alle Dateien (*)")
-        if not files:
-            return
+            self, "Öffnen / importieren", os.path.expanduser("~"),
+            "Alle unterstützten (*.pyst *.xml *.json *.log *.txt *.csv);;PyST-Dateien (*.pyst);;"
+            "LabVIEW-XML / PyST lauf.json (*.xml *.json);;Rohmitschnitt Terminal (*.log *.txt *.csv);;Alle Dateien (*)")
+        if files:
+            self.open_files(files)
+
+    def open_files(self, files, show: bool = True) -> list:
+        """Dateien uebernehmen (.pyst, LabVIEW-XML, PyST-Ordner/lauf.json, Terminal-Mitschnitt).
+        show=True: die Laeufe anhaken und in der Auswertung zeigen. Liefert die Lauf-IDs."""
         vid, sid = self.vehicle_combo.currentData(), self.setup_combo.currentData()
-        n_ok, errors = 0, []
+        logs = [f for f in files if storage.is_terminal_log(f)]
+        params = None
+        if logs:
+            dlg = ImportParamsDialog(logs, self.page_settings.params(), self)
+            if dlg.exec() != QtWidgets.QDialog.Accepted:
+                files = [f for f in files if f not in logs]
+            else:
+                params = dlg.params()
+        ids, errors = [], []
         for f in files:
             try:
-                self.db.import_file(f, vehicle_id=vid, setup_id=sid)
-                n_ok += 1
+                if f.lower().endswith(storage.PYST_EXT):
+                    ids += self.db.import_pyst(f, vehicle_id=vid, setup_id=sid)
+                else:
+                    ids.append(self.db.import_file(f, vehicle_id=vid, setup_id=sid,
+                                                   params=params if f in logs else None))
             except Exception as exc:
                 errors.append(f"{os.path.basename(f)}: {exc}")
+        if show:
+            for rid in ids:
+                self.db.update_run(rid, sichtbar=True)
         self._reload_runs()
-        msg = f"{n_ok} Lauf/Läufe importiert" + (f" (Fahrzeug: {self.vehicle_combo.currentText()})" if vid else "")
+        if show and ids:
+            self._open_in_viewer(ids[0])
+            for rid in ids[1:]:
+                self.viewer.show_run(rid)
+        msg = f"{len(ids)} Lauf/Läufe übernommen" + (f" (Fahrzeug: {self.vehicle_combo.currentText()})" if vid else "")
+        if logs and params is not None:
+            msg += "\nMitschnitte: Prüfstandsdaten wie angegeben; Klima aus dem Mitschnitt, falls vorhanden."
         if errors:
             msg += "\n\nFehler:\n" + "\n".join(errors)
-        QtWidgets.QMessageBox.information(self, "Import", msg + "\n\nIn der Liste anhaken zum Anzeigen.")
+        if errors or not show:
+            QtWidgets.QMessageBox.information(self, "Import", msg)
+        else:
+            self.statusBar().showMessage(msg, 8000)
+        return ids
+
+    def dragEnterEvent(self, ev):
+        if ev.mimeData().hasUrls():
+            ev.acceptProposedAction()
+
+    def dropEvent(self, ev):
+        files = [u.toLocalFile() for u in ev.mimeData().urls() if u.isLocalFile()]
+        if files:
+            self.open_files(files)
+
+    # ------------------------------------------------------------------ Weitergeben
+    def _share_rows(self, scope: str, day: str = ""):
+        rows = self.db.runs()
+        if scope == "markiert":
+            ids = {it.data(0, QtCore.Qt.UserRole) for it in self.run_tree.selectedItems()}
+            rows = [r for r in rows if r.id in ids]
+        elif scope == "sichtbar":
+            rows = [r for r in rows if r.sichtbar]
+        elif scope == "fahrzeug":
+            rows = [r for r in rows if r.vehicle_id == self.vehicle_combo.currentData()]
+        else:
+            rows = [r for r in rows if r.datum[:10] == day]
+        return sorted(rows, key=lambda r: r.datum)
+
+    def _share_item(self, row) -> dict:
+        veh = self.db.vehicle(row.vehicle_id) if row.vehicle_id else None
+        setup = self.db.setup(row.setup_id) if row.setup_id else None
+        return {"ordner": row.ordner, "name": row.name, "datum": row.datum, "quelle": row.quelle,
+                "art": "dauermessung" if row.quelle == "Dauermessung" else "lauf",
+                "fahrzeug": {k: v for k, v in (veh or {}).items() if k != "id"},
+                "setup": {k: v for k, v in (setup or {}).items() if k not in ("id", "vehicle_id")},
+                "notiz": row.notiz, "farbe": row.farbe, "parameter": row.params, "fehler": row.fehler,
+                "ergebnis": {"p_max_ps": row.p_max, "n_pmax": row.n_pmax, "m_max_nm": row.m_max, "n_mmax": row.n_mmax}}
+
+    def on_share(self, html: bool = False, path: str = "", scope: str = "", day: str = "", fmt: int = -1):
+        """Laeufe an Kunden weitergeben: .pyst (eine Datei oder je Lauf) oder HTML-Ansicht ohne PyST."""
+        rows_all = self.db.runs()
+        days: Dict[str, int] = {}
+        for r in rows_all:
+            days[r.datum[:10]] = days.get(r.datum[:10], 0) + 1
+        vid = self.vehicle_combo.currentData()
+        if not scope:
+            dlg = ExportDialog(len(self.run_tree.selectedItems()), sum(r.sichtbar for r in rows_all),
+                               self.vehicle_combo.currentText() if vid else "",
+                               sum(r.vehicle_id == vid for r in rows_all) if vid else 0, days, self, html=html)
+            if dlg.exec() != QtWidgets.QDialog.Accepted:
+                return None
+            scope, day, fmt = dlg.scope(), dlg.day.currentData() or "", dlg.fmt()
+        rows = self._share_rows(scope, day)
+        if not rows:
+            QtWidgets.QMessageBox.information(self, "Weitergeben", "Keine Läufe ausgewählt.")
+            return None
+        title = self.vehicle_combo.currentText() if vid else (self.db.vehicle(rows[0].vehicle_id) or {}).get(
+            "hersteller", "") if rows[0].vehicle_id else "Leistungsmessung"
+        if rows[0].vehicle_id:
+            v = self.db.vehicle(rows[0].vehicle_id)
+            title = self.db.vehicle_name(v) if v else title
+        title = title or "Leistungsmessung"
+        stem = f"{title} {rows[0].datum[:10]}".replace("/", "_").replace(" ", "_")
+        home = os.path.expanduser("~")
+        if fmt == FORMAT_HTML:
+            if not path:
+                path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "HTML-Ansicht", os.path.join(home, stem + ".html"),
+                                                                "HTML (*.html)")
+            if not path:
+                return None
+            size = self.export_html(path, rows, title)
+            self.statusBar().showMessage(f"HTML-Ansicht gespeichert: {path} ({size / 1024:.0f} KB)", 10000)
+            return path
+        items = [self._share_item(r) for r in rows]
+        if fmt == FORMAT_FOLDER:
+            if not path:
+                path = QtWidgets.QFileDialog.getExistingDirectory(self, "Ordner für die .pyst-Dateien", home)
+            if not path:
+                return None
+            for it in items:
+                storage.export_pyst(os.path.join(path, it["name"] + storage.PYST_EXT), [it])
+            self.statusBar().showMessage(f"{len(items)} .pyst-Dateien in {path}", 10000)
+            return path
+        if not path:
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Läufe weitergeben",
+                                                            os.path.join(home, stem + storage.PYST_EXT),
+                                                            "PyST-Datei (*.pyst)")
+        if not path:
+            return None
+        path = storage.export_pyst(path, items)
+        self.statusBar().showMessage(f"{len(items)} Lauf/Läufe gespeichert: {path} "
+                                     f"({os.path.getsize(path) / 1024:.0f} KB)", 10000)
+        return path
+
+    def export_html(self, path: str, rows, title: str) -> int:
+        payload = []
+        setups = {}
+        for r in rows:
+            e = self._entry(r.id)
+            if e is None:
+                continue
+            run, res, ch, p = e
+            if r.setup_id and r.setup_id not in setups:
+                setups[r.setup_id] = (self.db.setup(r.setup_id) or {}).get("name", "")
+            veh = self.db.vehicle(r.vehicle_id) if r.vehicle_id else None
+            label = self._run_label(r) + (f" – {r.p_max:.1f} PS" if res is not None else " – Dauermessung")
+            payload.append(htmlexport.run_payload(
+                label, run, res, ch, p, vehicle=self.db.vehicle_name(veh) if veh else "",
+                setup=setups.get(r.setup_id, ""), notiz=r.notiz, datum=self._run_label(r).split("  ")[0],
+                fehler=r.fehler))
+        return htmlexport.export_html(path, payload, title)
+
+    def _fault_cell(self, row) -> str:
+        if not row.fehler:
+            return "" if row.fehler is None else "–"
+        worst = max(row.fehler.values())
+        return "–" if worst < 0.05 else f"{worst:.0f} %" if worst >= 10 else f"{worst:.1f} %".replace(".", ",")
+
+    def _fault_backfill(self):
+        """Fehleranteile fuer Laeufe ohne Eintrag (aeltere PyST-Versionen) im Hintergrund nachtragen."""
+        if not self._fault_todo:
+            self.fault_timer.stop()
+            return
+        rid = self._fault_todo.pop(0)
+        row = self.db.run(rid)
+        if row is None or row.fehler is not None:
+            return
+        try:
+            self.db.update_run(rid, fehler=run_faults(storage.load_any(row.path))[1])
+        except Exception:
+            self.db.update_run(rid, fehler={})
+        if not self._fault_todo:
+            self._reload_runs()
+
+    def _dauer_saved(self, folder: str):
+        try:
+            rid = self.db.add_folder(folder, self.vehicle_combo.currentData(), self.setup_combo.currentData())
+        except Exception as exc:
+            QtWidgets.QMessageBox.warning(self, "Dauermessung", f"{folder}:\n{exc}")
+            return
+        self.db.update_run(rid, notiz="Dauermessung")
+        self._reload_runs()
+        self.statusBar().showMessage(f"Dauermessung gespeichert: {folder} – in der Laufliste und Auswertung", 10000)
 
     def on_hide_all(self):
         for row in self.db.runs():
@@ -1681,8 +1875,9 @@ class MainWindow(QtWidgets.QMainWindow):
                             f"{row.m_max:.1f} Nm bei {row.n_mmax:.0f} 1/min",
                 "klima": "" if p is None else
                 f"{p.temp_c:.1f} °C, {p.p_mbar:.0f} mbar\nk = {physics.din70020(p.temp_c, p.p_mbar):.3f}",
-                "details": "" if p is None else
-                f"i = {p.ratio:.3f}, J = {p.inertia:.2f}\n{physics.filter_text(p, row.rate)}",
+                "details": ("" if p is None else
+                            f"i = {p.ratio:.3f}, J = {p.inertia:.2f}\n{physics.filter_text(p, row.rate)}")
+                + (f"\nMessfehler: {fault_text(row.fehler)}" if row.fehler else ""),
             })
         return rows
 
@@ -1709,6 +1904,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------ Zyklus
     def _tick(self):
         self._show_ecu_live()
+        self.page_oszi.poll()
         if not self.ctrl:
             return
         new = self.ctrl.poll()
@@ -1788,6 +1984,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def closeEvent(self, ev):
         self.save_window_layout()
         self._persist()
+        self.page_oszi.close_page()
         if self.link:
             self.link.close()
         self.page_rusefi.close_link()
@@ -1837,13 +2034,18 @@ def main():
     _apply_ui_scale(app)
     app.setApplicationName("PyST")
     win = MainWindow()
-    files = [a for a in sys.argv[1:] if a.lower().endswith((".xml", ".json"))]
+    # Dateien (pyst datei.pyst, Doppelklick): relativ zum Aufrufort (Startskripte wechseln das Verzeichnis)
+    cwd = os.environ.get("PYST_CWD", os.getcwd())
+    files = [os.path.join(cwd, a) for a in sys.argv[1:] if not a.startswith("-")]
+    files = [f for f in files if os.path.exists(f)]
     if "--replay" in sys.argv and files:
         win.on_replay(files.pop(0))
     elif "--sim" in sys.argv:
         win.page_settings.port_combo.setEditText(SIM_PORT if "--synth" in sys.argv else DEFAULT_SIM_PORT)
         win.on_connect()
     _fit_window(win, app)
+    if files:                                   # pyst datei.pyst: gleich in der Auswertung zeigen
+        QtCore.QTimer.singleShot(0, lambda: win.open_files(files))
     sys.exit(app.exec())
 
 
