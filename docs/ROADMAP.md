@@ -8,9 +8,9 @@ rusEFI-Anbindung und später eine aktiv geregelte Wirbelstrombremse (WSB).
 | 1 | [Vergleichstest und Zündsignal-Diagnose](01_Test_und_Zuendsignal.md) | Prüfstand | vorbereitet |
 | 2 | [Messverfahren in der Firmware verbessern (jetzige Hardware)](02_Firmware_Messung.md) | `PST-STM32-Firmware` | geplant |
 | 3 | [Binärprotokoll v2 mit Kanalbeschreibung](03_Protokoll_v2.md) | Firmware + `PyST` | geplant |
-| 4 | [Neue Messplatine (v3)](04_Hardware_Platine_v3.md) | Hardware | Konzept |
-| 5 | [CAN-Sensormodule und WSB-Leistungsteil – Vorbereitung](05_Vorbereitung_CAN_Module_WSB.md) | neues Projekt | Schnittstellen festlegen |
-| 5a | [Zahnriementrieb Rolle → Schenck W130](05a_Zahnriemen_Rolle_W130.md) | Mechanik | Vorauslegung |
+| 4 | Neue Messplatine (v3) – Unterlagen privat | Hardware | Konzept |
+| 5 | CAN-Sensormodule und WSB-Leistungsteil – Vorbereitung (Unterlagen privat) | neues Projekt | Schnittstellen festlegen |
+| 5a | Zahnriementrieb Rolle → Schenck W130 (Unterlagen privat) | Mechanik | Vorauslegung |
 
 ## Was bis jetzt fertig ist
 
