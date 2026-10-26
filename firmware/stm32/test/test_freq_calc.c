@@ -151,6 +151,162 @@ int main(void)
             check(name, last > 150.0 ? 1.0 : 0.0, 1.0, 0.0);   /* 25 %: Stoerimpulse kommen durch (erwartet) */
     }
 
+    /* ------------------------------------------ Diagnose-Fenster (Modus D) */
+    {
+        /* 100 Hz Zuendung, Telegramme mit 60 Hz: Frequenz aus allen Perioden */
+        chan_setup(&c, 200, 500, 0, 2);
+        edge_win_t w;
+        float hold = 0.0f;
+        uint32_t prev = 0;
+        double next_frame = 1.0 / RATE, hz_min = 1e9, hz_max = 0;
+        uint32_t pmin = 0xFFFFFFFFu, pmax = 0;
+        int stale = 0;
+        for (int i = 1; i <= 100; i++) {
+            double t = i * 0.01;
+            while (next_frame < t) {
+                uint32_t t1 = (uint32_t)(next_frame * F_TIM);
+                edge_window(&c, c.head, c.seg_start, prev, t1, (float)F_TIM, &hold, &w);
+                if (next_frame > 0.1) {
+                    if (w.hz < hz_min) hz_min = w.hz;
+                    if (w.hz > hz_max) hz_max = w.hz;
+                    if (w.pmin && w.pmin < pmin) pmin = w.pmin;
+                    if (w.pmax > pmax) pmax = w.pmax;
+                    stale += w.stale;
+                }
+                prev = t1;
+                next_frame += 1.0 / RATE;
+            }
+            edge_push(&c, (uint32_t)(t * F_TIM));
+        }
+        check("D: 100 Hz, Frequenz min", hz_min, 100.0, 0.01);
+        check("D: 100 Hz, Frequenz max", hz_max, 100.0, 0.01);
+        check("D: pmin = 10000 us", pmin / 90.0, 10000.0, 0.1);
+        check("D: pmax = 10000 us", pmax / 90.0, 10000.0, 0.1);
+        check("D: nie stale (>= 1 Periode je Fenster)", stale, 0, 0);
+    }
+    {
+        /* 7 Hz: Fenster ohne Flanke -> letzter Wert + stale; nach Stopp -> 0 + timeout */
+        chan_setup(&c, 20, 1000, 0, 1);
+        edge_win_t w;
+        float hold = 0.0f;
+        uint32_t prev = 0;
+        int stale = 0, bad = 0, timeout_end = 0;
+        double next_frame = 1.0 / RATE;
+        for (int i = 1; i <= 14; i++) {
+            double t = i / 7.0;
+            while (next_frame < t) {
+                uint32_t t1 = (uint32_t)(next_frame * F_TIM);
+                edge_window(&c, c.head, c.seg_start, prev, t1, (float)F_TIM, &hold, &w);
+                if (next_frame > 0.3) {
+                    stale += w.stale;
+                    if (fabs(w.hz - 7.0) > 0.01) bad++;
+                }
+                prev = t1;
+                next_frame += 1.0 / RATE;
+            }
+            edge_push(&c, (uint32_t)(t * F_TIM));
+        }
+        for (; next_frame < 4.0; next_frame += 1.0 / RATE) {
+            uint32_t t1 = (uint32_t)(next_frame * F_TIM);
+            edge_window(&c, c.head, c.seg_start, prev, t1, (float)F_TIM, &hold, &w);
+            prev = t1;
+        }
+        timeout_end = w.timeout && w.hz == 0.0f && w.n == 0;
+        check("D: 7 Hz meist stale (letzter Wert gehalten)", stale > 80 ? 1 : 0, 1, 0);
+        check("D: 7 Hz Wert immer 7,000", bad, 0, 0);
+        check("D: nach Stopp > Timeout: 0 + Flag timeout", timeout_end, 1, 0);
+    }
+    {
+        /* Doppelimpuls bei 39 % ohne Filter: D zeigt 200 Hz und pmin/pmax 39/61 % */
+        chan_setup(&c, 200, 500, 0, 2);
+        edge_win_t w;
+        float hold = 0.0f;
+        for (int i = 1; i <= 50; i++) {
+            double t = i * 0.01;
+            edge_push(&c, (uint32_t)(t * F_TIM));
+            edge_push(&c, (uint32_t)((t + 0.0039) * F_TIM));
+        }
+        edge_window(&c, c.head, c.seg_start, (uint32_t)(0.3 * F_TIM), (uint32_t)(0.4001 * F_TIM),
+                    (float)F_TIM, &hold, &w);
+        check("D: Doppelimpuls ohne Filter: 200 Flanken/s", w.hz, 200.0, 0.5);
+        check("D: pmin = 3900 us", w.pmin / 90.0, 3900.0, 0.1);
+        check("D: pmax = 6100 us", w.pmax / 90.0, 6100.0, 0.1);
+        check("D: n = 20 Flanken in 100 ms", w.n, 20, 0);
+    }
+
+    /* ------------------------------------------ Erwartungsfenster (Plan 2.2) */
+    {
+        /* (a) Stoerimpuls bei 39 % in 70 % der Umdrehungen, Doppelimpulsfilter aus */
+        chan_setup(&c, 200, 500, 0, 2);
+        c.win_lo_pct = 70;
+        c.win_hi_pct = 150;
+        uint32_t prev = 0;
+        double last = 0.0, next_frame = 1.0 / RATE;
+        unsigned rnd = 12345, injected = 0;
+        uint32_t rej0 = 0, gaps0 = 0;
+        for (int rev = 0; rev < 300; rev++) {
+            if (rev == 50) {               /* Einrasten abwarten, danach zaehlen */
+                rej0 = c.rejected;
+                gaps0 = c.gaps;
+                injected = 0;
+            }
+            double t = 0.1 + rev * 0.01;
+            while (next_frame < t) {
+                uint32_t t1 = (uint32_t)(next_frame * F_TIM);
+                last = edge_freq(&c, c.head, c.seg_start, prev, t1, (float)F_TIM);
+                prev = t1;
+                next_frame += 1.0 / RATE;
+            }
+            edge_push(&c, (uint32_t)(t * F_TIM));
+            rnd = rnd * 1103515245u + 12345u;
+            if ((rnd >> 16) % 10 < 7) {
+                edge_push(&c, (uint32_t)((t + 0.0039) * F_TIM));
+                injected++;
+            }
+        }
+        check("Fenster 70/150: Stoerimpuls 39 % -> 100 Hz", last, 100.0, 0.05);
+        check("Fenster: eingerastet alle Stoerimpulse verworfen", (double)(c.rejected - rej0), (double)injected, 0.0);
+        check("Fenster: eingerastet keine Luecken", c.gaps - gaps0, 0, 0);
+    }
+    {
+        /* (b) Aussetzer: jeder 10. Impuls fehlt -> gueltig, als Luecke gezaehlt */
+        chan_setup(&c, 200, 500, 0, 2);
+        c.win_lo_pct = 70;
+        c.win_hi_pct = 150;
+        for (int i = 1; i <= 200; i++)
+            if (i % 10 != 0)
+                edge_push(&c, (uint32_t)(i * 0.01 * F_TIM));
+        check("Fenster: Aussetzer als Luecke gezaehlt (19)", c.gaps, 19, 0);
+        check("Fenster: Aussetzer nicht verworfen", c.rejected, 0, 0);
+        check("Fenster: P bleibt 10 ms", c.p_hat / 90.0, 10000.0, 30.0);
+    }
+    {
+        /* (c) Beschleunigung 3000 -> 12000 1/min (50 -> 200 Hz) in 3 s */
+        chan_setup(&c, 200, 500, 0, 2);
+        c.win_lo_pct = 70;
+        c.win_hi_pct = 150;
+        double t = 0.0;
+        while (t < 3.0) {
+            double f = 50.0 + 50.0 * t;
+            t += 1.0 / f;
+            edge_push(&c, (uint32_t)(t * F_TIM));
+        }
+        double f = edge_freq(&c, c.head, c.seg_start, (uint32_t)((t - 0.0166) * F_TIM), (uint32_t)(t * F_TIM), (float)F_TIM);
+        check("Fenster: Beschleunigung 50->200 Hz in 3 s, Endwert", f, 200.0, 2.0);
+        check("Fenster: Beschleunigung ohne Verwerfen/Luecken", c.rejected + c.gaps, 0, 0);
+    }
+    {
+        /* (d) Drehzahlsprung auf die Haelfte: 2x Luecke, beim 3. Mal neu einrasten */
+        chan_setup(&c, 200, 500, 0, 2);
+        c.win_lo_pct = 70;
+        c.win_hi_pct = 150;
+        double t = 0.0;
+        for (int i = 0; i < 20; i++) { t += 0.01; edge_push(&c, (uint32_t)(t * F_TIM)); }
+        for (int i = 0; i < 20; i++) { t += 0.02; edge_push(&c, (uint32_t)(t * F_TIM)); }
+        check("Fenster: Sprung -> 2 Luecken, dann eingerastet", c.gaps, 2, 0);
+        check("Fenster: P nach Sprung = 20 ms", c.p_hat / 90.0, 20000.0, 50.0);
+    }
+
     printf("\n%s (%d Fehler)\n", failures ? "FEHLGESCHLAGEN" : "ALLE TESTS OK", failures);
     return failures ? 1 : 0;
 }

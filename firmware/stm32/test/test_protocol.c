@@ -1,7 +1,10 @@
 /*
  * Host-Test des PC-Protokolls mit Hardware-Attrappen. Gibt die gesendeten
  * Bytes auf stdout aus; test/check_protocol.py wertet sie wie LabVIEW aus.
- *   cc -std=c11 -Iinclude -Itest/stub src/protocol.c src/fmt.c test/test_protocol.c -o /tmp/tp
+ *   cc -std=c11 -Iinclude -Itest/stub src/protocol.c src/diag.c src/settings.c src/burst.c \
+ *      src/fmt.c test/test_protocol.c -lm -o /tmp/tp
+ * Ab 1.1.0 laufen dieselben Pruefungen wie bei 1.0.0 (Normalmodus byte-identisch);
+ * PST-Diag 1 wird in test/test_diag.c geprueft.
  */
 #include <stdio.h>
 #include <string.h>
@@ -13,6 +16,8 @@
 #include "env_sensor.h"
 #include "protocol.h"
 #include "serial.h"
+#include "settings.h"
+#include "settings_store.h"
 
 static uint32_t tick;
 static const char *rx;
@@ -37,6 +42,15 @@ float analog_to_afr(uint16_t raw) { return 10.0f + 10.0f * raw / 4096.0f; }
 const char *board_clock_source(void) { return "Test"; }
 void capture_set_rate_mhz(uint32_t r) { rate_mhz = r; }
 void capture_get_stats(capture_stats_t *s) { memset(s, 0, sizeof *s); }
+float capture_timer_hz(void) { return 90e6f; }
+void capture_apply_settings(void) {}
+static burst_t bu;
+void capture_burst_start(const burst_cfg_t *c) { burst_arm(&bu, c); }
+void capture_burst_stop(void) { burst_stop(&bu); }
+const burst_t *capture_burst(void) { return &bu; }
+uint32_t serial_tx_dropped(void) { return 0; }
+uint32_t serial_tx_free(void) { return 4096; }
+const char *settings_store_save(const settings_t *s, bool busy) { (void)s; (void)busy; return NULL; }
 
 static void send_cmd(const char *c, size_t n)
 {
@@ -49,13 +63,18 @@ static void send_cmd(const char *c, size_t n)
 static void frames(int n, float ign, float roll)
 {
     for (int i = 0; i < n; i++) {
-        capture_frame_t f = {(float)rate_mhz / 1000.0f, ign, roll};
+        capture_frame_t f;
+        memset(&f, 0, sizeof f);
+        f.rate_hz = (float)rate_mhz / 1000.0f;
+        f.ign_hz = ign;
+        f.roll_hz = roll;
         protocol_on_frame(&f);
     }
 }
 
 int main(int argc, char **argv)
 {
+    settings_defaults(&g_set);
     protocol_init();
     if (argc > 1 && strcmp(argv[1], "legacy") == 0) {
         send_cmd("tttttttt", 8);

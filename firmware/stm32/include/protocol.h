@@ -24,4 +24,8 @@ void protocol_poll(void);                          /* Befehle verarbeiten */
 void protocol_on_frame(const capture_frame_t *f);  /* je Telegramm-Intervall */
 int protocol_streaming(void);
 
+/* fuer diag.c (#RUN, #RATE, #SET) */
+void protocol_run(int on);                         /* Arduino-Protokoll starten/stoppen */
+void protocol_settings_changed(void);              /* Rate/Filter neu anwenden */
+
 #endif /* PROTOCOL_H */

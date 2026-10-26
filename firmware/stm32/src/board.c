@@ -120,3 +120,20 @@ void board_watchdog_kick(void)
 {
     IWDG->KR = 0xAAAA;
 }
+
+static void iwdg_wait(void)
+{
+    while (IWDG->SR & (IWDG_SR_PVU | IWDG_SR_RVU)) {
+    }
+}
+
+void board_watchdog_long(int on)
+{
+    IWDG->KR = 0xAAAA;
+    iwdg_wait();
+    IWDG->KR = 0x5555;
+    IWDG->PR = on ? 6u : 3u;                   /* LSI / 256 bzw. / 32 */
+    IWDG->RLR = on ? 4095u : 1000u;            /* ~32 s bzw. ~1 s */
+    iwdg_wait();
+    IWDG->KR = 0xAAAA;
+}

@@ -26,4 +26,7 @@ bool serial_take_break(void);
 
 uint32_t serial_tx_dropped(void);
 
+/* Freier Platz im Sendepuffer [Byte]. */
+uint32_t serial_tx_free(void);
+
 #endif /* SERIAL_H */

@@ -4,6 +4,7 @@
  * Erfasst Zuend- und Rollenfrequenz, Klimadaten und Abgastemperatur und
  * sendet sie im Protokoll des Arduino-Mega-Sketches an LabVIEW 3.x.
  * Die private STM-LabVIEW 0.2.0 wird ebenfalls bedient (Auto-Erkennung).
+ * Ab 1.1.0: Oszi-/Diagnosemodus PST-Diag 1 (#-Befehle, docs/04_PST_Diag_1.md).
  */
 #include "analog.h"
 #include "board.h"
@@ -13,6 +14,7 @@
 #include "env_sensor.h"
 #include "protocol.h"
 #include "serial.h"
+#include "settings_store.h"
 #include "stm32f4xx_hal.h"
 
 static void led_update(void)
@@ -25,6 +27,7 @@ static void led_update(void)
 int main(void)
 {
     board_init();
+    settings_store_load();          /* gespeicherte Einstellungen oder Standardwerte */
     serial_init(PC_BAUD);
     env_init();
     egt_init();

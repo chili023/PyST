@@ -108,3 +108,5 @@ bool serial_take_break(void)
 }
 
 uint32_t serial_tx_dropped(void) { return tx_dropped; }
+
+uint32_t serial_tx_free(void) { return TX_SIZE - (tx_head - tx_tail); }
