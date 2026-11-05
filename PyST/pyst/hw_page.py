@@ -210,6 +210,7 @@ class PlugDialog(QtWidgets.QDialog):
 
 class HardwarePage(QtWidgets.QScrollArea):
     zange_text = QtCore.Signal(str)          # Kurztext für die Statusleiste
+    zange_state = QtCore.Signal(str)         # Anzeige Statusleiste: ok, weg, usb oder leer
     log_saved = QtCore.Signal(str)           # ausgelesenes Zangen-Log (Ordner) -> Datenbank
     connect_port = QtCore.Signal(str)        # „Per WLAN verbinden“ -> Hauptfenster
 
@@ -422,6 +423,7 @@ class HardwarePage(QtWidgets.QScrollArea):
             self.net_state.setText("–")
         if usb:
             self._show_zange(None)
+            self.zange_state.emit("usb")
             self.z_vals["verb"].setText("per USB")
             self.z_vals["fw"].setText(link.caps.get("fw", ""))
             self.z_msg.setText("Zange direkt per USB: Zündungs-Oszi im Reiter „Oszi / Dauermessung“ "
@@ -434,6 +436,7 @@ class HardwarePage(QtWidgets.QScrollArea):
             self.z_msg.setText("Das verbundene Gerät ist keine PyST-Basis – Zange und Netzwerk nicht verfügbar.")
         elif not zange_ok:
             self._show_zange(None)
+            self.zange_state.emit("weg")
             self.z_msg.setText("Keine Zange gekoppelt – „Koppeln …“ drücken.")
         else:
             self.z_msg.setText("")
@@ -451,7 +454,9 @@ class HardwarePage(QtWidgets.QScrollArea):
         if st is None:
             for k in v:
                 v[k].setText("–")
+            v["verb"].setStyleSheet("font-size: 15px; font-weight: 600;")
             self.zange_text.emit("")
+            self.zange_state.emit("")
             return
         nan = lambda x: x != x
         v["verb"].setText(("verbunden" if st.connected else "nicht erreichbar") + (f" (ID {st.id})" if st.id else ""))
@@ -467,6 +472,7 @@ class HardwarePage(QtWidgets.QScrollArea):
         v["log"].setText(st.log or "–")
         v["fw"].setText(st.fw or "–")
         self.zange_text.emit(st.summary())
+        self.zange_state.emit("ok" if st.connected else "weg")
 
     # ------------------------------------------------------------------ Zange
     def _zcmd(self, sub: str):
@@ -770,7 +776,8 @@ class HardwarePage(QtWidgets.QScrollArea):
                     " – „Hinzufügen …“ und Adresse wählen")
         now = time.time()
         link = self.link
-        if link is not None and link.is_basis and link.ign_source == "zange" and now - self._last_zange > 2.0:
+        # auch ohne ign=zange fragen: wer erst nach dem Verbinden koppelt, sieht die Zange sonst nie
+        if link is not None and link.is_basis and now - self._last_zange > 2.0:
             self._last_zange = now
             self.bg.submit("zst", link.zangen_status, self._zange_result)
         if link is not None and link.is_basis and now - self._last_net > 10.0:
@@ -783,10 +790,11 @@ class HardwarePage(QtWidgets.QScrollArea):
                 self.plugs.refresh()
 
     def _zange_result(self, zangen, err):
-        if err is not None or zangen is None:
-            return
+        if err is not None or zangen is None or self.link is None or not self.link.is_basis:
+            return                                # späte Antwort nach dem Trennen: Anzeige nicht wieder setzen
+        self._sync_caps(zangen)
         st = main_zange(zangen)
-        if st is None:
+        if st is None or not st.id:
             return
         self.zst = st
         self._show_zange(st)
@@ -795,6 +803,17 @@ class HardwarePage(QtWidgets.QScrollArea):
         self.z_weitere.setVisible(bool(weitere))
         if weitere:
             self.zange_text.emit(st.summary() + f" (+{len(weitere)} weitere)")
+
+    def _sync_caps(self, zangen):
+        """'#CAP' stammt vom Verbinden: Kopplung oder Entkopplung danach hier nachziehen."""
+        link = self.link
+        if link is None:
+            return
+        paired = any(z.id for z in zangen)
+        if paired != (link.ign_source == "zange"):
+            link.caps["ign"] = "zange" if paired else "none"
+            link.caps["ch"] = "I,R" if paired else "R"
+            self._link_changed()
 
     def close_page(self):
         self.plugs.close()

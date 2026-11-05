@@ -347,17 +347,18 @@ def parse_pair(line: str) -> Optional[PairEntry]:
 
 
 # ---------------------------------------------------------------------------------------------- Log der Zange
-LOG_SPARK, LOG_MARK, LOG_SYNC, LOG_STATUS = "F", "M", "Y", "S"
+LOG_SPARK, LOG_MARK, LOG_SYNC, LOG_STATUS, LOG_BOOT = "F", "M", "Y", "S", "B"
 _LOG_ART = {"F": LOG_SPARK, "FUNKE": LOG_SPARK, "SPARK": LOG_SPARK, "1": LOG_SPARK,
             "M": LOG_MARK, "MARK": LOG_MARK, "MARKER": LOG_MARK, "2": LOG_MARK,
             "Y": LOG_SYNC, "SYNC": LOG_SYNC, "3": LOG_SYNC,
-            "S": LOG_STATUS, "STATUS": LOG_STATUS, "4": LOG_STATUS}
+            "S": LOG_STATUS, "STATUS": LOG_STATUS, "4": LOG_STATUS,
+            "B": LOG_BOOT, "BOOT": LOG_BOOT, "5": LOG_BOOT}
 
 
 @dataclass
 class LogEntry:
     """Logzeile der USB-Zange 'L;idx;art;lokal_us;…'. art: F Funke (src;flags;peak_mv), M Marker (taste),
-    Y Sync-Paar (master_us), S Status (akku_mv;akku_pct;…). Unbekannte Arten bleiben mit art = Originaltext."""
+    Y Sync-Paar (master_us), S Status (akku_mv;akku_pct;…), B Start der Zange (lokal_us beginnt neu). Unbekannte Arten bleiben mit art = Originaltext."""
     idx: int
     art: str
     local_us: int

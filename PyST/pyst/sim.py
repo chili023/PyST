@@ -15,10 +15,15 @@ Rollenspruenge, Wackelkontakt). Die Stoerungen sind als Einstellungen sim_* eins
 import bisect
 import math
 import random
+import struct
 import threading
 import time
+import zlib
 from collections import deque
+from types import SimpleNamespace
 from typing import Dict, List, Optional
+
+from . import bootproto
 
 
 class SimEngine:
@@ -702,6 +707,8 @@ class BasisSimSerial(SimSerial):
             2: {"typ": "SHELLY1", "host": "192.168.4.21", "on": False, "until": None, "sek": 0},
         }
         self._wall = time.time()
+        self.fw_version = "0.1.0"
+        self.on_update = None                           # BootSimDevice: '#UPDATE' startet den Bootloader
         super().__init__(engine=SimEngine(rate=60.0), mega=False, diag=True, faults=None, seed=seed, **kw)
         self.tick_ns = 6.25
         self.tick_offset = (1 << 32) - int(2.0e9 / self.tick_ns)
@@ -820,8 +827,15 @@ class BasisSimSerial(SimSerial):
         if cmd == "?":
             ch = "I,R" if self.z_paired else "R"
             ign = "zange" if self.z_paired else "none"
-            self._out(f"#CAP;proto=1;fw=PyST-Basis 0.1.0 SIM;tick_ns=6.25;ch={ch};burst_max={self.burst_max()};"
+            self._out(f"#CAP;proto=1;fw=PyST-Basis {self.fw_version} SIM;tick_ns=6.25;ch={ch};burst_max={self.burst_max()};"
                       f"modes=N,D;set=1;hw=rev31;ign={ign}\r\n")
+        elif cmd == "STAT":
+            self._out("#STAT;roll_edges=0;roll_valid=0;roll_rej=0;rollb_edges=0;pos=0;lost=0;drop=0\r\n"
+                      "#STAT;clk=HSE;reset=einschalten/bor;sync_ofs=0;usb=1\r\n"
+                      "#STAT;egt1=nan;egt1_st=offen;egt2=nan;egt2_st=offen;cj=24.00;ads=ok;bme=BMP280@0x76;klima=ok\r\n"
+                      "#STAT;wb=reset;lambda=nan;afr=nan;wb_temp=-1;wb_status=-;heat_cmd=0;heat=0;can_rx=0;can_err=0;"
+                      "wb_reset=1;wb_guard=aus\r\n"
+                      "#STAT;u12=12.17;u5s=4.961;ai1=0.010V;ai2=0.010V;vref=2.497;t_mcu=29.7\r\n")
         elif cmd == "ZANGE":
             sub = a[0].upper() if a else ""
             if not self.z_paired:
@@ -888,7 +902,7 @@ class BasisSimSerial(SimSerial):
             n = self.net
             if not sub:
                 self._out(f"#NET;mode={n['mode']};kanal={n['kanal']};ssid={n['ssid']};ip={n['ip']};"
-                          f"clients={n['clients']};rssi={n['rssi']};tcp={n['tcp']};err={n['err']}\r\n")
+                          f"clients={n['clients']};rssi={n['rssi']};tcp={n['tcp']};err={n['err']};esp=1;esp_fw=basis-esp 0.1.0 SIM;esp_neustarts=0\r\n")
             elif sub == "AP" and len(a) >= 3 and a[1].isdigit() and 1 <= int(a[1]) <= 13:
                 n.update(mode="AP", kanal=int(a[1]), ssid=a[2], ip="192.168.4.1", clients=0, rssi="", err=0)
                 self._out("#OK;NET;AP\r\n")
@@ -902,6 +916,9 @@ class BasisSimSerial(SimSerial):
                 self._out("#ERR;NET;parameter\r\n")
         elif cmd == "DOSE":
             self._dose_command(a, now, PLUG_TYPES)
+        elif cmd == "UPDATE" and self.on_update:
+            self._out("#OK;UPDATE\r\n")
+            self.on_update()
         else:
             super()._diag_command(line)
 
@@ -1017,6 +1034,7 @@ class ZangeUsbSimSerial(SimSerial):
         self.log_head = int(self.log[-1].split(";")[1]) + 1
         self.zrng = random.Random(seed)
         self.peak = 0.0
+        self.z_funken = self.z_blitze = 0
         super().__init__(engine=SimEngine(rate=50.0, n_hold=1800.0), mega=True, diag=True, seed=seed, **kw)
         self.tick_ns = 1000.0
         self.tick_offset = (1 << 32) - int(2.0e9 / self.tick_ns)
@@ -1048,6 +1066,21 @@ class ZangeUsbSimSerial(SimSerial):
         if cmd == "?":
             self._out(f"#CAP;proto=1;fw=PyST-Zange 0.1.0 SIM;tick_ns=1000;ch=I;burst_max={self.burst_max()};"
                       f"modes=N,D;set=1;hw=zange-c3\r\n")
+        elif cmd == "ZANGE":
+            self._out("#ZANGE;id=0;mac=7C:E8:B1:C5:F0:18;akku_mv=4201;akku_pct=100;vbus=1;laden=0;agc=0;empf_mv=219;"
+                      "spitze_mv=0;rpm=0\r\n#ZANGE;rec=0;gekoppelt=1;sync=1;rssi=-57;kanal=6;blitz=0;phi_x10=0;"
+                      f"blitz_w_ns=0;log_head={self.log_head};log_tail={self.log_tail};fw=0.1.0 SIM\r\n")
+        elif cmd == "STAT":
+            self._out(f"#STAT;funken={self.z_funken};verworfen=0;luecken=0;probe=0;isr_verlust=0;"
+                      f"blitze={self.z_blitze};blitz_aus=0\r\n#STAT;tx_ok=15;tx_fehler=0;beacons=75;brownouts=0;"
+                      "reset=usb\r\n")
+        elif cmd == "BLITZ":
+            us = int(a[0]) if a and a[0].isdigit() else (0 if a else 25)
+            if not 1 <= us <= 25:
+                self._out("#ERR;BLITZ;1-25\r\n")
+            else:
+                self.z_blitze += 1
+                self._out(f"#OK;BLITZ;w_us={us}\r\n")
         elif cmd == "GET":
             for k in ZANGE_GET_KEYS:
                 self._out(f"#SET;{k}={self.settings[k]}\r\n")
@@ -1075,3 +1108,243 @@ class ZangeUsbSimSerial(SimSerial):
                 self._out("#ERR;LOG;parameter\r\n")
         else:
             super()._diag_command(line)
+
+
+class BootSimPort:
+    """Serieller Port des simulierten Bootloaders. Nach Abmelden, Kabel weg oder Stromausfall wirft er OSError."""
+
+    def __init__(self, dev: "BootSimDevice"):
+        self.dev = dev
+        self.gen = dev.gen
+        self.buf = bytearray()
+        self.dec = bootproto.FrameDecoder()
+        self.line = b""
+        self.binary = False
+        self.lock = threading.Lock()
+
+    def _alive(self):
+        if self.gen != self.dev.gen or self.dev.mode != "boot":
+            raise OSError("Gerät abgemeldet")
+
+    @property
+    def in_waiting(self) -> int:
+        self._alive()
+        return len(self.buf)
+
+    def read(self, n: int = 1) -> bytes:
+        self._alive()
+        end = time.time() + 0.05
+        while not self.buf and time.time() < end:
+            time.sleep(0.001)
+        with self.lock:
+            out = bytes(self.buf[:n])
+            del self.buf[:n]
+        return out
+
+    def write(self, data: bytes) -> int:
+        self._alive()
+        if not self.binary:
+            self.line += data
+            while b"\n" in self.line:
+                line, self.line = self.line.split(b"\n", 1)
+                if line.strip() in (b"#?", b"v"):
+                    self._put(self.dev.info().encode("latin-1") + b"\r\n")
+        for kind, seq, body in self.dec.feed(data):
+            self.binary = True
+            self.dev.frame(self, kind, seq, body)
+        return len(data)
+
+    def _put(self, data: bytes):
+        with self.lock:
+            self.buf += data
+
+    def reset_input_buffer(self):
+        with self.lock:
+            self.buf.clear()
+
+    def close(self):
+        pass
+
+
+class BootSimDevice:
+    """Basis mit Bootloader fuer Ende-zu-Ende-Tests ohne Hardware: Anwendung (BasisSimSerial) und Bootloader nach
+    boot_core.c. Zwischenspeicher und Beleg ueberleben Reset und Stromausfall, der Portname aendert sich bei jedem
+    Abmelden. faults steuert Stoerungen:
+      drop      Nummern von Antworten, die verloren gehen (Zaehlung ab 1)
+      corrupt   Nummern von Antworten mit gekipptem Bit
+      unplug    Kabel weg beim Erreichen dieses Offsets (einmalig, Geraet bleibt im Bootloader)
+      power     Stromausfall beim Erreichen dieses Offsets (einmalig)
+      copy_cut  Stromausfall mitten im Kopieren (einmalig)
+      copy_fail Kopieren schlaegt immer fehl
+      slow      Sekunden je Block
+      streaming Anwendung gibt schon Telegramme aus
+      no_update Anwendung kennt '#UPDATE' nicht
+      rewind    bei diesem Offset 1024 Byte zurueckfordern (einmalig)
+      wrong_version Anwendung meldet nach dem Update eine andere Version"""
+    RESET_S = 0.05
+
+    def __init__(self, version: str = "0.1.0", app: bool = True, mode: Optional[str] = None, **faults):
+        self.version = version if app else None      # None: Bank 1 ungueltig
+        self.faults = faults
+        self.gen = 0
+        self.mode = mode or ("app" if app else "boot")
+        self.why = "anfrage" if mode == "boot" else "kein_abbild"
+        self.back_at = 0.0
+        self.stage = bytearray()
+        self.stage_hdr: Optional[bootproto.UpdateFile] = None
+        self.commit: Optional[bootproto.UpdateFile] = None
+        self.state = "idle"
+        self.next_off = 0
+        self.resp_count = 0
+        self.settings = {"rate_hz": "60"}               # Einstellungen des Kunden: muessen bleiben
+        self.boots = 0
+        self.app_port: Optional[BasisSimSerial] = None
+
+    # --- USB
+    def _name(self, n: int) -> str:
+        return f"/dev/cu.usbmodemSIM{self.gen}{n}"
+
+    def _on_bus(self) -> bool:
+        if self.mode == "off" and time.time() >= self.back_at:
+            self._boot()
+        return self.mode in ("app", "boot") and not self.faults.get("unplugged")
+
+    def comports(self):
+        if not self._on_bus():
+            return []
+        return [SimpleNamespace(device=self._name(n), vid=0x1209, pid=0x0001, location="", hwid="", interface=None,
+                                description="PyST Basis rev31", serial_number="SIM") for n in (1, 3)]
+
+    def ports(self) -> List[str]:
+        return [self._name(1)] if self._on_bus() else []
+
+    def open(self, port: str):
+        if not self._on_bus() or port != self._name(1):
+            raise OSError(f"{port} gibt es nicht")
+        if self.mode == "boot":
+            return BootSimPort(self)
+        self.app_port = BasisSimSerial(paired=False)
+        self.app_port.fw_version = self.version
+        if self.faults.get("streaming"):
+            self.app_port.write(b"m")
+        if not self.faults.get("no_update"):
+            self.app_port.on_update = self.request_update
+        return self.app_port
+
+    def plug_in(self):
+        self.faults.pop("unplugged", None)
+        self.gen += 1
+
+    # --- Neustart
+    def _detach(self, seconds: float = RESET_S):
+        self.mode = "off"
+        self.gen += 1
+        self.back_at = time.time() + seconds
+        self.state = "idle"
+
+    def request_update(self):
+        self._stay = True
+        self._detach()
+
+    def _boot(self):
+        """boot_decide(): zuerst ein angefangenes Update zu Ende bringen."""
+        self.boots += 1
+        stay, self._stay = getattr(self, "_stay", False), False
+        if self.commit is not None and bytes(self.stage[:self.commit.image_len]) == self.commit.payload:
+            self.version = None                      # Bank 1 ist ab dem ersten Loeschen ungueltig
+            if self.faults.pop("copy_cut", False):
+                self._detach()
+                return
+            if self.faults.get("copy_fail"):
+                self.mode, self.why = "boot", "kopierfehler"
+                return
+            self.version = self.faults.get("wrong_version") or self.commit.version
+            self.commit = None
+        if self.version is None:
+            self.mode, self.why = "boot", "kein_abbild"
+        elif stay:
+            self.mode, self.why = "boot", "anfrage"
+        else:
+            self.mode = "app"
+
+    def info(self) -> str:
+        return (f"#BOOTLOADER;proto=1;bl=1.0.0;board={bootproto.BOARD};target={bootproto.TARGET};uid=SIM;"
+                f"app={self.version or 'keine'};grund={self.why};opt=FFEFF8AA")
+
+    # --- Protokoll
+    def _reply(self, port: BootSimPort, seq: int, cmd: int, status: int, value: int = 0, text: str = ""):
+        self.resp_count += 1
+        if self.resp_count in self.faults.get("drop", ()):
+            return
+        data = bootproto.encode_frame(bootproto.BL_RESP, seq, struct.pack("<BBI", cmd, status, value) + text.encode())
+        if self.resp_count in self.faults.get("corrupt", ()):
+            data = bytes((data[2] ^ 0x40,)).join((data[:2], data[3:]))
+        port._put(data)
+
+    def frame(self, port: BootSimPort, kind: int, seq: int, body: bytes):
+        b = bootproto
+        if kind == b.BL_PING:
+            self._reply(port, seq, kind, b.BL_OK, 1, self.info())
+        elif kind == b.BL_START:
+            self.commit = None
+            try:
+                self.stage_hdr = b.UpdateFile.parse(body + bytes(struct.unpack_from("<I", body, 68)[0]))
+            except ValueError as exc:                # Nutzdaten fehlen hier noch: nur Kopffehler zaehlen
+                if "Prüfsumme" not in str(exc) and "Vektortabelle" not in str(exc):
+                    self._reply(port, seq, kind, b.BL_E_HEADER)
+                    return
+                self.stage_hdr = b.UpdateFile(body, b"", b.TARGET, b.BOARD, body[40:56].split(b"\0")[0].decode(),
+                                              struct.unpack_from("<I", body, 60)[0],
+                                              struct.unpack_from("<I", body, 64)[0])
+            self.stage = bytearray(b"\xff" * self.stage_hdr.image_len)
+            self.state, self.next_off = "rx", 0
+            self._reply(port, seq, kind, b.BL_BUSY)
+            self._reply(port, seq, kind, b.BL_OK)
+        elif kind == b.BL_DATA:
+            time.sleep(self.faults.get("slow", 0))
+            off = struct.unpack_from("<I", body)[0]
+            block = body[4:]
+            if self.state != "rx":
+                self._reply(port, seq, kind, b.BL_E_STATE, self.next_off)
+            elif off + len(block) <= self.next_off:
+                self._reply(port, seq, kind, b.BL_OK, self.next_off)
+            elif off != self.next_off:
+                self._reply(port, seq, kind, b.BL_E_OFFSET, self.next_off)
+            elif off == self.faults.get("rewind"):
+                del self.faults["rewind"]
+                self.next_off = off - 1024
+                self._reply(port, seq, kind, b.BL_E_OFFSET, self.next_off)
+            else:
+                self.stage[off:off + len(block)] = block
+                self.next_off = off + len(block)
+                if self.next_off >= self.faults.get("unplug", 1 << 30):
+                    del self.faults["unplug"]
+                    self.faults["unplugged"] = True
+                    self.gen += 1
+                    return
+                if self.next_off >= self.faults.get("power", 1 << 30):
+                    del self.faults["power"]
+                    self._detach()
+                    return
+                self._reply(port, seq, kind, b.BL_OK, self.next_off)
+        elif kind == b.BL_END:
+            if self.state == "done":
+                self._reply(port, seq, kind, b.BL_OK, self.next_off)
+            elif self.state != "rx" or self.next_off != self.stage_hdr.image_len:
+                self._reply(port, seq, kind, b.BL_E_STATE, self.next_off)
+            elif zlib.crc32(bytes(self.stage)) != struct.unpack_from("<I", self.stage_hdr.header, 72)[0]:
+                self.state = "idle"
+                self._reply(port, seq, kind, b.BL_E_VERIFY)
+            else:
+                self.commit = b.UpdateFile.parse(self.stage_hdr.header + bytes(self.stage))
+                self.state = "done"
+                self._reply(port, seq, kind, b.BL_OK, self.next_off)
+        elif kind == b.BL_ABORT:
+            self.commit = None
+            self.state = "idle"
+            self._reply(port, seq, kind, b.BL_OK)
+        elif kind == b.BL_BOOT:
+            self._reply(port, seq, kind, b.BL_OK)
+            threading.Timer(0.01, self._detach).start()
+        else:
+            self._reply(port, seq, kind, b.BL_E_CMD)

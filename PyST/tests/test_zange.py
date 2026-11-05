@@ -18,7 +18,7 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from pyst import basis, channels, link, mdns, physics, plugs, storage, zange  # noqa: E402
+from pyst import basis, channels, link, mdns, physics, plugs, pruef, storage, zange  # noqa: E402
 from pyst.recorder import Recorder  # noqa: E402
 from pyst.sim import BasisSimSerial  # noqa: E402
 
@@ -467,6 +467,151 @@ class ZangeUsb(unittest.TestCase):
         self.assertAlmostEqual(float(np.median(hz[-20:])), 50.0, delta=1)
         with self.assertRaises(ValueError):
             zange.log_to_rows([], physics.DynoParams())
+
+    def test_log_restart(self):
+        # Neustart: lokal_us beginnt neu, idx springt um 1024; Sitzungen duerfen sich nicht ueberlagern
+        def session(idx, per_us, boot=True):
+            head = [f"L;{idx};B;300000;1;0"] if boot else []
+            sparks = [f"L;{idx + 1 + i};F;{1_000_000 + i * per_us};0;0;4000" for i in range(200)]
+            mark = [f"L;{idx + 201};M;{1_000_000 + 100 * per_us};1"]
+            return head + sparks + mark
+        for boot in (True, False):                                      # ohne B: Ring hat die Zeile ueberschrieben
+            lines = session(1, 20_000) + session(1300, 10_000, boot)
+            res = zange.log_to_rows([basis.parse_log_line(x) for x in lines], physics.DynoParams())
+            self.assertEqual(res["sparks"], 400)
+            hz = np.array([float(r[3]) for r in res["rows"]])
+            self.assertLessEqual(hz.max(), 100.5)
+            self.assertAlmostEqual(float(np.median(hz[:100])), 50.0, delta=1)
+            self.assertAlmostEqual(float(np.median(hz[-50:])), 100.0, delta=1)
+            times = [float(r[1]) for r in res["rows"]]
+            self.assertEqual(times, sorted(times))
+            self.assertLess(len(res["rows"]), 400)                      # Sitzungsabstand nicht aufgefuellt (sonst 518)
+            self.assertGreater(hz[hz > 0].min(), 40.0)                  # keine Scheinperiode ueber die Grenze
+            t1, t2 = [m[0] for m in res["markers"]]
+            self.assertGreater(t2, t1)
+
+    def test_log_small_disorder_is_no_restart(self):
+        # idx kommt beim Schreiben dazu: Status darf kurz hinter einem spaeteren Funken liegen
+        lines = [f"L;{i};F;{1_000_000 + i * 20_000};0;0;4000" for i in range(100)]
+        lines.insert(50, f"L;49;S;{1_000_000 + 49 * 20_000 - 5_000};3900;64;16")
+        es = sorted((basis.parse_log_line(x) for x in lines), key=lambda e: e.idx)
+        times = zange._timeline(es)
+        self.assertAlmostEqual(max(times), 99 * 0.02, places=6)
+
+
+# ---------------------------------------------------------------------------------------------- Pruefen
+# Antwortzeilen der echten Hardware vom 05.11.2026 (Basis B1, Zange Z3-7CE8B1C5F018)
+STAT_BASIS = ["#STAT;roll_edges=0;roll_valid=0;roll_rej=0;rollb_edges=0;pos=0;lost=0;drop=0",
+              "#STAT;clk=HSE;reset=einschalten/bor;sync_ofs=0;usb=1",
+              "#STAT;egt1=nan;egt1_st=offen;egt2=nan;egt2_st=offen;cj=24.47;ads=ok;bme=BMP280@0x76;klima=ok",
+              "#STAT;wb=reset;lambda=nan;afr=nan;wb_temp=-1;wb_status=-;heat_cmd=0;heat=0;can_rx=0;can_err=2570;"
+              "wb_reset=1;wb_guard=aus",
+              "#STAT;u12=12.16;u5s=4.963;ai1=0.011V;ai2=0.011V;vref=2.497;t_mcu=30.9"]
+NET_BASIS = ["#NET;mode=AP;kanal=6;ssid=;ip=192.168.4.1;clients=0;rssi=;tcp=0;err=0;esp=1;esp_fw=basis-esp 0.1.0;"
+             "esp_neustarts=0"]
+ZANGE_FUNK = ("#ZANGE;id=1;mac=7C:E8:B1:C5:F0:18;akku_mv=3846;akku_pct=53;vbus=0;rssi=-29;funken=0;log=3111;blitz=0;"
+              "phi=0.0;fw=0.1.0;sync_us=-1;verbunden=1")
+ZANGE_USB = ["#ZANGE;id=1;mac=7C:E8:B1:C5:F0:18;akku_mv=4201;akku_pct=100;vbus=1;laden=0;agc=0;empf_mv=534;"
+             "spitze_mv=0;rpm=0",
+             "#ZANGE;rec=0;gekoppelt=1;sync=1;rssi=-57;kanal=6;blitz=0;phi_x10=0;blitz_w_ns=0;log_head=8031;"
+             "log_tail=1;fw=0.1.0"]
+STAT_ZANGE = ["#STAT;funken=0;verworfen=0;luecken=0;probe=0;isr_verlust=0;blitze=0;blitz_aus=0",
+              "#STAT;tx_ok=15;tx_fehler=0;beacons=75;brownouts=0;reset=usb"]
+
+
+def _by_name(checks):
+    return {c.name: c for c in checks}
+
+
+class Pruefen(unittest.TestCase):
+    def test_basis_echte_antworten(self):
+        caps = {"fw": "PyST-Basis 0.1.0", "ign": "zange"}
+        c = _by_name(pruef.check_basis(caps, STAT_BASIS, NET_BASIS))
+        for name in ("Firmware", "Takt", "12 V", "5 V Sensor", "ADC-Referenz", "Klimasensor", "ESP-Link"):
+            self.assertEqual(c[name].ergebnis, pruef.OK, name)
+        self.assertEqual(c["WLAN-Name"].ergebnis, pruef.WARN)            # ssid leer
+
+    def test_basis_fehlerbilder(self):
+        bad = [s.replace("clk=HSE", "clk=HSI16").replace("u5s=4.963", "u5s=4.2").replace("klima=ok", "klima=fehler")
+               for s in STAT_BASIS]
+        c = _by_name(pruef.check_basis({"fw": "PyST-Basis"}, bad, [NET_BASIS[0].replace("esp=1", "esp=0")]))
+        for name in ("Takt", "5 V Sensor", "Klimasensor", "ESP-Link"):
+            self.assertEqual(c[name].ergebnis, pruef.FEHLER, name)
+        self.assertEqual(pruef.check_basis({}, [], [])[1].ergebnis, pruef.FEHLER)
+
+    def test_zange_funk(self):
+        z = basis.parse_zange(ZANGE_FUNK)
+        c = _by_name(pruef.check_zangen([z]))
+        self.assertEqual(c["Verbindung"].ergebnis, pruef.OK)
+        self.assertEqual(c["Zeitsync"].ergebnis, pruef.INFO)              # ohne Funken kein Fehler
+        z.funken = 500
+        self.assertEqual(_by_name(pruef.check_zangen([z]))["Zeitsync"].ergebnis, pruef.FEHLER)
+        z.sync_us = 48
+        self.assertEqual(_by_name(pruef.check_zangen([z]))["Zeitsync"].ergebnis, pruef.OK)
+        self.assertEqual(pruef.check_zangen([])[0].ergebnis, pruef.FEHLER)
+        z.connected = False
+        self.assertEqual(len(pruef.check_zangen([z])), 1)
+
+    def test_zange_usb(self):
+        c = _by_name(pruef.check_zange_usb({"fw": "PyST-Zange 0.1.0"}, ZANGE_USB, STAT_ZANGE))
+        for name in ("Firmware", "USB-Spannung", "Gekoppelt", "Sync mit Basis", "Brownouts"):
+            self.assertEqual(c[name].ergebnis, pruef.OK, name)
+        bad = [s.replace("brownouts=0", "brownouts=3") for s in STAT_ZANGE]
+        self.assertEqual(_by_name(pruef.check_zange_usb({"fw": "Zange"}, ZANGE_USB, bad))["Brownouts"].ergebnis, pruef.WARN)
+
+    def test_funken_und_blitz(self):
+        c = _by_name(pruef.check_funken(1000, 20.0, 0, 50.0))
+        self.assertEqual(c["Frequenz"].ergebnis, pruef.OK)
+        self.assertEqual(_by_name(pruef.check_funken(800, 20.0, 0, 50.0))["Frequenz"].ergebnis, pruef.FEHLER)
+        self.assertEqual(pruef.check_funken(0, 20.0, 0, 50.0)[0].ergebnis, pruef.FEHLER)
+        self.assertEqual(pruef.check_blitz(["#OK;BLITZ;w_us=5"], 5, 3, 4)[0].ergebnis, pruef.OK)
+        self.assertEqual(pruef.check_blitz(["#OK;BLITZ;w_us=5"], 5, 3, 3)[0].ergebnis, pruef.WARN)
+        self.assertEqual(pruef.check_blitz(["#ERR;BLITZ;zu schnell"], 5, 3, 3)[0].ergebnis, pruef.WARN)
+        self.assertEqual(pruef.check_blitz([], 5, 0, 0)[0].ergebnis, pruef.FEHLER)
+
+    def test_log_erkennt_altes_format(self):
+        gut = [basis.parse_log_line(f"L;{i};F;{1_000_000 + i * 20_000};0;0;850") for i in range(100)]
+        c = _by_name(pruef.check_log(gut))
+        self.assertEqual(c["Zeilenarten"].ergebnis, pruef.OK)
+        self.assertEqual(c["Funken / verworfen"].wert, "100 / 0")
+        alt = gut + [basis.parse_log_line("L;200;Z;3000000;0;3900")]     # Firmware vor der Korrektur
+        self.assertEqual(_by_name(pruef.check_log(alt))["Zeilenarten"].ergebnis, pruef.FEHLER)
+        self.assertEqual(pruef.check_log([])[0].ergebnis, pruef.INFO)
+
+    def test_klima(self):
+        c = _by_name(pruef.check_klima((22.4, 968.1, 0.0)))
+        self.assertEqual((c["Temperatur"].ergebnis, c["Luftdruck"].ergebnis), (pruef.OK, pruef.OK))
+        self.assertNotIn("Luftfeuchte", c)                               # BMP280
+        self.assertIn("Luftfeuchte", _by_name(pruef.check_klima((22.4, 968.1, 45.0))))
+        self.assertEqual(pruef.check_klima((20.0, 1013.25, 0.0))[0].ergebnis, pruef.FEHLER)
+        self.assertEqual(pruef.check_klima(None)[0].ergebnis, pruef.FEHLER)
+
+    def test_simulator_ende_zu_ende(self):
+        lk = link.DynoLink("SIM:basis")
+        try:
+            lk.info()
+            c = _by_name(pruef.run_all(lk))
+            self.assertEqual(c["Takt"].ergebnis, pruef.OK)
+            self.assertEqual(c["Verbindung"].ergebnis, pruef.OK)
+            self.assertEqual(c["Luftdruck"].ergebnis, pruef.OK)
+            lk.start()                            # Live-Ausgabe: Klima pausiert sie, die Zange bleibt sichtbar
+            self.assertTrue(wait_until(lk.streaming))
+            c = _by_name(pruef.run_all(lk))
+            self.assertEqual(c["Verbindung"].ergebnis, pruef.OK)
+            self.assertEqual(c["Luftdruck"].ergebnis, pruef.OK)
+            self.assertTrue(wait_until(lk.streaming))
+            self.assertEqual(_by_name(pruef.run_all(lk, aufnahme=True))["Messwerte"].ergebnis, pruef.INFO)
+        finally:
+            lk.close()
+        lk = link.DynoLink("SIM:zange")
+        try:
+            lk.info()
+            self.assertTrue(lk.is_zange_usb)
+            self.assertEqual(_by_name(pruef.run_all(lk))["Brownouts"].ergebnis, pruef.OK)
+            self.assertEqual(pruef.run_blitz(lk, 5)[0].ergebnis, pruef.OK)
+            self.assertTrue(any(c.name == "Zeilenarten" and c.ergebnis == pruef.OK for c in pruef.run_log(lk)))
+        finally:
+            lk.close()
 
 
 # ---------------------------------------------------------------------------------------------- Speichern

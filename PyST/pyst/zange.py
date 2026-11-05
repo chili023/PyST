@@ -6,6 +6,8 @@ Aus den Funken-Zeitstempeln (Lokalzeit der Zange, µs) entstehen Telegramme wie 
 Fenster, kuerzeste/laengste Periode, verworfene Funken, Zuendstaerke (Mittel der Spitzenwerte). Rolle = 0.
 Marker-Tasten -> marker.csv, Status (Akku) als Zusatzspalte, das Rohlog als zange_log.csv.
 Lange Pausen (Zange aus) werden nicht mit leeren Telegrammen aufgefuellt.
+Das Log ueberlebt Neustarts, die Lokalzeit nicht: jede Sitzung bekommt ihre eigene Nullzeit und schliesst mit
+SESSION_GAP_S an die vorige an. Der wahre Abstand der Sitzungen ist unbekannt, Zeiten darueber hinweg sind nur Reihenfolge.
 """
 import csv
 import datetime as _dt
@@ -17,12 +19,35 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from . import __version__, physics
-from .basis import LOG_MARK, LOG_SPARK, LOG_STATUS, LOG_SYNC, LogEntry
+from .basis import LOG_BOOT, LOG_MARK, LOG_SPARK, LOG_STATUS, LOG_SYNC, LogEntry
 from .storage import DIAG_HEADER, ROH_HEADER, ZANGE_HEADER
 
 MARK_TEXT = {1: "Taste T1", 2: "Taste T2", 3: "Taste T3", 4: "Taste T4", 10: "Marker (fern)"}
 SFLAG_REJECTED = 1
 GAP_S = 2.0                     # laengere Pausen ohne Funken werden uebersprungen
+SESSION_GAP_S = GAP_S + 1.0     # Abstand zweier Sitzungen auf der Zeitachse (> GAP_S: wird uebersprungen)
+
+
+def _timeline(entries: List[LogEntry]) -> List[float]:
+    """Zeit in s je Eintrag (nach idx sortiert) auf einer durchgehenden Achse ueber alle Sitzungen. Neue Sitzung:
+    B-Zeile oder Ruecksprung > GAP_S (B-Zeile schon ueberschrieben). Kleine Ruecksprünge sind keine Sitzungsgrenze:
+    idx wird erst beim Schreiben vergeben, Eintraege verschiedener Aufgaben koennen leicht vertauscht sein."""
+    sessions: List[List[LogEntry]] = []
+    top_us = 0                    # hoechste Lokalzeit der laufenden Sitzung
+    for e in entries:
+        if not sessions or e.art == LOG_BOOT or top_us - e.local_us > GAP_S * 1e6:
+            sessions.append([])
+            top_us = 0
+        sessions[-1].append(e)
+        top_us = max(top_us, e.local_us)
+    times: List[float] = []
+    base = 0.0
+    for s in sessions:
+        t0_us = min(e.local_us for e in s)
+        part = [base + (e.local_us - t0_us) / 1e6 for e in s]
+        times += part
+        base = max(part) + SESSION_GAP_S
+    return times
 
 
 def log_to_rows(entries: List[LogEntry], params: physics.DynoParams, rate_hz: float = 50.0,
@@ -34,12 +59,13 @@ def log_to_rows(entries: List[LogEntry], params: physics.DynoParams, rate_hz: fl
     rej = [e for e in sparks if int(e.num(1, 0)) & SFLAG_REJECTED]
     if not entries:
         raise ValueError("Log ist leer")
-    t0_us = min(e.local_us for e in entries)
-    ts = np.array([(e.local_us - t0_us) / 1e6 for e in good])
+    times = _timeline(entries)
+    t_of = {id(e): t for e, t in zip(entries, times)}
+    ts = np.array([t_of[id(e)] for e in good])
     peaks = np.array([e.num(2, np.nan) for e in good])
-    tr = np.array([(e.local_us - t0_us) / 1e6 for e in rej])
-    status = [((e.local_us - t0_us) / 1e6, e.num(1)) for e in entries if e.art == LOG_STATUS]
-    t_end = max((e.local_us - t0_us) / 1e6 for e in entries)
+    tr = np.array([t_of[id(e)] for e in rej])
+    status = [(t_of[id(e)], e.num(1)) for e in entries if e.art == LOG_STATUS]
+    t_end = max(times)
     dt = 1.0 / rate_hz
     header = ROH_HEADER + DIAG_HEADER + ZANGE_HEADER + ["zange_akku_pct"]
     rows = []
@@ -60,6 +86,7 @@ def log_to_rows(entries: List[LogEntry], params: physics.DynoParams, rate_hz: fl
         # Perioden, die im Fenster enden (inkl. der ab dem letzten Funken davor)
         lo = max(0, a - 1)
         per = np.diff(ts[lo:b]) if b - lo >= 2 else np.zeros(0)
+        per = per[per <= GAP_S]                               # ueber eine Pause/Sitzungsgrenze keine Periode
         if len(per):
             last_f = len(per) / float(per.sum())
         elif a > 0 and t1 - ts[a - 1] > timeout_s:
@@ -89,7 +116,7 @@ def log_to_rows(entries: List[LogEntry], params: physics.DynoParams, rate_hz: fl
     markers = []
     for e in entries:
         if e.art == LOG_MARK:
-            markers.append(((e.local_us - t0_us) / 1e6, MARK_TEXT.get(int(e.num(0, 0)), f"Marker {e.rest[:1]}")))
+            markers.append((t_of[id(e)], MARK_TEXT.get(int(e.num(0, 0)), f"Marker {e.rest[:1]}")))
     return {"header": header, "rows": rows, "markers": markers, "sparks": len(good), "rejected": len(rej),
             "dauer_s": t_end}
 

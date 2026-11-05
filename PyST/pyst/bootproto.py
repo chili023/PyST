@@ -1,0 +1,162 @@
+"""
+Bootloader der PyST-Basis: Rahmen und Update-Datei (*.pystfw). Gegenstück in der Firmware: boot_fmt.h, boot_core.c.
+
+Rahmen wie der ESP-Link: COBS(typ seq daten crc16) 0x00, CRC-16/CCITT-FALSE ueber typ..daten, little-endian.
+Jeder Befehl bekommt eine Antwort BL_RESP mit derselben seq: [befehl u8][status u8][wert u32][text].
+Datei: 256 Byte Kopf + Nutzdaten. Felder fuer Signatur und Verschluesselung sind vorgesehen und in dieser Stufe leer.
+"""
+import struct
+import zlib
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+
+BL_PING, BL_START, BL_DATA, BL_END, BL_ABORT, BL_BOOT, BL_RESP = 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x80
+(BL_OK, BL_BUSY, BL_E_STATE, BL_E_OFFSET, BL_E_HEADER, BL_E_TARGET, BL_E_UNSUPPORTED, BL_E_LENGTH, BL_E_FLASH,
+ BL_E_VERIFY, BL_E_CMD) = range(11)
+STATUS_TEXT = {
+    BL_E_STATE: "Ablauf gestört", BL_E_OFFSET: "Lücke in den Daten", BL_E_HEADER: "Dateikopf ungültig",
+    BL_E_TARGET: "Datei passt nicht zu dieser Basis", BL_E_UNSUPPORTED: "Dateiformat zu neu für diesen Bootloader",
+    BL_E_LENGTH: "Länge ungültig", BL_E_FLASH: "Flash-Fehler im Gerät", BL_E_VERIFY: "Prüfung im Gerät fehlgeschlagen",
+    BL_E_CMD: "Befehl unbekannt",
+}
+
+BLOCK = 512
+BLOCK_MAX = 1016
+APP_BASE = 0x08008000
+APP_MAX = 0x38000
+BOOT_SIZE = 0x8000
+IMG_HDR_OFS = 0x200
+IMG_HDR_LEN = 64
+IMG_MAGIC = 0x4D495950
+RAM = (0x20000000, 0x20020000)
+UPD_MAGIC = b"PYSTUPD1"
+UPD_LEN = 256
+TARGET = "basis-g473"
+BOARD = "rev31"
+
+
+def crc16(data: bytes) -> int:
+    crc = 0xFFFF
+    for b in data:
+        crc ^= b << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+    return crc
+
+
+def cobs_encode(data: bytes) -> bytes:
+    out = bytearray()
+    block = bytearray()
+    for b in data:
+        if b:
+            block.append(b)
+            if len(block) == 254:
+                out.append(255)
+                out += block
+                block.clear()
+        else:
+            out.append(len(block) + 1)
+            out += block
+            block.clear()
+    out.append(len(block) + 1)
+    out += block
+    return bytes(out)
+
+
+def cobs_decode(data: bytes) -> Optional[bytes]:
+    out = bytearray()
+    i = 0
+    while i < len(data):
+        code = data[i]
+        i += 1
+        if code == 0 or i + code - 1 > len(data):
+            return None
+        out += data[i:i + code - 1]
+        i += code - 1
+        if code != 255 and i < len(data):
+            out.append(0)
+    return bytes(out)
+
+
+def encode_frame(kind: int, seq: int, data: bytes = b"") -> bytes:
+    raw = bytes((kind, seq & 0xFF)) + data
+    return cobs_encode(raw + struct.pack("<H", crc16(raw))) + b"\0"
+
+
+class FrameDecoder:
+    """Bytestrom -> Rahmen; alles Unlesbare (Text, Teilrahmen, falsche CRC) faellt still weg."""
+
+    def __init__(self):
+        self.buf = bytearray()
+        self.bad = 0
+
+    def feed(self, data: bytes) -> List[Tuple[int, int, bytes]]:
+        frames = []
+        for b in data:
+            if b:
+                if len(self.buf) < 2048:
+                    self.buf.append(b)
+                continue
+            raw = cobs_decode(bytes(self.buf)) if self.buf else b""
+            had = bool(self.buf)
+            self.buf.clear()
+            if raw is None or (had and (len(raw) < 4 or crc16(raw[:-2]) != struct.unpack("<H", raw[-2:])[0])):
+                self.bad += 1
+            elif had:
+                frames.append((raw[0], raw[1], raw[2:-2]))
+        return frames
+
+
+def parse_resp(data: bytes) -> Tuple[int, int, int, str]:
+    """-> (befehl, status, wert, text)"""
+    if len(data) < 6:
+        raise ValueError("Antwort zu kurz")
+    cmd, status, value = struct.unpack_from("<BBI", data)
+    return cmd, status, value, data[6:].decode("latin-1")
+
+
+def parse_info(text: str) -> Dict[str, str]:
+    """'#BOOTLOADER;proto=1;bl=1.0.0;…' -> Felder"""
+    return dict(p.split("=", 1) for p in text.strip().split(";") if "=" in p)
+
+
+def _text(b: bytes) -> str:
+    return b.split(b"\0", 1)[0].decode("ascii", "replace")
+
+
+@dataclass
+class UpdateFile:
+    header: bytes
+    payload: bytes
+    target: str
+    board: str
+    version: str
+    image_len: int
+    image_crc: int
+
+    @classmethod
+    def parse(cls, data: bytes) -> "UpdateFile":
+        """Vollstaendige Pruefung; ValueError mit Klartext."""
+        if data[:1] == b"\xe9":
+            raise ValueError("Falsche Firmware: Das ist ein ESP-Abbild, kein STM32.")
+        if data[:8] != UPD_MAGIC or len(data) < UPD_LEN:
+            raise ValueError("Falsche Firmware: Das ist keine Update-Datei (.pystfw) für die Basis.")
+        h = data[:UPD_LEN]
+        fmt, size, flags = struct.unpack_from("<HHI", h, 8)
+        if zlib.crc32(h[:252]) != struct.unpack_from("<I", h, 252)[0] or size != UPD_LEN:
+            raise ValueError("Update-Datei beschädigt (Kopf).")
+        if fmt != 1 or flags:
+            raise ValueError("Update-Datei ist zu neu: Dieses PyST kennt das Format nicht.")
+        target, board, version = _text(h[16:32]), _text(h[32:40]), _text(h[40:56])
+        if target != TARGET or board != BOARD:
+            raise ValueError(f"Falsche Firmware: Die Datei ist für {target} {board}, nicht für {TARGET} {BOARD}.")
+        load, ilen, icrc, plen, pcrc = struct.unpack_from("<IIIII", h, 56)
+        payload = data[UPD_LEN:]
+        if load != APP_BASE or plen != ilen or plen != len(payload) or not 0 < ilen <= APP_MAX or ilen % 8:
+            raise ValueError("Update-Datei beschädigt (Längen).")
+        if zlib.crc32(payload) != pcrc:
+            raise ValueError("Update-Datei beschädigt (Prüfsumme).")
+        sp, pc = struct.unpack_from("<II", payload)
+        if not (RAM[0] < sp <= RAM[1] and pc & 1 and APP_BASE <= pc < APP_BASE + ilen):
+            raise ValueError("Falsche Firmware: Die Vektortabelle passt nicht zur Basis-Anwendung.")
+        return cls(h, payload, target, board, version, ilen, icrc)

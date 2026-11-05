@@ -116,6 +116,29 @@ Die Störungen sind im Simulator Geräte-Einstellungen (`sim_doppel`, `sim_ausse
 `sim_wackel` = Ereignisse pro Minute) und lassen sich im Dialog „Geräte-Einstellungen …“ live ändern.
 Mit `ign_lockout_pct` (z.B. 50) filtert der Simulator Doppelimpulse wie die Firmware („verworfen“ zählt mit).
 
+## Inbetriebnahme: Prüfen und Firmware
+
+**Reiter „Prüfen“:** „Alles prüfen“ bewertet das verbundene Gerät mit Sollwerten, ohne Terminal. Basis: Takt, Spannungen,
+Sensoren, Klimawerte, ESP-Link, WLAN, Zange per Funk. Zange per USB: Firmware, Zähler, Kopplung. Dazu „Funken zählen“ mit
+optionaler Sollfrequenz, „Log prüfen“ und bei der Zange per USB „Ein Blitz“ (einzelner TRIG-Puls, 1–25 µs). „Protokoll
+kopieren“ legt das Ergebnis als Text in die Zwischenablage.
+
+**Reiter „Firmware“:** flasht Zange (USB-C), Basis-STM32 (USB über den Bootloader der Basis), Basis-ESP (über die ESP-Brücke)
+und für die Erstprogrammierung den STM32 per ST-Link an J10. Die Firmware der eigenen Hardware liegt nicht in diesem
+Repository: Man wählt die Datei oder den Ordner des Builds, PyST prüft, ob sie zum Ziel passt.
+
+„Basis STM32“ nimmt eine Update-Datei (`.pystfw`) und braucht weder Treiber noch Zusatzprogramm (reines Python mit pyserial).
+PyST trennt die Verbindung, schickt `#UPDATE`, wartet auf den Bootloader, überträgt mit Fortschrittsanzeige, wartet auf die
+neue Anwendung und vergleicht die Version. Steckt die Basis schon im Bootloader, geht es dort weiter. Einstellungen bleiben
+erhalten. Bricht die Übertragung ab, bleibt die alte Firmware unberührt oder die Basis wartet im Bootloader: Nochmals flashen.
+Es darf nur eine Basis am USB stecken.
+
+Eine neue Basis: erst per ST-Link die Gesamtdatei `pyst-basis-gesamt.bin` (Bootloader + Anwendung, an 0x08000000), dann den
+ESP. Die ST-Link-Zeile lehnt die Anwendung allein ab, weil sie ab 0x08008000 gelinkt ist. ST-Link braucht `st-flash` (Mac
+`brew install stlink`, Linux `apt install stlink-tools`), `esptool` kommt mit `requirements.txt`.
+
+**Statusleiste:** „● Zange verbunden“ (grün), „● Zange nicht verbunden“ (rot) oder „● Zange per USB“ (orange).
+
 ## PyST-Basis, Funk-Zange und Steckdosen
 
 Protokoll: `../docs/04_PST_Diag_1.md` §10. Ohne Hardware vorführbar mit den Simulator-Ports `SIM:basis`,
@@ -282,6 +305,9 @@ pyst/plugs.py     WLAN-Steckdosen (Shelly/Tasmota/ESPHome per HTTP, Automatik, S
 pyst/zange.py     Log der Zange -> Dauermessung
 pyst/mdns.py      einfaches mDNS (Basis und Steckdosen im Netz finden)
 pyst/hw_page.py   Reiter „Zange · Netz · Steckdosen“
+pyst/pruef.py     Prüfungen für die Inbetriebnahme (ohne Oberfläche); pruef_page.py Reiter „Prüfen“
+pyst/flash.py     Firmware flashen: Prüfung, Befehlszeilen, USB-Update; flash_page.py Reiter „Firmware“
+pyst/bootproto.py Bootloader der Basis: Rahmen, Update-Datei (Simulator: sim.py BootSimDevice)
 pyst/gui.py       Oberfläche (PySide6 + pyqtgraph)
 pyst/plots.py     Leistungsdiagramm mit ausgerichteten Achsen und Cursor
 pyst/viewer.py    Auswerter (MegaLogViewer-Stil)

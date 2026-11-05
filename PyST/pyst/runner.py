@@ -58,7 +58,8 @@ class RunController:
             self.climate = self.link.climate()
             if self.climate:
                 self.params.temp_c, self.params.p_mbar = self.climate[0], self.climate[1]
-                self.message = f"Klima: {self.climate[0]:.1f} °C, {self.climate[1]:.1f} mbar, {self.climate[2]:.0f} %"
+                feuchte = f", {self.climate[2]:.0f} %" if self.climate[2] > 0 else ""    # BMP280: keine Feuchte
+                self.message = f"Klima: {self.climate[0]:.1f} °C, {self.climate[1]:.1f} mbar{feuchte}"
             else:
                 self.message = "Keine Klimadaten – manuelle Werte werden verwendet"
         dm = getattr(self.link, "default_mode", "N")

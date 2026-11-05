@@ -161,7 +161,10 @@ def is_esp_bridge(p) -> bool:
     if (p.vid, p.pid) != BASIS_USB_ID:
         return False
     loc = (getattr(p, "location", None) or "").lower()
-    return loc.endswith(":1.2") or "mi_02" in (p.hwid or "").lower()
+    if loc.endswith(":1.2") or "mi_02" in (p.hwid or "").lower():
+        return True
+    # macOS kennt weder Interface-Namen noch -Nummer: die Bruecke endet auf 3, der Messport auf 1
+    return (p.device or "").startswith("/dev/cu.usbmodem") and p.device.endswith("3")
 
 
 def list_serial_ports() -> List[Tuple[str, str]]:
@@ -326,6 +329,7 @@ class DynoLink(BasisCommands):
     def __init__(self, port: str, baud: int = 115200):
         self.port = port
         self.replay = None
+        self._bootloader = ""
         if port in SIM_NAMES and port.split(":")[1:2] in (["basis"], ["zange"]):
             parts = port.split(":")[1:]
             if parts[0] == "zange":
@@ -452,6 +456,9 @@ class DynoLink(BasisCommands):
                 buf = b""
 
     def _line(self, line: str):
+        if line.startswith("#BOOTLOADER"):
+            self._bootloader = line.strip()
+            return
         r = parse_line(line, time.time())
         if r is None:
             return
@@ -569,6 +576,11 @@ class DynoLink(BasisCommands):
         self.is_stm = "PST-STM32" in text or (self.port.startswith(SIM_PORT) and ":mega" not in self.port)
         self.probe_caps()
         return text
+
+    @property
+    def bootloader(self) -> str:
+        """Basis steckt im Bootloader (keine Messung moeglich): dessen Kennzeile, sonst ''."""
+        return self._bootloader
 
     # ------------------------------------------------------------------ PST-Diag 1
     def probe_caps(self, timeout: float = 0.3) -> Dict[str, str]:

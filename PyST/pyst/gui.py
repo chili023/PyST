@@ -1,7 +1,7 @@
 """
 PyST – Oberflaeche (PySide6 + pyqtgraph). Mac, Linux (Raspberry Pi), Windows.
 
-Reiter:  Messen | Fahrzeuge & Setups | Auswertung | Oszi / Dauermessung | Zange · Netz · Steckdosen | ECU |
+Reiter:  Messen | Fahrzeuge & Setups | Auswertung | Oszi / Dauermessung | Zange · Netz · Steckdosen | Prüfen | Firmware | ECU |
          Einstellungen
 """
 import json
@@ -19,6 +19,8 @@ from .channels import fault_text, lambda_from_afr, run_channels, run_faults
 from .db import SETUP_SUMMARY_KEYS, VEHICLE_FIELDS, Database, base_dir, field_label
 from .dialogs import FieldForm, SetupForm
 from .basis import ZANGE_USB_WARNUNG
+from .flash_page import FlashPage
+from .pruef_page import PruefPage
 from .hw_page import HardwarePage
 from .link import (DEFAULT_SIM_PORT, SIM_PORT, DynoLink, guess_port, is_pst_firmware, list_serial_ports,
                    pst_board_ports, zange_usb_ports)
@@ -462,6 +464,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.page_hw = HardwarePage(self.settings, lambda: save_settings(self.settings), lambda: self.link,
                                     lambda: self.page_settings.params(), self.db.runs_dir)
         self.tabs.addTab(self.page_hw, "Zange · Netz · Steckdosen")
+        self.page_pruef = PruefPage(lambda: self.link, self.page_hw.pair,
+                                    lambda: bool(self.ctrl and self.ctrl.state in (WAIT, RUN)) or self.page_oszi.rec is not None)
+        self.tabs.addTab(self.page_pruef, "Prüfen")
+        self.page_flash = FlashPage(self.settings, lambda: save_settings(self.settings), lambda: self.link,
+                                    self.on_connect)
+        self.tabs.addTab(self.page_flash, "Firmware")
         self.tabs.addTab(self.page_rusefi, "ECU")
         self.tabs.addTab(self.page_settings, "Einstellungen")
         self.page_settings.data_label.setText(self.db.path)
@@ -493,6 +501,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.zange_status = QtWidgets.QLabel("")
         self.statusBar().addPermanentWidget(self.zange_status)
         self.page_hw.zange_text.connect(self.zange_status.setText)
+        self.zange_led = QtWidgets.QLabel("")
+        self.statusBar().addPermanentWidget(self.zange_led)
+        self.page_hw.zange_state.connect(self._show_zange_led)
         self._warn_box = None
         self._fault_todo = [r.id for r in self.db.runs() if r.fehler is None]
         self.fault_timer = QtCore.QTimer(self)     # Fehleranteile alter Laeufe nach und nach berechnen
@@ -1480,6 +1491,9 @@ class MainWindow(QtWidgets.QMainWindow):
         kind = "STM32-Firmware" if self.link.is_stm else "Arduino-Mega-Sketch"
         s.fw_label.setText(f"{port}: {kind} – {first}")
         s.fw_label.setToolTip(self.firmware)
+        if self.link.bootloader:
+            s.fw_label.setText(f"{port}: Basis im Bootloader, Firmware über den Reiter „Firmware“ aufspielen")
+            s.fw_label.setToolTip(self.link.bootloader)
         self.ctrl = RunController(self.link, s.params(), auto_climate=s.climate_auto.isChecked(),
                                   ecu=self.page_rusefi.active_link())
         self._set_status("Verbunden – START drücken (F1)", "#dddddd")
@@ -1502,6 +1516,8 @@ class MainWindow(QtWidgets.QMainWindow):
         return True
 
     def _auto_connect(self):
+        if self.page_flash.busy:                           # Port gehoert gerade dem Flashen
+            return
         """Alle 5 s: abgezogenes Messboard erkennen, angestecktes automatisch verbinden."""
         if self.link is not None:
             if self.link.is_tcp:
@@ -1553,7 +1569,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if c:
             self.page_settings.fields["temp_c"].setValue(c[0])
             self.page_settings.fields["p_mbar"].setValue(c[1])
-            self.result_label.setText(f"Klima: {c[0]:.1f} °C   {c[1]:.1f} mbar   {c[2]:.0f} % rel. Feuchte")
+            feuchte = f"   {c[2]:.0f} % rel. Feuchte" if c[2] > 0 else ""       # BMP280: keine Feuchte
+            self.result_label.setText(f"Klima: {c[0]:.1f} °C   {c[1]:.1f} mbar{feuchte}")
         else:
             self.result_label.setText("Keine Klimadaten vom Sensor")
         if self.page_settings.live_check.isChecked():
@@ -2029,6 +2046,13 @@ class MainWindow(QtWidgets.QMainWindow):
             return bool(f.get("geometrie")) and self.restoreGeometry(ba(f["geometrie"]))
         except (TypeError, ValueError, AttributeError):
             return False
+
+    def _show_zange_led(self, state: str):
+        """Statusleiste: auf einen Blick, ob die Zange da ist."""
+        text, farbe = {"ok": ("Zange verbunden", "#2e7d32"), "weg": ("Zange nicht verbunden", "#c62828"),
+                       "usb": ("Zange per USB", "#ef6c00")}.get(state, ("", ""))
+        self.zange_led.setText(f"● {text}" if text else "")
+        self.zange_led.setStyleSheet(f"color: {farbe}; font-weight: 700;" if text else "")
 
     def closeEvent(self, ev):
         self.save_window_layout()
