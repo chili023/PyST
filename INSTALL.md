@@ -9,7 +9,7 @@
 ## 1. PyST installieren
 
 Benötigt: **Python 3.9 oder neuer**. Die Startskripte legen beim ersten Start eine eigene
-Python-Umgebung (`PyST/.venv`) an und installieren `pyserial`, `numpy`, `PySide6`, `pyqtgraph`
+Python-Umgebung (`PyST/.venv`) an und installieren `pyserial`, `numpy`, `PySide6`, `pyqtgraph`, `cryptography`
 (ca. 200 MB, einmalig 1–2 Minuten, Internet nötig).
 
 ### macOS

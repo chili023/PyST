@@ -31,6 +31,7 @@ except ImportError:                       # pragma: no cover
     list_ports = None
 
 from . import bootproto as bp
+from . import fw_keys
 from .basis import ZANGE_USB_ID
 from .diag import parse_kv
 from .auth import refusal_text
@@ -107,6 +108,7 @@ class Image:
     main: str = ""                                                  # Datei fuer Pruefsumme und Datum
     update: Optional[bp.UpdateFile] = None                          # Basis STM32 per USB
     lambda_app: bytes = b""                                         # F042: nur die Anwendung
+    warning: str = ""                                               # darf weiter, aber deutlich anzeigen
 
     def summary(self) -> str:
         with open(self.main, "rb") as fh:
@@ -240,9 +242,10 @@ def load_update_image(folder: str) -> Image:
         data = fh.read()
     try:
         upd = bp.UpdateFile.parse(data)
+        warning = fw_keys.check_local(upd)
     except ValueError as exc:
         raise FlashError(str(exc))
-    return Image(BASIS_STM, os.path.dirname(path), "PyST-Basis", upd.version, main=path, update=upd)
+    return Image(BASIS_STM, os.path.dirname(path), "PyST-Basis", upd.version, main=path, update=upd, warning=warning)
 
 
 def load_stm_image(folder: str) -> Image:

@@ -121,7 +121,8 @@ class FlashRow(QtWidgets.QGroupBox):
             return self._info
         try:
             image = flash.load_image(self.target.key, self.path.text().strip())
-            info = image.summary(), flash.image_version(image), farben.GUT
+            text = image.summary() + (f"\n{image.warning}" if image.warning else "")
+            info = text, flash.image_version(image), farben.WARNUNG if image.warning else farben.GUT
         except (FlashError, OSError, ValueError) as exc:
             info = str(exc), "", farben.FEHLER
         self._seen, self._info = stamp, info
@@ -288,7 +289,8 @@ class FlashPage(QtWidgets.QScrollArea):
         except (FlashError, OSError, ValueError) as exc:
             self._status(str(exc), farben.FEHLER)
             return
-        text = f"{t.name} jetzt flashen?\n\n{image.summary()}\n\n{t.hint}"
+        warning = f"{image.warning}\n\n" if image.warning else ""
+        text = f"{t.name} jetzt flashen?\n\n{image.summary()}\n\n{warning}{t.hint}"
         if QtWidgets.QMessageBox.question(self, "Flashen", text) != QtWidgets.QMessageBox.Yes:
             return
         if key == flash.BASIS_ESP:                # erst nach der Rueckfrage: die Bruecke wartet nur 30 s auf esptool
