@@ -285,6 +285,7 @@ class SimSerial:
         self.saved: Optional[Dict[str, str]] = None
         self.mode = "N"
         self.line: Optional[str] = None             # '#'-Zeile im Empfang
+        self.vor_antwort: List[str] = []            # Tests: je Befehl eine Zeile vor der eigentlichen Antwort einschieben
         self.t_sim = 0.0
         # Zeitstempel starten kurz vor dem uint32-Ueberlauf (Test der Entfaltung in PyST)
         self.tick_offset = (1 << 32) - int(2.0e9 / self.tick_ns)
@@ -319,6 +320,8 @@ class SimSerial:
             if self.line is not None:
                 if c in "\r\n":
                     line, self.line = self.line, None
+                    if self.vor_antwort:
+                        self._out(self.vor_antwort.pop(0) + "\r\n")
                     self._diag_command(line)
                 elif len(self.line) < 63:
                     self.line += c

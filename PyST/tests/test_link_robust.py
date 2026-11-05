@@ -3,6 +3,7 @@ import logging
 import os
 import random
 import sys
+import threading
 import time
 import unittest
 
@@ -123,6 +124,99 @@ class Lesethread(unittest.TestCase):
         self.l.ser._out("#BURST;BEGIN;n=?;tick_ns=62,5;trig_idx=x;ch=I\r\nB;0;I;1;5\r\n#BURST;END;lost=?\r\n")
         b = self.l.bursts.get(timeout=2)
         self.assertEqual((b.n, b.tick_ns, b.trig_idx, b.lost, len(b.edges), b.complete), (0, 6.25, -1, 0, 1, True))
+
+
+class Antwortzuordnung(unittest.TestCase):
+    """H3: '#OK;RUN'/'#OK;MODE' duerfen fremde Befehle nicht quittieren."""
+
+    def setUp(self):
+        self.l = link.DynoLink("SIM:basis")
+        self.l.info()
+        self.sim = self.l.ser
+
+    def tearDown(self):
+        self.l.close()
+
+    def test_wortabgleich(self):
+        self.assertEqual(link.command_word("#ZANGE SET tasten 1"), "ZANGE")
+        self.assertEqual(link.command_word("#run 1"), "RUN")
+        self.assertEqual(link.reply_word("#OK;ZANGE;SET;tasten=1"), "ZANGE")
+        self.assertEqual(link.reply_word("#ERR;?;zu lang"), "?")
+        self.assertIsNone(link.reply_word("#ZANGE;id=1"))
+        self.assertIsNone(link.reply_word("#OKAY"))
+        self.assertFalse(link.is_foreign_reply("ZANGE", "#OK;ZANGE;MARK"))
+        self.assertFalse(link.is_foreign_reply("ZANGE", "#ZANGE;id=1"))
+        self.assertFalse(link.is_foreign_reply("NET", "#ERR;?;unbekannt"))      # Ausnahme: gehoert zu jedem Befehl
+        self.assertTrue(link.is_foreign_reply("ZANGE", "#OK;RUN;1"))
+        self.assertTrue(link.is_foreign_reply("ZANGE", "#ERR;RUN;update"))
+        self.assertTrue(link.is_foreign_reply("ZANGE", "#OK"))
+        self.assertTrue(link.is_foreign_reply("ZANGE", "#OK;?"))
+
+    def test_fremdes_ok_zwischen_befehl_und_antwort(self):
+        self.sim.vor_antwort = ["#OK;RUN;1"]
+        lines = self.l.zange_tasten(0x123)
+        self.assertEqual(lines, [f"#OK;ZANGE;SET;tasten={0x123}"])
+        self.assertEqual(self.sim.z_tasten, 0x123)
+        self.assertEqual(self.l.foreign_replies, 1)
+
+    def test_nur_fremdes_ok_ist_keine_antwort(self):
+        """Antwortet die Zange nicht, bleibt es dabei: kein 'bestaetigt' durch ein spaetes #OK;RUN."""
+        self.sim.write = lambda data: self.sim._out("#OK;RUN;1\r\n#OK;MODE;D\r\n#ERR;RUN;update\r\n") or len(data)
+        self.assertEqual(self.l.command("#ZANGE SET tasten 1", timeout=0.2), [])
+        self.assertEqual(self.l.command("#PAIR 1", timeout=0.2), [])
+
+    def test_mehrzeilige_antwort_bleibt_vollstaendig(self):
+        self.sim.vor_antwort = ["#OK;MODE;D"]
+        keys = self.l.get_settings()
+        self.assertGreater(len(keys), 3)
+
+    def test_err_fragezeichen_beendet_jeden_befehl(self):
+        t0 = time.time()
+        self.assertEqual(self.l.command("#GIBTSNICHT", timeout=2.0), ["#ERR;?;unbekannt"])
+        self.assertLess(time.time() - t0, 1.0)
+
+    def test_run_und_mode_laufen_ueber_command(self):
+        gesendet = []
+        echt = self.l.command
+        self.l.command = lambda cmd, **kw: (gesendet.append(cmd), echt(cmd, **kw))[1]
+        self.assertTrue(self.l.start())
+        self.l.ensure_stopped()
+        self.assertEqual(gesendet, ["#RUN 1", "#RUN 0"])
+        self.l.command = echt
+        self.assertTrue(self.l.replies.empty())                   # keine Antwort bleibt fuer den naechsten Befehl liegen
+
+    def test_start_nimmt_laufendem_befehl_die_antwort_nicht(self):
+        """start() im GUI-Takt, waehrend ein Hintergrund-Thread auf seine Antwort wartet."""
+        ergebnis = []
+        echt = self.sim._diag_command
+
+        def langsam(line):
+            if "PAIR" in line:
+                threading.Timer(0.15, echt, (line,)).start()      # Antwort kommt spaet
+            else:
+                echt(line)
+        self.sim._diag_command = langsam
+        th = threading.Thread(target=lambda: ergebnis.append(self.l.command("#PAIR 1", timeout=1.0)))
+        th.start()
+        time.sleep(0.05)
+        self.assertFalse(self.l.keepalive(), "keepalive wartet nicht auf den laufenden Befehl")
+        self.assertTrue(self.l.start())
+        th.join(2)
+        self.assertEqual(ergebnis, [["#OK;PAIR;1"]])
+
+    def test_ohne_antwort_auf_run(self):
+        self.sim.write = lambda data: len(data)
+        self.assertFalse(self.l.start(timeout=0.1))
+
+    def test_altes_geraet_unveraendert(self):
+        alt = link.DynoLink(link.SIM_PORT + ":mega300")
+        try:
+            alt.info()
+            self.assertTrue(alt.start())
+            self.assertTrue(wait_until(lambda: alt.frames.qsize() > 1))
+            alt.ensure_stopped()
+        finally:
+            alt.close()
 
 
 class Zahlen(unittest.TestCase):

@@ -264,7 +264,6 @@ def run_all(link, aufnahme: bool = False) -> List[Check]:
         stat = link.command("#STAT", timeout=1.0, done=_stat_done("#STAT;u12"))
         net = link.command("#NET", timeout=1.0, done=_stat_done("#NET;"))
         zangen = link.zangen_status()
-        # zuletzt: die Pause der Ausgabe liefert ein spaetes #OK;RUN, das eine Abfrage danach falsch beantworten wuerde
         klima = read_klima(link, aufnahme)
         return check_basis(link.caps, stat, net) + klima + check_zangen(zangen)
     return [Check("Gerät", "Art", WARN, link.caps.get("fw", "unbekannt"), "PyST-Basis oder Zange per USB")]

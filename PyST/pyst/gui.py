@@ -2049,7 +2049,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if (self.link and self.page_settings.live_check.isChecked() and st in (IDLE, DONE, ABORTED)
                 and not self.link.streaming() and time.time() - self.last_keepalive > 2.0):
             self.last_keepalive = time.time()
-            self.link.start()
+            self.link.keepalive()
 
     # ------------------------------------------------------------------ Tasten der Zange
     def _event_text(self, ev) -> str:

@@ -323,6 +323,29 @@ def parse_line(line: str, t: float):
     return "T", line
 
 
+def command_word(cmd: str) -> str:
+    """'#ZANGE SET tasten 1' -> 'ZANGE'"""
+    parts = cmd.lstrip("#").split()
+    return parts[0].upper() if parts else ""
+
+
+def reply_word(line: str) -> Optional[str]:
+    """Befehlswort einer Abschlusszeile: '#OK;ZANGE;…' -> 'ZANGE', '#ERR;?;zu lang' -> '?', '#OK' -> ''.
+    Andere Zeilen ('#SET;…', '#ZANGE;…') -> None."""
+    f = line.split(";")
+    if f[0] not in ("#OK", "#ERR"):
+        return None
+    return f[1].strip().upper() if len(f) > 1 else ""
+
+
+def is_foreign_reply(word: str, line: str) -> bool:
+    """Abschlusszeile, die nicht zum Befehl `word` gehoert. '#ERR;?;…' gehoert zu jedem Befehl: damit antwortet die
+    Firmware auf unbekannte oder zu lange Zeilen, ohne das Befehlswort zu wiederholen. Alle anderen Abschlusszeilen
+    aller Firmwares tragen das Befehlswort im zweiten Feld, '#OK' allein gibt es nicht."""
+    w = reply_word(line)
+    return w is not None and w != word and not (w == "?" and line.startswith("#ERR"))
+
+
 def parse_caps(line: str) -> Dict[str, str]:
     """'#CAP;proto=1;fw=PST-Mega 3.1.0;tick_ns=62.5;…' -> Dict"""
     return parse_kv(line)
@@ -383,6 +406,7 @@ class DynoLink(BasisCommands):
         self.lost = 0
         self.received = 0
         self.bad_lines = 0                                    # Zeilen, an denen _line() gescheitert ist
+        self.foreign_replies = 0                              # verworfene #OK/#ERR anderer Befehle
         self.last_frame_t = 0.0
         self.is_stm = True      # nach info(): False = Arduino-Mega-Sketch ('m' schaltet um, kein 's')
         self._last_cycle: Optional[int] = None
@@ -432,12 +456,16 @@ class DynoLink(BasisCommands):
             self.taps.remove(q)
 
     def close(self):
-        try:
-            self.ensure_stopped()
-            if self.has_diag and self.mode != "N":
-                self.send("#MODE N")
-        except Exception:
-            pass
+        # laeuft gerade ein langer Befehl im Hintergrund, nicht auf ihn warten
+        if self._cmd_lock.acquire(timeout=1.0):
+            try:
+                self.ensure_stopped()
+                if self.has_diag and self.mode != "N":
+                    self.command("#MODE N", timeout=0.3)
+            except Exception:
+                pass
+            finally:
+                self._cmd_lock.release()
         self._stop = True
         time.sleep(0.1)
         self.ser.close()
@@ -588,19 +616,20 @@ class DynoLink(BasisCommands):
         return time.time() - self.last_frame_t < 0.5
 
     def info(self) -> str:
-        self._flush()
-        self.send("v")
-        text = "\n".join(self._collect_text(0.6))
-        if not text and not self.port.startswith(SIM_PORT) and not self.is_tcp:
-            # Arduino Mega startet beim Oeffnen des Ports per DTR neu (Bootloader ~2 s)
-            time.sleep(1.8)
+        with self._cmd_lock:
             self._flush()
             self.send("v")
             text = "\n".join(self._collect_text(0.6))
-        # Mega 1.x antwortet nicht auf 'v', Mega 3.x mit "Version 3...", STM mit "PST-STM32"
-        self.is_stm = "PST-STM32" in text or (self.port.startswith(SIM_PORT) and ":mega" not in self.port)
-        self.probe_caps()
-        return text
+            if not text and not self.port.startswith(SIM_PORT) and not self.is_tcp:
+                # Arduino Mega startet beim Oeffnen des Ports per DTR neu (Bootloader ~2 s)
+                time.sleep(1.8)
+                self._flush()
+                self.send("v")
+                text = "\n".join(self._collect_text(0.6))
+            # Mega 1.x antwortet nicht auf 'v', Mega 3.x mit "Version 3...", STM mit "PST-STM32"
+            self.is_stm = "PST-STM32" in text or (self.port.startswith(SIM_PORT) and ":mega" not in self.port)
+            self.probe_caps()
+            return text
 
     @property
     def bootloader(self) -> str:
@@ -610,34 +639,38 @@ class DynoLink(BasisCommands):
     # ------------------------------------------------------------------ PST-Diag 1
     def probe_caps(self, timeout: float = 0.3) -> Dict[str, str]:
         """'#?' senden; antwortet das Geraet nicht binnen `timeout` mit '#CAP', ist es ein altes Geraet."""
-        self.caps = {}
-        while not self.replies.empty():
-            self.replies.get_nowait()
-        self.send("#?")
-        end = time.time() + timeout
-        while time.time() < end:
-            try:
-                line = self.replies.get(timeout=0.02)
-            except queue.Empty:
-                continue
-            if line.startswith("#CAP"):
-                self.caps = parse_caps(line)
-                self.caps.setdefault("fw", "")
-                break
-        # alte F446-Firmware antwortet auf das '?' mit der Versionsinfo – nicht als Text liegen lassen
-        time.sleep(0.05)
-        while not self.text_lines.empty():
-            self.text_lines.get_nowait()
-        return self.caps
+        with self._cmd_lock:
+            self.caps = {}
+            while not self.replies.empty():
+                self.replies.get_nowait()
+            self.send("#?")
+            end = time.time() + timeout
+            while time.time() < end:
+                try:
+                    line = self.replies.get(timeout=0.02)
+                except queue.Empty:
+                    continue
+                if line.startswith("#CAP"):
+                    self.caps = parse_caps(line)
+                    self.caps.setdefault("fw", "")
+                    break
+            # alte F446-Firmware antwortet auf das '?' mit der Versionsinfo – nicht als Text liegen lassen
+            time.sleep(0.05)
+            while not self.text_lines.empty():
+                self.text_lines.get_nowait()
+            return self.caps
 
     def command(self, cmd: str, timeout: float = 1.0, done=None, until=None, progress=None) -> List[str]:
         """'#'-Befehl senden und die Antwortzeilen bis einschliesslich '#OK…'/'#ERR…' liefern
         (bei #GET also alle '#SET;…'-Zeilen). Leere Liste = keine Antwort.
+        Nur Abschlusszeilen zum eigenen Befehlswort zaehlen, fremde werden verworfen (is_foreign_reply): ein spaetes
+        '#OK;RUN;1' darf nie einen anderen Befehl quittieren.
         done(line): eigenes Ende der Antwort (z.B. '#ZANGE;…'); until(): zusaetzliche Ende-Bedingung;
         progress(): wird waehrend des Wartens aufgerufen. Befehle aus mehreren Threads laufen nacheinander."""
         if not self.has_diag:
             return []
         done = done or (lambda line: line.startswith("#OK") or line.startswith("#ERR"))
+        word = command_word(cmd)
         with self._cmd_lock:
             while not self.replies.empty():
                 self.replies.get_nowait()
@@ -655,6 +688,10 @@ class DynoLink(BasisCommands):
                 except queue.Empty:
                     if until is not None and until():
                         break
+                    continue
+                if is_foreign_reply(word, line):
+                    self.foreign_replies += 1
+                    log.debug("Antwort gehoert nicht zu #%s: %s", word, line[:40])
                     continue
                 out.append(line)
                 if done(line):
@@ -705,8 +742,8 @@ class DynoLink(BasisCommands):
     def ensure_stopped(self):
         """Ausgabe anhalten. Mega: 'm' schaltet um, also nur senden, wenn er gerade sendet."""
         if self.has_diag:
-            self.send("#RUN 0")                  # eindeutig, auch beim Mega
-            time.sleep(0.15)
+            self.command("#RUN 0", timeout=0.5)  # eindeutig, auch beim Mega
+            time.sleep(0.05)
             self.drain_frames()
             self.last_frame_t = 0.0
         elif self.is_stm:
@@ -720,24 +757,25 @@ class DynoLink(BasisCommands):
 
     def climate(self) -> Optional[Tuple[float, float, float]]:
         """Klimadaten wie LabVIEW ('e'); stoppt eine laufende Ausgabe. -> (degC, mbar, %)"""
-        self.ensure_stopped()
-        self._flush()
-        self.send("e")
-        end = time.time() + 0.7
-        while time.time() < end:                      # zurueck, sobald die Antwort da ist
-            try:
-                line = self.text_lines.get(timeout=0.02)
-            except queue.Empty:
-                continue
-            parts = line.split(";")
-            if len(parts) >= 2:
+        with self._cmd_lock:
+            self.ensure_stopped()
+            self._flush()
+            self.send("e")
+            end = time.time() + 0.7
+            while time.time() < end:                  # zurueck, sobald die Antwort da ist
                 try:
-                    t, p = float(parts[0]), float(parts[1]) / 100.0
-                    h = float(parts[2]) if len(parts) > 2 else 0.0
-                    return t, p, h
-                except ValueError:
+                    line = self.text_lines.get(timeout=0.02)
+                except queue.Empty:
                     continue
-        return None
+                parts = line.split(";")
+                if len(parts) >= 2:
+                    try:
+                        t, p = float(parts[0]), float(parts[1]) / 100.0
+                        h = float(parts[2]) if len(parts) > 2 else 0.0
+                        return t, p, h
+                    except ValueError:
+                        continue
+            return None
 
     def drain_events(self) -> list:
         out = []
@@ -747,16 +785,29 @@ class DynoLink(BasisCommands):
             except queue.Empty:
                 return out
 
-    def start(self):
-        """Messung starten (Zyklus- und Verlustzaehler zuruecksetzen)."""
-        running = self.streaming()
-        self._flush()
-        self._last_cycle = None
-        self.lost = self.received = 0
-        if self.has_diag:
-            self.send("#RUN 1")
-        elif self.is_stm or not running:
-            self.send("m")
+    def start(self, timeout: float = 1.0) -> bool:
+        """Messung starten (Zyklus- und Verlustzaehler zuruecksetzen). Wartet auf laufende Befehle, sonst nimmt
+        _flush() ihnen die Antwort weg. False = das Geraet hat '#RUN 1' nicht bestaetigt."""
+        with self._cmd_lock:
+            running = self.streaming()
+            self._flush()
+            self._last_cycle = None
+            self.lost = self.received = 0
+            if self.has_diag:
+                return self.ok(self.command("#RUN 1", timeout=timeout))
+            if self.is_stm or not running:
+                self.send("m")
+            return True
+
+    def keepalive(self) -> bool:
+        """Ausgabe aus dem GUI-Takt wieder anstossen. Laeuft gerade ein Befehl, wartet die Oberflaeche nicht auf ihn,
+        der naechste Takt versucht es erneut."""
+        if not self._cmd_lock.acquire(blocking=False):
+            return False
+        try:
+            return self.start(timeout=0.3)
+        finally:
+            self._cmd_lock.release()
 
     def stop(self):
         self.ensure_stopped()
