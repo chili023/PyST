@@ -179,5 +179,40 @@ class Einstellungen(unittest.TestCase):
                 self.assertFalse(self.gui.save_settings({"a": 1}))
 
 
+class PystEntpacken(unittest.TestCase):
+    def pack(self, names):
+        path = os.path.join(self.tmp.name, "x.pyst")
+        with zipfile.ZipFile(path, "w") as z:
+            for n in names:
+                z.writestr(n, "Inhalt")
+        return path
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.target = os.path.join(self.tmp.name, "ziel", "lauf")
+        os.makedirs(self.target)
+
+    def inhalt(self):
+        return sorted(os.path.relpath(os.path.join(r, f), self.tmp.name)
+                      for r, _d, fs in os.walk(self.tmp.name) for f in fs if not f.endswith(".pyst"))
+
+    def test_boesartige_namen(self):
+        boese = ["01_x/../../raus.txt", "01_x/..\\..\\raus.txt", "01_x/C:/raus.txt", "01_x/C:raus.txt", "01_x//etc/raus",
+                 "01_x/./raus.txt", "01_x/a/../../raus.txt", "01_x/..", "01_x/a\\b.txt", "../01_x/raus.txt"]
+        path = self.pack(boese + ["01_x/gut.txt", "01_x/bursts/burst_001.csv"])
+        storage.extract_pyst_entry(path, {"ordner": "01_x"}, self.target)
+        self.assertEqual(self.inhalt(), [os.path.join("ziel", "lauf", "bursts", "burst_001.csv"),
+                                         os.path.join("ziel", "lauf", "gut.txt")])
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "braucht symbolische Links")
+    def test_symbolischer_link_im_ziel(self):
+        draussen = os.path.join(self.tmp.name, "draussen")
+        os.makedirs(draussen)
+        os.symlink(draussen, os.path.join(self.target, "link"))
+        storage.extract_pyst_entry(self.pack(["01_x/link/raus.txt"]), {"ordner": "01_x"}, self.target)
+        self.assertEqual(os.listdir(draussen), [])
+
+
 if __name__ == "__main__":
     unittest.main()

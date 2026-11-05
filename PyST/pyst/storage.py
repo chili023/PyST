@@ -399,16 +399,26 @@ def load_pyst(path: str) -> List[Dict[str, Any]]:
 def extract_pyst_entry(path: str, entry: Dict[str, Any], target: str):
     """Ordner eines Laufs aus der .pyst-Datei nach target entpacken."""
     sub = entry["ordner"].rstrip("/") + "/"
+    root = os.path.realpath(target)
     with zipfile.ZipFile(path) as z:
         for n in z.namelist():
             if n.startswith(sub) and not n.endswith("/"):
-                rel = n[len(sub):]
-                if ".." in rel.split("/"):
+                dest = _safe_dest(root, n[len(sub):])
+                if dest is None:
                     continue                                   # nichts ausserhalb des Ziels schreiben
-                dest = os.path.join(target, *rel.split("/"))
                 os.makedirs(os.path.dirname(dest), exist_ok=True)
                 with open(dest, "wb") as fh:
                     fh.write(z.read(n))
+
+
+def _safe_dest(root: str, rel: str) -> Optional[str]:
+    """Zielpfad eines Eintrags unterhalb von root oder None. Backslash und Doppelpunkt schreibt PyST nie in Namen,
+    unter Windows waeren es Pfadtrenner und Laufwerke; realpath faengt zusaetzlich symbolische Links im Ziel ab."""
+    parts = rel.split("/")
+    if "\\" in rel or ":" in rel or any(p in ("", ".", "..") for p in parts):
+        return None
+    dest = os.path.realpath(os.path.join(root, *parts))
+    return dest if os.path.commonpath([root, dest]) == root and dest != root else None
 
 
 # ---------------------------------------------------------------------------------------------- Terminal-Mitschnitt
