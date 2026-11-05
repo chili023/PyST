@@ -5,6 +5,7 @@ Reiter:  Messen | Fahrzeuge & Setups | Auswertung | Oszi / Dauermessung | ECU | 
 Einstellungen:  Allgemein | Verbindung | Zange · Netz · Steckdosen | Tasten | Prüfen | Firmware
 """
 import json
+import logging
 import os
 import sys
 import time
@@ -37,6 +38,8 @@ from .rusefi_page import RusefiPage
 from .tasten_page import TastenBand, TastenPage
 from .viewer import LogViewer
 from .widgets import Gauge
+
+log = logging.getLogger("pyst.gui")
 
 SETTINGS_FILE = os.path.join(base_dir(), "einstellungen.json")
 LIVE_KEY = "live"
@@ -81,10 +84,24 @@ def load_settings() -> dict:
         return {}
 
 
-def save_settings(d: dict):
-    os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
-    with open(SETTINGS_FILE, "w", encoding="utf-8") as fh:
-        json.dump(d, fh, indent=2, ensure_ascii=False)
+def save_settings(d: dict) -> bool:
+    """Atomar: ein Absturz beim Schreiben laesst die alte Datei stehen. False = nicht gespeichert (Platte voll …)."""
+    tmp = SETTINGS_FILE + ".tmp"
+    try:
+        os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(d, fh, indent=2, ensure_ascii=False)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, SETTINGS_FILE)
+        return True
+    except (OSError, TypeError, ValueError) as exc:
+        log.warning("Einstellungen nicht gespeichert: %s", exc)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        return False
 
 
 class AutoHideLabel(QtWidgets.QLabel):

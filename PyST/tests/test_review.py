@@ -15,6 +15,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from pyst import channels, link, physics, runcache, storage  # noqa: E402
+from pyst.recorder import Recorder  # noqa: E402
 from pyst.runcache import RunCache  # noqa: E402
 
 
@@ -140,6 +141,42 @@ class Cache(unittest.TestCase):
             def __init__(self):
                 self.v = np.zeros(5)
         self.assertEqual(runcache.nbytes((Res(),)), 40)
+
+
+class Einstellungen(unittest.TestCase):
+    def setUp(self):
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+        from pyst import gui
+        self.gui = gui
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(self.tmp.name, "unter", "einstellungen.json")
+        p = mock.patch.object(gui, "SETTINGS_FILE", self.path)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_atomar(self):
+        self.assertTrue(self.gui.save_settings({"a": 1}))
+        self.assertEqual(self.gui.load_settings(), {"a": 1})
+        self.assertEqual(os.listdir(os.path.dirname(self.path)), ["einstellungen.json"])
+
+    def test_schreibfehler_laesst_alte_datei_stehen(self):
+        self.gui.save_settings({"a": 1})
+        with self.assertLogs("pyst.gui", "WARNING"):
+            with mock.patch("os.fsync", side_effect=OSError("Platte voll")):
+                self.assertFalse(self.gui.save_settings({"a": 2}))
+            with mock.patch("os.replace", side_effect=OSError("gesperrt")):
+                self.assertFalse(self.gui.save_settings({"a": 3}))
+            self.assertFalse(self.gui.save_settings({"a": object()}))      # nicht als JSON darstellbar
+        self.assertEqual(self.gui.load_settings(), {"a": 1})
+        self.assertEqual(os.listdir(os.path.dirname(self.path)), ["einstellungen.json"])
+
+    def test_ordner_nicht_anlegbar(self):
+        sperre = os.path.join(self.tmp.name, "datei")
+        open(sperre, "w").close()
+        with mock.patch.object(self.gui, "SETTINGS_FILE", os.path.join(sperre, "x.json")):
+            with self.assertLogs("pyst.gui", "WARNING"):
+                self.assertFalse(self.gui.save_settings({"a": 1}))
 
 
 if __name__ == "__main__":
