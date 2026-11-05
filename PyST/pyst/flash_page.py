@@ -6,7 +6,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import flash, update
 from .flash import FlashCancelled, FlashError
-from .bg import Bg
+from .bg import Bg, wait_in_thread
 
 
 class UsbWorker(QtCore.QThread):
@@ -290,6 +290,13 @@ class FlashPage(QtWidgets.QScrollArea):
         text = f"{t.name} jetzt flashen?\n\n{image.summary()}\n\n{t.hint}"
         if QtWidgets.QMessageBox.question(self, "Flashen", text) != QtWidgets.QMessageBox.Yes:
             return
+        if key == flash.BASIS_ESP:                # erst nach der Rueckfrage: die Bruecke wartet nur 30 s auf esptool
+            try:
+                wait_in_thread(lambda: flash.esp_bridge_on(flash.basis_port()))
+            except FlashError as exc:
+                self._status(str(exc), "#c62828")
+                self.flash_done.emit()
+                return
         if key in (flash.BASIS_STM, flash.LAMBDA_F042):
             self.run_usb(key, image)
         else:

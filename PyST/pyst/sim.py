@@ -713,11 +713,15 @@ class AuthSim:
         self.gesperrt_bis = 0.0
 
     def key_line(self) -> str:
-        return f"#AUTH;id={self.uid};key={self.key.hex()}\r\n"
+        return f"#AUTH;id={self.uid};key={self.key.hex().upper()}\r\n"     # die Basis schreibt Hex gross
 
     @property
     def gesperrt(self) -> bool:
         return time.time() < self.gesperrt_bis
+
+    @property
+    def sperre_rest_s(self) -> int:
+        return max(0, int(self.gesperrt_bis - time.time() + 0.999))
 
     def pruefe(self, nonce: Optional[bytes], antwort: str) -> bool:
         soll = hmac.new(self.key, self.LABEL + (nonce or b"") + self.uid.encode("ascii"), hashlib.sha256).hexdigest()
@@ -725,7 +729,7 @@ class AuthSim:
             self.fehler = 0
             return True
         self.fehler += 1
-        self.gesperrt_bis = time.time() + self.sperre_s * 2 ** (self.fehler - 1)
+        self.gesperrt_bis = time.time() + min(60.0, self.sperre_s * 2 ** min(self.fehler - 1, 6))
         return False
 
 
@@ -765,13 +769,14 @@ class BasisSimSerial(SimSerial):
             2: {"typ": "SHELLY1", "host": "192.168.4.21", "on": False, "until": None, "sek": 0},
         }
         self._wall = time.time()
-        self.fw_version = "0.1.0"
+        self.fw_version = "0.3.0"
         self.on_update = None                           # BootSimDevice: '#UPDATE' startet den Bootloader
         self.on_wbf = None                              # LambdaSimDevice: '#WBF …', F042-Update ueber CAN
         self.tcp = tcp                                  # True = TCP-Port 2323: Anmeldung noetig, einiges nur per USB
         self.auth = auth or SIM_AUTH
         self.authed = False
         self.nonce: Optional[bytes] = None
+        self.esp_bridge = False
         # Lambda-Heizung wie wb_bedien.c der Basis
         self.lam_st = "aus"
         self.lam_grund = "-"
@@ -1010,7 +1015,7 @@ class BasisSimSerial(SimSerial):
         if self.tcp and not self.authed:
             return                                              # Einzelzeichen brauchen die Anmeldung wie alle Befehle
         if c in "v?":
-            self._out("PyST-Basis SIMULATOR 0.1.0;\r\nMessfrequenz [Hz]:60;\r\n")
+            self._out("PyST-Basis SIMULATOR 0.3.0;\r\nMessfrequenz [Hz]:60;\r\n")
             return
         super()._command(c)
 
@@ -1021,7 +1026,9 @@ class BasisSimSerial(SimSerial):
             if self.tcp:
                 self._out("#ERR;AUTH;nur_usb\r\n")
                 return
-            if sub == "NEU":
+            if sub == "NEU" and self.streaming:
+                self._out("#ERR;AUTH;messung laeuft\r\n")
+            elif sub == "NEU":
                 self.auth.neu()
                 self._out("#OK;AUTH;NEU\r\n")
             else:
@@ -1030,7 +1037,9 @@ class BasisSimSerial(SimSerial):
             self._out("#ERR;AUTH;nein\r\n")
         elif not a:
             self.nonce = os.urandom(16)
-            self._out(f"#AUTH;id={self.auth.uid};nonce={self.nonce.hex()}\r\n")
+            self._out(f"#AUTH;id={self.auth.uid};nonce={self.nonce.hex().upper()}\r\n")
+        elif len(a) != 1:
+            self._out("#ERR;AUTH;syntax\r\n")
         else:
             nonce, self.nonce = self.nonce, None                # jede Anfrage gilt fuer genau einen Versuch
             self.authed = self.auth.pruefe(nonce, a[0])
@@ -1055,7 +1064,7 @@ class BasisSimSerial(SimSerial):
         return (f"#ZANGE;id=1;mac=34:85:18:a1:b2:c3;akku_mv={mv};akku_pct={self.z_akku:.0f};vbus=0;"
                 f"rssi={self.z_rssi:.0f};funken={int(self.z_sparks)};log={self.z_log_head + int(self.z_sparks)}/"
                 f"{self.z_log_head + 400000};blitz={z['blitz_mode']};phi={int(z['blitz_phi_x10']) / 10:.1f};"
-                f"fw=0.1.0 SIM;sync_us={120 + self.brng.randint(0, 150) if self.z_conn else -1};"
+                f"fw=0.3.0 SIM;sync_us={120 + self.brng.randint(0, 150) if self.z_conn else -1};"
                 f"verbunden={1 if self.z_conn else 0}\r\n")
 
     def _diag_command(self, line: str):
@@ -1075,7 +1084,11 @@ class BasisSimSerial(SimSerial):
                       f"modes=N,D;set=1;hw=rev31;ign={ign}\r\n")
         elif cmd == "STAT":
             self._out("#STAT;roll_edges=0;roll_valid=0;roll_rej=0;rollb_edges=0;pos=0;lost=0;drop=0\r\n"
-                      "#STAT;clk=HSE;reset=einschalten/bor;sync_ofs=0;usb=1\r\n"
+                      f"#STAT;clk=HSE;reset=einschalten/bor;sync_ofs=0;usb=1;auth_fehl={self.auth.fehler};"
+                      f"auth_sperre_s={self.auth.sperre_rest_s}\r\n"
+                      "#STAT;stack_mess=412;stack_usb=380;stack_esp_link=1320;stack_langsam=604;stack_haus=288;"
+                      "stack_idle=96\r\n"
+                      "#STAT;link_tx_drop=0;out_lost=0;dma_te=0;mess_max_us=184;can_txvoll=0;dbank=1\r\n"
                       "#STAT;egt1=nan;egt1_st=offen;egt2=nan;egt2_st=offen;cj=24.00;ads=ok;bme=BMP280@0x76;klima=ok\r\n"
                       "#STAT;wb=reset;lambda=nan;afr=nan;wb_temp=-1;wb_status=-;heat_cmd=0;heat=0;can_rx=0;can_err=0;"
                       f"wb_reset={0 if self._lam_on() else 1};wb_guard={'laeuft' if self._lam_on() else 'aus'}\r\n"
@@ -1146,7 +1159,7 @@ class BasisSimSerial(SimSerial):
                 self._out("#OK;PAIR;0\r\n")
             elif sub == "LIST":
                 if self.z_paired:
-                    self._out(f"#PAIR;id=1;mac=34:85:18:a1:b2:c3;typ=zange;sn=Z-0001;fw=0.1.0;"
+                    self._out(f"#PAIR;id=1;mac=34:85:18:a1:b2:c3;typ=zange;sn=Z-0001;fw=0.3.0;"
                               f"verbunden={1 if self.z_conn else 0}\r\n")
                 self._out("#OK;PAIR;LIST\r\n")
             elif sub == "DEL" and a[1:2] == ["1"] and self.z_paired:
@@ -1160,7 +1173,7 @@ class BasisSimSerial(SimSerial):
             n = self.net
             if not sub:
                 self._out(f"#NET;mode={n['mode']};kanal={n['kanal']};ssid={n['ssid']};ip={n['ip']};"
-                          f"clients={n['clients']};rssi={n['rssi']};tcp={n['tcp']};err={n['err']};esp=1;esp_fw=basis-esp 0.1.0 SIM;esp_neustarts=0\r\n")
+                          f"clients={n['clients']};rssi={n['rssi']};tcp={n['tcp']};err={n['err']};esp=1;esp_fw=basis-esp 0.3.0 h37;esp_neustarts=0\r\n")
             elif sub in ("AP", "STA") and len(a) < (4 if sub == "AP" else 3) or sub in ("AP", "STA") and len(a[-1]) < 8:
                 self._out("#ERR;NET;passwort\r\n")             # offenes WLAN gibt es nicht
             elif sub == "AP" and a[1].isdigit() and 1 <= int(a[1]) <= 13:
@@ -1178,6 +1191,8 @@ class BasisSimSerial(SimSerial):
             self._dose_command(a, now, PLUG_TYPES)
         elif cmd == "LAMBDA":
             self._lambda_command(a, now)
+        elif cmd == "ESP":
+            self._esp_command(a)
         elif cmd == "WBF" and self.on_wbf:
             self.on_wbf(self, a)
         elif cmd == "UPDATE" and self.on_update:
@@ -1185,6 +1200,16 @@ class BasisSimSerial(SimSerial):
             self.on_update()
         else:
             super()._diag_command(line)
+
+    def _esp_command(self, a: List[str]):
+        """'#ESP BRIDGE 0|1': Bruecke fuer esptool, nicht waehrend einer Ausgabe"""
+        if [x.upper() for x in a] == ["BRIDGE", "1"] and self.streaming:
+            self._out("#ERR;ESP;messung laeuft\r\n")
+        elif len(a) == 2 and a[0].upper() == "BRIDGE" and a[1] in "01":
+            self.esp_bridge = a[1] == "1"
+            self._out(f"#OK;ESP;BRIDGE;{a[1]}\r\n")
+        else:
+            self._out("#ERR;ESP;syntax\r\n")
 
     def _dose_command(self, a: List[str], now: float, plug_types):
         sub = a[0].upper() if a else ""
@@ -1318,7 +1343,7 @@ class ZangeUsbSimSerial(SimSerial):
 
     def _command(self, c: str):
         if c == "v":
-            self._out("Version PyST-Zange 0.1.0 SIM;\r\n")
+            self._out("Version PyST-Zange 0.3.0 SIM;\r\n")
         elif c == "e":
             pass                                                  # kein Klimasensor
         else:
@@ -1329,16 +1354,17 @@ class ZangeUsbSimSerial(SimSerial):
         cmd = parts[0].upper() if parts else ""
         a = parts[1:]
         if cmd == "?":
-            self._out(f"#CAP;proto=1;fw=PyST-Zange 0.1.0 SIM;tick_ns=1000;ch=I;burst_max={self.burst_max()};"
+            self._out(f"#CAP;proto=1;fw=PyST-Zange 0.3.0 SIM;tick_ns=1000;ch=I;burst_max={self.burst_max()};"
                       f"modes=N,D;set=1;hw=zange-c3\r\n")
         elif cmd == "ZANGE":
             self._out("#ZANGE;id=0;mac=7C:E8:B1:C5:F0:18;akku_mv=4201;akku_pct=100;vbus=1;laden=0;agc=0;empf_mv=219;"
                       "spitze_mv=0;rpm=0\r\n#ZANGE;rec=0;gekoppelt=1;sync=1;rssi=-57;kanal=6;blitz=0;phi_x10=0;"
-                      f"blitz_w_ns=0;log_head={self.log_head};log_tail={self.log_tail};fw=0.1.0 SIM\r\n")
+                      f"blitz_w_ns=0;log_head={self.log_head};log_tail={self.log_tail};fw=0.3.0 SIM\r\n")
         elif cmd == "STAT":
             self._out(f"#STAT;funken={self.z_funken};verworfen=0;luecken=0;probe=0;isr_verlust=0;"
-                      f"blitze={self.z_blitze};blitz_aus=0\r\n#STAT;tx_ok=15;tx_fehler=0;beacons=75;brownouts=0;"
-                      "reset=usb\r\n")
+                      f"blitze={self.z_blitze};blitz_aus=0;isr_funken={self.z_funken};rmt_funken={self.z_funken}\r\n"
+                      "#STAT;tx_ok=15;tx_fehler=0;beacons=75;brownouts=0;reset=usb;heap_min=61240;heap_frei=74112;"
+                      "log_verlust=0\r\n")
         elif cmd == "BLITZ":
             us = int(a[0]) if a and a[0].isdigit() else (0 if a else 25)
             if not 1 <= us <= 25:
@@ -1448,7 +1474,7 @@ class BootSimDevice:
       wrong_version Anwendung meldet nach dem Update eine andere Version"""
     RESET_S = 0.05
 
-    def __init__(self, version: str = "0.1.0", app: bool = True, mode: Optional[str] = None, **faults):
+    def __init__(self, version: str = "0.2.3", app: bool = True, mode: Optional[str] = None, **faults):
         self.version = version if app else None      # None: Bank 1 ungueltig
         self.faults = faults
         self.gen = 0

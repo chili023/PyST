@@ -14,7 +14,8 @@ from unittest import mock
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from pyst import channels, flash, link, physics, runcache, storage  # noqa: E402
+from pyst import auth, channels, flash, link, physics, pruef, runcache, sim, storage  # noqa: E402
+from conftest import close_window  # noqa: E402
 from pyst.recorder import Recorder  # noqa: E402
 from pyst.runcache import RunCache  # noqa: E402
 
@@ -286,6 +287,213 @@ class Niedrig(unittest.TestCase):
                 tempfile.tempdir = old
             self.assertEqual(len(runs), 1)
             self.assertEqual(sorted(os.listdir(tmp)), ["x.pyst"])
+
+
+class Stand030(unittest.TestCase):
+    """Zange und Basis-ESP 0.3.0"""
+
+    def test_esp_fw_mit_zusatz(self):
+        lk = link.DynoLink("SIM:basis")
+        try:
+            lk.info()
+            self.assertEqual(flash.device_versions(lk)[flash.BASIS_ESP], "0.3.0")
+        finally:
+            lk.close()
+        self.assertEqual(flash._VERSION.search("basis-esp 0.3.0 h255").group(0), "0.3.0")
+        self.assertEqual(flash.version_text("0.3.0", "0.3.0")[1], "gleich")
+
+    def test_stat_der_zange(self):
+        lk = link.DynoLink("SIM:zange")
+        try:
+            lk.info()
+            lines = pruef.read_stat_zange(lk)
+            self.assertEqual(len(lines), 2)                       # #STAT;tx_ok bleibt die letzte Zeile
+            self.assertTrue(lines[-1].startswith("#STAT;tx_ok"))
+            c = {x.name: x for x in pruef.run_all(lk)}
+            self.assertIn("Funken ISR / RMT", c)
+            self.assertEqual(c["Log-Verlust"].ergebnis, pruef.OK)
+            self.assertIn("61240", c["Heap frei / kleinster"].wert)
+        finally:
+            lk.close()
+
+    def test_stat_alter_und_kuenftiger_zangen(self):
+        caps = {"fw": "PyST-Zange 0.1.3"}
+        z = ["#ZANGE;vbus=1;akku_mv=4100;akku_pct=90;empf_mv=200", "#ZANGE;rec=0;gekoppelt=1;sync=1"]
+        alt = pruef.check_zange_usb(caps, z, ["#STAT;funken=1;verworfen=0", "#STAT;tx_ok=1;tx_fehler=0;brownouts=0;reset=usb"])
+        self.assertNotIn("Log-Verlust", [c.name for c in alt])
+        neu = pruef.check_zange_usb(caps, z, ["#STAT;funken=1;gibtsnoch=7;isr_funken=x;rmt_funken=y",
+                                              "#STAT;tx_ok=1;reset=task_wdt;heap_min=?;log_verlust=3;weiter"])
+        c = {x.name: x for x in neu}
+        self.assertEqual(c["Log-Verlust"].ergebnis, pruef.WARN)
+        self.assertEqual(c["Letzter Reset"].wert, "task_wdt")
+
+
+class FakeBasis:
+    """Messport, der auf '#ESP BRIDGE 1' mit festen Zeilen antwortet."""
+
+    def __init__(self, text=b""):
+        self.text, self.sent, self.closed = text, b"", False
+
+    def write(self, data):
+        self.sent += data
+
+    def read(self, n):
+        out, self.text = self.text[:n], self.text[n:]
+        return out
+
+    def close(self):
+        self.closed = True
+
+
+class Basis030(unittest.TestCase):
+    def raw(self, ser, line):
+        ser.write(line.encode() + b"\r\n")
+        time.sleep(0.02)
+        return ser.read(4096).decode()
+
+    def test_tcp_ohne_anmeldung(self):
+        ser = sim.BasisSimSerial(tcp=True, auth=sim.AuthSim())
+        self.addCleanup(ser.close)
+        self.assertEqual(self.raw(ser, "v"), "")                  # Einzelzeichen bleiben ohne Antwort
+        self.assertIn("#CAP", self.raw(ser, "#?"))
+        self.assertIn("#ERR;RUN;anmeldung", self.raw(ser, "#RUN 1"))
+
+    def test_hex_gross_und_klein(self):
+        key = "ab" * 32
+        self.assertEqual(auth.response(key, b"1" * 16, "X"), auth.response(key.upper(), b"1" * 16, "X"))
+        for nonce in ("AB" * 16, "ab" * 16):
+            self.assertEqual(auth.parse_challenge(f"#AUTH;id=A1;nonce={nonce}"), ("A1", bytes.fromhex("ab" * 16)))
+        self.assertEqual(auth.parse_key_line("#AUTH;id=A1;key=" + key.upper()), ("A1", key))
+
+    def test_auth_ohne_ok_abschluss(self):
+        self.assertFalse(link.is_foreign_reply("AUTH", "#AUTH;id=A1;nonce=" + "AB" * 16))
+        self.assertFalse(link.is_foreign_reply("AUTH", "#ERR;AUTH;nein"))
+        self.assertTrue(link.is_foreign_reply("AUTH", "#ERR;RUN;anmeldung"))
+        self.assertTrue(link.is_foreign_reply("AUTH", "#OK;RUN;1"))
+
+    def test_fehlertexte(self):
+        for line, teil in (("#ERR;RUN;anmeldung", "Anmeldung"), ("#ERR;WBF;nur_usb", "nur per USB"),
+                           ("#ERR;AUTH;nein", "Sperre"), ("#ERR;AUTH;kein_schluessel", "keinen Schlüssel"),
+                           ("#ERR;AUTH;rng", "Zufallsgenerator"), ("#ERR;AUTH;flash", "Flash"),
+                           ("#ERR;AUTH;messung laeuft", "Messung"), ("#ERR;AUTH;syntax", "versteht"),
+                           ("#ERR;NET;passwort", "offenes WLAN"), ("#ERR;ESP;messung laeuft", "Messung"),
+                           ("#ERR;XY;neu", "(neu)"), ("#ERR", "ohne Grund")):
+            with self.subTest(line):
+                self.assertIn(teil, auth.refusal_text(line))
+
+    def test_neuer_schluessel_waehrend_messung(self):
+        lk = link.DynoLink("SIM:basis")
+        self.addCleanup(lk.close)
+        lk.info()
+        self.assertTrue(lk.start())
+        with self.assertRaisesRegex(auth.AuthError, "Messung"):
+            lk.renew_key()
+
+    def test_sperre_verdoppelt_bis_60_s(self):
+        a = sim.AuthSim(sperre_s=1.0)
+        lange = []
+        for _ in range(9):
+            a.gesperrt_bis = 0.0
+            a.pruefe(b"1" * 16, "00")
+            lange.append(round(a.gesperrt_bis - time.time()))
+        self.assertEqual(lange, [1, 2, 4, 8, 16, 32, 60, 60, 60])
+
+    def test_in_der_sperre_auch_die_anfrage_abgelehnt(self):
+        a = sim.AuthSim(sperre_s=30.0)
+        ser = sim.BasisSimSerial(tcp=True, auth=a)
+        self.addCleanup(ser.close)
+        self.assertIn("#AUTH;id=", self.raw(ser, "#AUTH"))
+        self.assertIn("#ERR;AUTH;nein", self.raw(ser, "#AUTH " + "0" * 64))
+        self.assertIn("#ERR;AUTH;nein", self.raw(ser, "#AUTH"))
+        self.assertEqual(a.fehler, 1)                             # die Anfrage allein verlaengert nichts
+
+    def test_stat_der_basis(self):
+        lk = link.DynoLink("SIM:basis")
+        self.addCleanup(lk.close)
+        lk.info()
+        c = {x.name: x for x in pruef.run_all(lk)}
+        self.assertEqual(c["Anmeldung: Fehlversuche"].ergebnis, pruef.OK)
+        self.assertEqual(c["Verluste Link/Ausgabe/DMA/CAN"].ergebnis, pruef.OK)
+        self.assertEqual(c["Kleinster Stack-Rest"].wert, "idle: 96 B")
+        self.assertIn("12 V", c)                                  # die Zeile u12 kam trotz der neuen Zeilen davor
+
+    def bruecke(self, ser, **kw):
+        with mock.patch.object(flash, "open_serial", return_value=ser):
+            flash.esp_bridge_on("X", **kw)
+
+    def test_bruecke_ein(self):
+        ser = FakeBasis(b"123;4;5;6\r\n#OK;ESP;BRIDGE;1\r\n")
+        self.bruecke(ser)
+        self.assertEqual(ser.sent, b"#ESP BRIDGE 1\r\n")
+        self.assertTrue(ser.closed)
+
+    def test_bruecke_abgelehnt(self):
+        for text, teil in ((b"#ERR;ESP;messung laeuft\r\n", "Messung"), (b"#ERR;?;unbekannt\r\n", "aktualisieren"),
+                           (b"#ERR;ESP;nur_usb\r\n", "nur per USB"), (b"", "antwortet nicht")):
+            ser = FakeBasis(text)
+            with self.subTest(text), self.assertRaisesRegex(flash.FlashError, teil):
+                self.bruecke(ser, timeout=0.05)
+            self.assertTrue(ser.closed)
+
+    def test_bruecke_nur_per_usb(self):
+        with self.assertRaisesRegex(flash.FlashError, "nur per USB"):
+            flash.esp_bridge_on(None)
+        with mock.patch.object(flash, "open_serial", side_effect=OSError("belegt")):
+            with self.assertRaisesRegex(flash.FlashError, "belegt"):
+                flash.esp_bridge_on("X")
+
+    def test_bruecke_am_simulator(self):
+        ser = sim.BasisSimSerial(auth=sim.AuthSim())
+        self.bruecke(ser, timeout=0.5)
+        self.assertTrue(ser.esp_bridge)
+        ser = sim.BasisSimSerial(auth=sim.AuthSim())
+        self.raw(ser, "#RUN 1")
+        with self.assertRaisesRegex(flash.FlashError, "Messung"):
+            self.bruecke(ser, timeout=0.5)
+        self.assertFalse(ser.esp_bridge)
+
+
+class FlashSeiteEsp(unittest.TestCase):
+    """Die Bruecke wartet nur 30 s auf esptool: erst nach der Rueckfrage einschalten, nie ohne Anwender."""
+
+    def setUp(self):
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+        from PySide6 import QtWidgets
+        from pyst import gui
+        self.qt = QtWidgets
+        self.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        self.w = gui.MainWindow()
+        self.addCleanup(close_window, self.w, self.app)
+        self.page = self.w.page_flash
+        self.calls = mock.Mock()
+        for p in (mock.patch.object(flash, "build_command", return_value=(mock.Mock(), ["esptool"])),
+                  mock.patch.object(flash, "basis_port", return_value="X"),
+                  mock.patch.object(flash, "esp_bridge_on", self.calls.bruecke),
+                  mock.patch.object(self.page, "run", self.calls.run),
+                  mock.patch.object(self.page, "run_usb", self.calls.run_usb)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def starte(self, antwort, key=flash.BASIS_ESP):
+        with mock.patch.object(self.qt.QMessageBox, "question", self.calls.frage):
+            self.calls.frage.return_value = antwort
+            self.page.start(key)
+        return [c[0] for c in self.calls.mock_calls]
+
+    def test_erst_frage_dann_bruecke_dann_esptool(self):
+        self.assertEqual(self.starte(self.qt.QMessageBox.Yes), ["frage", "bruecke", "run"])
+        self.calls.bruecke.assert_called_once_with("X")
+
+    def test_nein_schaltet_nichts(self):
+        self.assertEqual(self.starte(self.qt.QMessageBox.No), ["frage"])
+
+    def test_abgelehnt_startet_kein_esptool(self):
+        self.calls.bruecke.side_effect = flash.FlashError(flash.ESP_BUSY)
+        self.assertEqual(self.starte(self.qt.QMessageBox.Yes), ["frage", "bruecke"])
+        self.assertIn("anhalten", self.page.status.text())
+
+    def test_zange_braucht_keine_bruecke(self):
+        self.assertEqual(self.starte(self.qt.QMessageBox.Yes, flash.ZANGE), ["frage", "run"])
 
 
 if __name__ == "__main__":

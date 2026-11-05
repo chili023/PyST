@@ -33,7 +33,7 @@ def stm_bin(folder, sp=0x20020000, reset=0x08000F01):
         fh.write(struct.pack("<II", sp, reset) + bytes(100))
 
 
-def update_file(version="0.2.0", size=4096, target=b"basis-g473", board=b"rev31", flags=0, reset=bp.APP_BASE + 0x301):
+def update_file(version="0.3.0", size=4096, target=b"basis-g473", board=b"rev31", flags=0, reset=bp.APP_BASE + 0x301):
     """Kuenstliches Update (keine echte Firmware im oeffentlichen Repository), Aufbau wie tools/pyst_image.py."""
     img = bytearray(struct.pack("<II", 0x20020000, reset) + bytes(range(256)) * (size // 256 + 1))[:size]
     h = bytearray(bp.UPD_LEN)
@@ -145,8 +145,8 @@ class Bilder(unittest.TestCase):
         path = self._upd()
         for where in (path, self.d):
             img = flash.load_image(flash.BASIS_STM, where)
-            self.assertEqual(img.update.version, "0.2.0")
-        self.assertIn("0.2.0", img.summary())
+            self.assertEqual(img.update.version, "0.3.0")
+        self.assertIn("0.3.0", img.summary())
 
     def test_update_im_projektordner(self):
         b = os.path.join(self.d, ".pio", "build", "basis_rev31")
@@ -209,13 +209,13 @@ class Versionen(unittest.TestCase):
         try:
             lk.info()
             v = flash.device_versions(lk)
-            self.assertEqual((v[flash.BASIS_STM], v[flash.BASIS_ESP], v[flash.ZANGE]), ("0.1.0", "0.1.0", "0.1.0"))
+            self.assertEqual((v[flash.BASIS_STM], v[flash.BASIS_ESP], v[flash.ZANGE]), ("0.3.0", "0.3.0", "0.3.0"))
         finally:
             lk.close()
         lk = link.DynoLink("SIM:zange")
         try:
             lk.info()
-            self.assertEqual(flash.device_versions(lk), {flash.ZANGE: "0.1.0"})
+            self.assertEqual(flash.device_versions(lk), {flash.ZANGE: "0.3.0"})
         finally:
             lk.close()
 
@@ -282,8 +282,8 @@ class UsbUpdate(unittest.TestCase):
     def test_von_der_anwendung_aus(self):
         dev = BootSimDevice("0.1.0")
         name = dev.ports()[0]
-        self.assertEqual(self.flasher(dev).run(), "0.2.0")
-        self.assertEqual((dev.mode, dev.version, dev.commit), ("app", "0.2.0", None))
+        self.assertEqual(self.flasher(dev).run(), "0.3.0")
+        self.assertEqual((dev.mode, dev.version, dev.commit), ("app", "0.3.0", None))
         self.assertEqual(self.prog[-1], (20480, 20480))
         self.assertEqual(len(self.prog), 40)
         self.assertNotEqual(dev.ports()[0], name)             # Portname hat gewechselt
@@ -291,7 +291,7 @@ class UsbUpdate(unittest.TestCase):
 
     def test_steckt_schon_im_bootloader(self):
         for dev in (BootSimDevice("0.1.0", mode="boot"), BootSimDevice(app=False)):
-            self.assertEqual(self.flasher(dev).run(), "0.2.0")
+            self.assertEqual(self.flasher(dev).run(), "0.3.0")
             self.assertTrue(any("schon im Bootloader" in t for t in self.logs))
 
     def test_bruecke_ist_kein_messport(self):
@@ -306,13 +306,13 @@ class UsbUpdate(unittest.TestCase):
 
     def test_verlorene_und_kaputte_antworten(self):
         dev = BootSimDevice("0.1.0", drop={4, 9, 10}, corrupt={6, 20})
-        self.assertEqual(self.flasher(dev).run(), "0.2.0")
+        self.assertEqual(self.flasher(dev).run(), "0.3.0")
 
     def test_geraet_fordert_daten_nochmals_an(self):
         dev = BootSimDevice("0.1.0", rewind=4096)
-        self.assertEqual(self.flasher(dev).run(), "0.2.0")
+        self.assertEqual(self.flasher(dev).run(), "0.3.0")
         self.assertTrue(any("Wiederhole ab 3072" in t for t in self.logs))
-        self.assertEqual(dev.version, "0.2.0")
+        self.assertEqual(dev.version, "0.3.0")
 
     def test_falsche_datei_wird_vom_geraet_abgelehnt(self):
         dev = BootSimDevice("0.1.0", mode="boot")
@@ -329,7 +329,7 @@ class UsbUpdate(unittest.TestCase):
             self.flasher(dev).run()
         self.assertEqual((dev.mode, dev.version, dev.commit), ("boot", "0.1.0", None))
         dev.plug_in()
-        self.assertEqual(self.flasher(dev).run(), "0.2.0")    # steckt noch im Bootloader, geht direkt weiter
+        self.assertEqual(self.flasher(dev).run(), "0.3.0")    # steckt noch im Bootloader, geht direkt weiter
         self.assertTrue(any("schon im Bootloader" in t for t in self.logs))
 
     def test_stromausfall_in_der_uebertragung(self):
@@ -337,11 +337,11 @@ class UsbUpdate(unittest.TestCase):
         with self.assertRaises(flash.FlashError):
             self.flasher(dev).run()
         self.run_until_app(dev, "0.1.0")                      # alte Anwendung unversehrt
-        self.assertEqual(self.flasher(dev).run(), "0.2.0")
+        self.assertEqual(self.flasher(dev).run(), "0.3.0")
 
     def test_stromausfall_beim_kopieren(self):
         dev = BootSimDevice("0.1.0", copy_cut=True)
-        self.assertEqual(self.flasher(dev).run(), "0.2.0")    # setzt selbst fort
+        self.assertEqual(self.flasher(dev).run(), "0.3.0")    # setzt selbst fort
         self.assertGreater(dev.boots, 2)
 
     def test_abbruch_durch_den_anwender(self):
@@ -353,7 +353,7 @@ class UsbUpdate(unittest.TestCase):
             f.run()
         self.run_until_app(dev, "0.1.0")
         self.assertIsNone(dev.commit)
-        self.assertEqual(self.flasher(dev).run(), "0.2.0")
+        self.assertEqual(self.flasher(dev).run(), "0.3.0")
 
     def test_abbruch_beim_warten_auf_den_bootloader(self):
         """Nach #UPDATE darf die Basis nicht im Bootloader liegen bleiben."""
@@ -387,7 +387,7 @@ class UsbUpdate(unittest.TestCase):
 
     def test_anwendung_gibt_gerade_telegramme_aus(self):
         dev = BootSimDevice("0.1.0", streaming=True)
-        self.assertEqual(self.flasher(dev).run(), "0.2.0")
+        self.assertEqual(self.flasher(dev).run(), "0.3.0")
 
 
 class LambdaDatei(unittest.TestCase):
@@ -671,7 +671,7 @@ class FlashSeite(unittest.TestCase):
     def test_erfolg(self):
         seen = self.run_page(BootSimDevice("0.1.0"))
         self.assertEqual(seen[-1], 20480)
-        self.assertIn("0.2.0", self.page.status.text())
+        self.assertIn("0.3.0", self.page.status.text())
         self.assertTrue(self.page.rows[flash.BASIS_STM].b_go.isEnabled())
         self.assertTrue(self.page.bar.isHidden())
 

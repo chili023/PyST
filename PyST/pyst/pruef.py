@@ -63,6 +63,19 @@ def check_basis(caps: Dict[str, str], stat: List[str], net: List[str]) -> List[C
     out.append(Check(g, "USB", OK if kv.get("usb") == "1" else INFO, kv.get("usb", "–")))
     so = kv.get("sync_ofs", "")
     out.append(Check(g, "Sync-Ausgang", OK if so == "0" else WARN, f"sync_ofs={so}", "0"))
+    # ab Basis 0.3.0
+    if "auth_fehl" in kv:
+        out.append(Check(g, "Anmeldung: Fehlversuche", OK if _i(kv["auth_fehl"], 0) == 0 else WARN,
+                         f"{kv['auth_fehl']}, Sperre {kv.get('auth_sperre_s', '0')} s", "0"))
+    if "link_tx_drop" in kv:
+        lost = sum(_i(kv.get(k), 0) for k in ("link_tx_drop", "out_lost", "dma_te", "can_txvoll"))
+        out.append(Check(g, "Verluste Link/Ausgabe/DMA/CAN", OK if lost == 0 else WARN,
+                         " / ".join(kv.get(k, "–") for k in ("link_tx_drop", "out_lost", "dma_te", "can_txvoll")), "0"))
+        out.append(Check(g, "Längster Messdurchlauf", INFO, f"{kv.get('mess_max_us', '–')} µs"))
+    stacks = [(_i(v, 0), k[len("stack_"):]) for k, v in kv.items() if k.startswith("stack_")]
+    if stacks:
+        free, name = min(stacks)
+        out.append(Check(g, "Kleinster Stack-Rest", INFO, f"{name}: {free} B"))
     out.append(_range(g, "12 V", kv.get("u12"), 10.0, 16.0, "V"))
     out.append(_range(g, "5 V Sensor", kv.get("u5s"), 4.75, 5.25, "V"))
     out.append(_range(g, "ADC-Referenz", kv.get("vref"), 2.45, 2.55, "V"))
@@ -173,6 +186,14 @@ def check_zange_usb(caps: Dict[str, str], lines: List[str], stat: List[str]) -> 
     out.append(Check(g, "Funk-Sendefehler", OK if _i(s.get("tx_fehler"), 0) == 0 else WARN, s.get("tx_fehler", "–"), "0"))
     out.append(Check(g, "Beacons", INFO, s.get("beacons", "–")))
     out.append(Check(g, "Funken / verworfen", INFO, f"{s.get('funken', '–')} / {s.get('verworfen', '–')}"))
+    # ab Zange 0.3.0
+    if "rmt_funken" in s:
+        out.append(Check(g, "Funken ISR / RMT", INFO, f"{s.get('isr_funken', '–')} / {s['rmt_funken']}",
+                         "gleich bis rund 169 Funken/s"))
+    if "log_verlust" in s:
+        out.append(Check(g, "Log-Verlust", OK if _i(s["log_verlust"], 0) == 0 else WARN, s["log_verlust"], "0"))
+    if "heap_min" in s:
+        out.append(Check(g, "Heap frei / kleinster", INFO, f"{s.get('heap_frei', '–')} / {s['heap_min']} B"))
     out.append(Check(g, "Letzter Reset", INFO, s.get("reset", "–")))
     return out
 

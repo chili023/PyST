@@ -33,6 +33,7 @@ except ImportError:                       # pragma: no cover
 from . import bootproto as bp
 from .basis import ZANGE_USB_ID
 from .diag import parse_kv
+from .auth import refusal_text
 from .link import BASIS_USB_ID, is_esp_bridge
 
 ZANGE, BASIS_STM, BASIS_STLINK, BASIS_ESP, LAMBDA_F042 = "zange", "basis_stm", "basis_stlink", "basis_esp", "lambda_f042"
@@ -52,6 +53,9 @@ F042_RAM = (0x20000000, 0x20001800)       # 6 KB
 F042_NAMES = ("wideband_image_with_bl.bin", "wideband_image.bin")
 WB_VERSION = "A0"                         # RUSEFI_WIDEBAND_VERSION in den 0x190-Telegrammen
 WBF_BLOCK = 16                            # eine #-Zeile der Basis
+
+
+ESP_BUSY = "Die Basis gibt gerade Messwerte aus: Erst die Messung anhalten, dann den ESP flashen."
 
 
 class FlashError(Exception):
@@ -79,8 +83,8 @@ TARGETS = {
                          "Danach 12 V einmal aus und ein: der ST-Link lässt den STM32 sonst angehalten, die Basis fällt "
                          "vom USB."),
     BASIS_ESP: Target(BASIS_ESP, "Basis ESP", "basis-esp32c3", 460800,
-                      "12 V an, STM32-Firmware läuft, USB-C an J20. Geht über die ESP-Brücke der Basis, "
-                      "der WLAN-/Funkbetrieb ruht währenddessen."),
+                      "12 V an, STM32-Firmware läuft, USB-C an J20, keine Messung. Geht nur per USB über die "
+                      "ESP-Brücke der Basis, PyST schaltet sie ein. Der WLAN-/Funkbetrieb ruht währenddessen."),
     LAMBDA_F042: Target(LAMBDA_F042, "Lambda (F042) per CAN", "", 0,
                         "12 V an, Basis-Firmware ab 0.2.1, USB-C an J20. Datei wideband_image_with_bl.bin aus dem "
                         "rusEFI-Wideband-Release oder die Anwendung allein. Übertragen wird nur die Anwendung, der "
@@ -399,6 +403,38 @@ class FlashCancelled(FlashError):
 
 def open_serial(port: str):
     return serial.Serial(port, 115200, timeout=0.05, write_timeout=2)
+
+
+def esp_bridge_on(port: Optional[str], timeout: float = 2.0):
+    """Bruecke zum Basis-ESP einschalten: '#ESP BRIDGE 1' am Messport, nur per USB. Danach wartet die Basis 30 s auf
+    esptool, also erst unmittelbar vor dem Start aufrufen. Lehnt die Basis ab, FlashError mit Klartext."""
+    if not port:
+        raise FlashError("Messport der Basis nicht gefunden: Den Basis-ESP flasht PyST nur per USB.")
+    try:
+        ser = open_serial(port)
+    except OSError as exc:
+        raise FlashError(f"{port} lässt sich nicht öffnen: {exc}") from exc
+    try:
+        ser.write(b"#ESP BRIDGE 1\r\n")
+        buf = b""
+        end = time.time() + timeout
+        while time.time() < end:
+            buf += ser.read(256)
+            lines = buf.split(b"\n")
+            buf = lines.pop()
+            for raw in lines:
+                line = raw.decode("ascii", "replace").strip()
+                if line.startswith("#OK;ESP;BRIDGE;1"):
+                    return
+                if line.startswith("#ERR;ESP"):
+                    raise FlashError(ESP_BUSY if line.endswith("messung laeuft") else refusal_text(line))
+                if line.startswith("#ERR;?"):
+                    raise FlashError("Diese Basis-Firmware kennt die ESP-Brücke nicht: Erst die Basis aktualisieren.")
+    except OSError as exc:
+        raise FlashError(f"Verbindung zur Basis abgerissen: {exc}") from exc
+    finally:
+        ser.close()
+    raise FlashError("Die Basis antwortet nicht auf das Einschalten der ESP-Brücke.")
 
 
 class UsbFlasher:

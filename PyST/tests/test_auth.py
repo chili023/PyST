@@ -13,7 +13,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from pyst import auth, basis, link, sim  # noqa: E402
-from pyst.auth import AuthError, KeyStore  # noqa: E402
+from pyst.auth import AuthError, AuthNoReply, KeyStore  # noqa: E402
 from conftest import close_window  # noqa: E402
 
 
@@ -46,7 +46,7 @@ class Rechnen(unittest.TestCase):
     def test_ablehnung(self):
         self.assertEqual(auth.refusal_text("#ERR;AUTH;nein"), auth.TEXT_GESPERRT)
         self.assertEqual(auth.refusal_text("#ERR;AUTH;kein_schluessel"), auth.TEXT_BASIS_OHNE)
-        self.assertIn("rng", auth.refusal_text("#ERR;AUTH;rng"))
+        self.assertIn("Zufallsgenerator", auth.refusal_text("#ERR;AUTH;rng"))
 
     def test_redact(self):
         key = "ab" * 32
@@ -358,6 +358,60 @@ class Oberflaeche(unittest.TestCase):
         with mock.patch.object(KeyStore, "put", side_effect=OSError(28, "Platte voll")):
             self.assertTrue(self.verbinden("SIM:basis"))
         self.assertIn("nicht gespeichert", self.w.statusBar().currentMessage())
+
+    def abriss(self):
+        self.w.link.ser.dead = True                               # ESP trennt nach Neustart der Basis
+        self.w._auto_connect()
+        self.assertIsNone(self.w.link)
+        self.assertEqual(self.w._tcp_again, "SIM:basis:wlan")
+
+    def test_neu_verbinden_nach_abriss(self):
+        self.verbinden("SIM:basis")
+        self.w.on_connect()
+        self.assertTrue(self.verbinden("SIM:basis:wlan"))
+        alt = self.w.link
+        self.abriss()
+        self.w._auto_connect()
+        self.assertIsNot(self.w.link, alt)
+        self.assertEqual(self.w.link.auth_state, "ok")
+        self.assertTrue(self.w.link.ser.authed)
+        self.assertEqual(self.w._tcp_again, "")
+
+    def test_basis_startet_noch_dann_neuer_versuch(self):
+        self.verbinden("SIM:basis")
+        self.w.on_connect()
+        self.verbinden("SIM:basis:wlan")
+        self.abriss()
+        for fehler in (OSError("nicht erreichbar"), AuthNoReply(auth.TEXT_KEINE_ANTWORT)):
+            with mock.patch.object(self.w, "_open_link", side_effect=fehler):
+                self.w._auto_connect()
+            self.assertIsNone(self.w.link)
+            self.assertEqual(self.w._tcp_again, "SIM:basis:wlan")
+        self.w._auto_connect()
+        self.assertEqual(self.w.link.auth_state, "ok")
+
+    def test_abgelehnte_anmeldung_wird_nicht_wiederholt(self):
+        self.verbinden("SIM:basis")
+        self.w.on_connect()
+        self.verbinden("SIM:basis:wlan")
+        self.abriss()
+        sim.SIM_AUTH.neu()                                        # Schluessel passt nicht mehr
+        with mock.patch.object(self.qt.QMessageBox, "critical") as box:
+            self.w._auto_connect()
+            self.w._auto_connect()
+            self.w._auto_connect()
+        box.assert_called_once()
+        self.assertEqual(sim.SIM_AUTH.fehler, 1)
+        self.assertEqual(self.w._tcp_again, "")
+
+    def test_trennen_von_hand_beendet_das_neu_verbinden(self):
+        self.verbinden("SIM:basis")
+        self.w.on_connect()
+        self.verbinden("SIM:basis:wlan")
+        self.abriss()
+        self.w._tcp_again = "SIM:basis:wlan"
+        self.assertTrue(self.verbinden("SIM"))                    # Anwender verbindet etwas anderes
+        self.assertEqual(self.w._tcp_again, "")
 
     def test_passwort_vorschlag_und_offenes_wlan(self):
         self.verbinden("SIM:basis")

@@ -227,10 +227,26 @@ USB ist das Koppeln. Am TCP-Port 2323 gelten ohne Anmeldung nur `#?` und `#AUTH`
 | `#AUTH KEY` (nur USB) | `#AUTH;id=<UID>;key=<64 hex>`, 32-Byte-Schlüssel aus dem Zufallsgenerator, im Flash der Basis |
 | `#AUTH NEU` (nur USB) | neuer Schlüssel, der alte gilt nicht mehr |
 | `#AUTH` | `#AUTH;id=<UID>;nonce=<32 hex>` |
-| `#AUTH <64 hex>` | `#OK;AUTH` oder `#ERR;AUTH;nein`, danach wachsende Sperre |
+| `#AUTH <64 hex>` | `#OK;AUTH` oder `#ERR;AUTH;nein`, danach Sperre 1, 2, 4 … 60 s, über Verbindungen hinweg |
 
 Antwort = `HMAC-SHA256(key, "PyST-Auth-1" || nonce_bytes || id_ascii)`. Die Zeile hat 70 Zeichen, die Zeilengrenze
 der Basis muss das zulassen. Nur per USB: `#AUTH KEY/NEU`, `#LAMBDA SWD`, `#WBF`, `#UPDATE`, `#ESP BRIDGE`/`BOOT`.
+
+`#AUTH` und `#AUTH KEY` enden ohne `#OK`, ihre Antwort ist die Zeile `#AUTH;id=…`. Die Basis schreibt Hex in
+Großbuchstaben und nimmt beides an. In der Sperre liefert auch `#AUTH` allein `#ERR;AUTH;nein`, ohne sie zu verlängern.
+Weitere Gründe unter `#ERR;AUTH`: `kein_schluessel`, `rng`, `flash`, `messung laeuft`, `syntax`. Ohne Anmeldung kommt
+`#ERR;<befehl>;anmeldung`, Einzelzeichen wie `v` bleiben ohne Antwort. Am falschen Port kommt `#ERR;<befehl>;nur_usb`.
+
+Der ESP trennt die TCP-Verbindung bei jedem Neustart des STM32, die Anmeldung gilt je Verbindung: PyST verbindet
+von selbst neu und meldet sich neu an. Eine abgelehnte Anmeldung wiederholt es nicht.
+
+`#ESP BRIDGE 1` (nur USB, nicht während einer Ausgabe: `#ERR;ESP;messung laeuft`) schaltet die Brücke zum Basis-ESP
+ein, danach wartet die Basis 30 s auf esptool. PyST sendet es erst nach der Rückfrage, direkt vor dem Flashen.
+
+`#STAT` der Basis ab 0.3.0: Die `clk`-Zeile enthält zusätzlich `auth_fehl` und `auth_sperre_s`, vor den Sensorzeilen
+stehen `#STAT;stack_<aufgabe>=<B frei>;…` und `#STAT;link_tx_drop;out_lost;dma_te;mess_max_us;can_txvoll;dbank`. Letzte
+Zeile bleibt `#STAT;u12=…`. `#STAT` der Zange ab 0.3.0: `isr_funken`, `rmt_funken` in Zeile 1, `heap_min`, `heap_frei`,
+`log_verlust` in Zeile 2, letzte Zeile bleibt `#STAT;tx_ok=…`. `#NET` meldet `esp_fw=basis-esp <x.y.z> h<Byte>`.
 
 PyST holt den Schlüssel bei jedem USB-Verbinden und legt ihn je `id` in `~/PyST/schluessel.json` ab (Rechte 600).
 Vor jedem TCP-Betrieb meldet es sich mit genau einem Versuch an. Der Schlüssel erscheint nie im Log.

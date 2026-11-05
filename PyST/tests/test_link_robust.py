@@ -2,13 +2,17 @@
 import logging
 import os
 import random
+import socket
 import sys
+import tempfile
 import threading
 import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from pyst import link  # noqa: E402
+from pyst.auth import KeyStore  # noqa: E402
+from pyst.sim import AuthSim, BasisSimSerial  # noqa: E402
 
 KAPUTT = [
     "#BURST;BEGIN;n=?;tick_ns=62,5;trig_idx=x;ch=I",
@@ -217,6 +221,79 @@ class Antwortzuordnung(unittest.TestCase):
             alt.ensure_stopped()
         finally:
             alt.close()
+
+
+class TcpAbriss(unittest.TestCase):
+    """Der ESP trennt die TCP-Verbindung nach einem STM-Neustart, die Anmeldung gilt je Verbindung."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.keys = KeyStore(os.path.join(self.tmp.name, "schluessel.json"))
+        self.auth = AuthSim()
+        self.keys.put(self.auth.uid, self.auth.key.hex())
+        self.srv = socket.socket()
+        self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.srv.bind(("127.0.0.1", 0))
+        self.srv.listen(2)
+        self.addCleanup(self.srv.close)
+        self.port = self.srv.getsockname()[1]
+        self.stop = threading.Event()
+        self.sims = []
+        threading.Thread(target=self.serve, daemon=True).start()
+
+    def serve(self):
+        """Je Verbindung ein neuer TCP-Port der Basis: nicht angemeldet."""
+        while True:
+            try:
+                conn, _ = self.srv.accept()
+            except OSError:
+                return
+            sim = BasisSimSerial(tcp=True, auth=self.auth)
+            self.sims.append(sim)
+            conn.settimeout(0.02)
+            self.stop.clear()
+            while not self.stop.is_set():
+                try:
+                    data = conn.recv(4096)
+                    if not data:
+                        break
+                    sim.write(data)
+                except socket.timeout:
+                    pass
+                except OSError:
+                    break
+                out = sim.read(65536)
+                if out:
+                    conn.sendall(out)
+            conn.close()
+            sim.close()
+
+    def verbinden(self):
+        lk = link.DynoLink(f"tcp://127.0.0.1:{self.port}", keys=self.keys)
+        self.addCleanup(lk.close)
+        lk.info()
+        return lk
+
+    def test_abriss_im_betrieb_und_neu_anmelden(self):
+        lk = self.verbinden()
+        self.assertEqual(lk.auth_state, "ok")
+        lk.start()
+        self.assertTrue(wait_until(lambda: lk.frames.qsize() > 3))
+        self.stop.set()                                           # Basis startet neu
+        self.assertTrue(wait_until(lambda: not lk.alive))
+        time.sleep(0.15)
+        self.assertTrue(lk._thread.is_alive(), "Lesethread lebt weiter")
+        self.assertEqual(lk.command("#RUN 1", timeout=0.1), [])  # keine Ausnahme
+        self.assertFalse(lk.start(timeout=0.1))
+        self.assertFalse(lk.keepalive())
+        lk.ensure_stopped()
+        # neue Verbindung: wieder nicht angemeldet, neue Anfrage, neue Antwort
+        neu = self.verbinden()
+        self.assertEqual(neu.auth_state, "ok")
+        self.assertEqual(len(self.sims), 2)
+        self.assertTrue(self.sims[1].authed)
+        self.assertTrue(neu.ok(neu.command("#RUN 0")))
 
 
 class Zahlen(unittest.TestCase):

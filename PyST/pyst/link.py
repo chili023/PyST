@@ -33,7 +33,7 @@ except ImportError:  # nur Simulator moeglich
     list_ports = None
 
 from . import auth
-from .auth import AuthError, KeyStore
+from .auth import AuthError, AuthNoReply, KeyStore
 from .basis import (BASIS_AP_IP, BASIS_MDNS_NAME, BASIS_TCP_PORT, ZANGE_USB_ID, BasisCommands, _f, _i, parse_event,
                     parse_log_line, parse_zange)
 from .diag import DIAG_FIELDS, Burst, parse_kv
@@ -742,11 +742,11 @@ class DynoLink(BasisCommands):
         True = angemeldet, False = Firmware ohne '#AUTH' (vor Basis 0.3.0). Sonst AuthError mit Text fuer die Oberflaeche."""
         self.auth_state = ""
         if not self.has_diag:
-            raise AuthError(auth.TEXT_KEINE_ANTWORT)
+            raise AuthNoReply(auth.TEXT_KEINE_ANTWORT)
         with self._cmd_lock:
             lines = self.command("#AUTH", timeout=2.0, done=lambda x: x.startswith(("#AUTH;", "#ERR")))
             if not lines:
-                raise AuthError(auth.TEXT_KEINE_ANTWORT)
+                raise AuthNoReply(auth.TEXT_KEINE_ANTWORT)
             if lines[-1].startswith("#ERR;?"):
                 self.auth_state = "alt"
                 return False
@@ -761,9 +761,11 @@ class DynoLink(BasisCommands):
                 raise AuthError(auth.TEXT_KEIN_SCHLUESSEL.format(id=uid))
             lines = self.command(f"#AUTH {auth.response(key, nonce, uid)}", timeout=2.0)
             if not lines:
-                raise AuthError(auth.TEXT_KEINE_ANTWORT)
+                raise AuthNoReply(auth.TEXT_KEINE_ANTWORT)
             if lines[-1].startswith("#ERR;?"):
                 raise AuthError(auth.TEXT_ZU_LANG)
+            if lines[-1].startswith("#ERR") and not lines[-1].endswith(";nein"):
+                raise AuthError(auth.refusal_text(lines[-1]))
             if not self.ok(lines):
                 raise AuthError(auth.TEXT_FALSCH)
             self.auth_state = "ok"
@@ -771,13 +773,16 @@ class DynoLink(BasisCommands):
 
     def fetch_key(self) -> Optional[bool]:
         """Nur per USB: Schluessel der Basis holen und ablegen. True = neu oder geaendert, False = unveraendert,
-        None = keiner zu holen (Firmware ohne '#AUTH'). Schreibfehler (OSError) gehen an den Aufrufer."""
+        None = keiner zu holen (Firmware ohne '#AUTH'). Lehnt die Basis ab: AuthError mit Text fuer die Oberflaeche.
+        Schreibfehler (OSError) gehen an den Aufrufer."""
         if self.needs_login:
             return None
         for line in self.command("#AUTH KEY", timeout=1.0, done=lambda x: x.startswith(("#AUTH;", "#ERR"))):
             parsed = auth.parse_key_line(line)
             if parsed is not None:
                 return self.keys.put(*parsed)
+            if line.startswith("#ERR;AUTH"):
+                raise AuthError(auth.refusal_text(line))
         return None
 
     def renew_key(self) -> bool:
@@ -785,8 +790,10 @@ class DynoLink(BasisCommands):
         if self.needs_login:
             return False
         lines = self.command("#AUTH NEU", timeout=2.0, done=lambda x: x.startswith(("#AUTH;", "#OK", "#ERR")))
-        if not lines or lines[-1].startswith("#ERR"):
+        if not lines:
             return False
+        if lines[-1].startswith("#ERR"):
+            raise AuthError(auth.refusal_text(lines[-1]))
         return self.fetch_key() is not None
 
     @staticmethod

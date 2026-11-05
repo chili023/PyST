@@ -41,7 +41,7 @@ TEXT_KEIN_SCHLUESSEL = ("Für diese Basis ({id}) ist kein Schlüssel gespeichert
                         "Verbinde sie einmal per USB, dann holt PyST den Schlüssel selbst.")
 TEXT_FALSCH = ("Die Basis hat die Anmeldung abgelehnt: Der gespeicherte Schlüssel passt nicht.\n"
                "Verbinde sie einmal per USB, um ihn neu zu holen. Jeder Fehlversuch verlängert die Sperre der Basis.")
-TEXT_GESPERRT = ("Die Basis lehnt die Anmeldung gerade ab (Sperre nach Fehlversuchen).\n"
+TEXT_GESPERRT = ("Die Basis lehnt die Anmeldung gerade ab (Sperre nach Fehlversuchen, 1 bis 60 s).\n"
                  "Warte etwas oder verbinde sie per USB, um den Schlüssel neu zu holen.")
 TEXT_BASIS_OHNE = "Die Basis hat noch keinen Schlüssel. Verbinde sie einmal per USB."
 TEXT_KEINE_ANTWORT = "Die Basis antwortet nicht auf die Anmeldung."
@@ -53,14 +53,28 @@ class AuthError(Exception):
     """Anmeldung gescheitert; der Text ist fuer die Oberflaeche bestimmt."""
 
 
+class AuthNoReply(AuthError):
+    """Kein Fehlversuch: Die Basis schweigt, etwa weil sie gerade neu startet. Ein neuer Versuch kostet nichts."""
+
+
+REFUSALS = {
+    "nein": TEXT_GESPERRT,
+    "kein_schluessel": TEXT_BASIS_OHNE,
+    "rng": "Der Zufallsgenerator der Basis liefert nichts: Basis neu starten.",
+    "flash": "Die Basis konnte den Schlüssel nicht im Flash ablegen: Basis neu starten und nochmals versuchen.",
+    "messung laeuft": "Geht nicht während einer Messung: Erst die Ausgabe anhalten.",
+    "syntax": "Die Basis versteht den Befehl nicht: PyST und Firmware passen nicht zusammen.",
+    "nicht vorhanden": "Diese Basis-Firmware kennt keine Anmeldung.",
+    "anmeldung": "Die Basis verlangt eine Anmeldung: Trennen und neu verbinden.",
+    "nur_usb": "Das geht aus Sicherheitsgründen nur per USB, nicht über WLAN.",
+    "passwort": "Ein offenes WLAN lehnt die Basis ab: Passwort mit mindestens 8 Zeichen eintragen.",
+}
+
+
 def refusal_text(line: str) -> str:
-    """Text zur Ablehnung der Anfrage '#AUTH': 'nein' = Sperre, 'kein_schluessel', 'rng' (kein Zufall in der Basis)."""
-    why = line.split(";")[2] if line.count(";") >= 2 else ""
-    if why == "nein":
-        return TEXT_GESPERRT
-    if why == "kein_schluessel":
-        return TEXT_BASIS_OHNE
-    return f"Die Basis lehnt die Anmeldung ab ({why or 'ohne Grund'})."
+    """Verstaendlicher Text zu einer Zeile '#ERR;<befehl>;<grund>' der Basis."""
+    why = line.split(";", 2)[2].strip() if line.count(";") >= 2 else ""
+    return REFUSALS.get(why, f"Die Basis lehnt ab ({why or 'ohne Grund'}).")
 
 
 def redact(line: str) -> str:

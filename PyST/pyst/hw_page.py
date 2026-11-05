@@ -17,7 +17,7 @@ from typing import Callable, Dict, List, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import storage
-from .auth import wlan_password
+from .auth import AuthError, refusal_text, wlan_password
 from .bg import Bg, wait_in_thread
 from .basis import (LAMBDA_GRUND, MAX_PLUGS, PLUG_TYPE_TEXT, PLUG_TYPES, ZANGE_KEYS, ZANGE_USB_WARNUNG, LambdaStatus,
                     NetState, ZangeStatus, main_zange, net_commands)
@@ -32,7 +32,8 @@ class ZangeSettingsDialog(KvDialog):
 
     def __init__(self, link, parent=None):
         super().__init__(link, "Zange – Einstellungen",
-                         "Werte werden per Funk an die Zange übertragen (Antwort nach Quittung).", parent)
+                         "Werte werden per Funk an die Zange übertragen (Antwort nach Quittung). Die Zange speichert "
+                         "sie gesammelt rund 5 s später, ein Speicherfehler kommt hier nicht an.", parent)
         self.resize(640, 460)
         self.layout_buttons()
         self.reload()
@@ -462,7 +463,8 @@ class HardwarePage(QtWidgets.QScrollArea):
             self.lam_detail.setText(str(err))
         elif res and res[-1].startswith("#ERR"):
             why = res[-1].split(";")[-1]
-            self.lam_detail.setText("Basis lehnt ab: " + LAMBDA_GRUND.get(why, why))
+            self.lam_detail.setText(LAMBDA_GRUND.get(why) and "Basis lehnt ab: " + LAMBDA_GRUND[why]
+                                    or refusal_text(res[-1]))
         self._last_lambda = 0.0
 
     def lambda_toggle(self):
@@ -605,7 +607,8 @@ class HardwarePage(QtWidgets.QScrollArea):
         self.bg.submit("key_new", link.renew_key, self._key_done)
 
     def _key_done(self, ok, err):
-        self.net_msg.setText(f"Schlüssel nicht gespeichert: {err}" if err is not None else
+        self.net_msg.setText(str(err) if isinstance(err, AuthError) else
+                             f"Schlüssel nicht gespeichert: {err}" if err is not None else
                              "Neuer Schlüssel gespeichert." if ok else "Die Basis hat keinen neuen Schlüssel vergeben.")
 
     def _show_net(self, st: Optional[NetState], err=None):
@@ -636,7 +639,7 @@ class HardwarePage(QtWidgets.QScrollArea):
             return False
         lines = wait_in_thread(lambda: link.command(cmd, timeout=3.0))
         ok = link.ok(lines)
-        self.net_msg.setText("Übernommen." if ok else "Abgelehnt: " + (lines[-1] if lines else "keine Antwort"))
+        self.net_msg.setText("Übernommen." if ok else refusal_text(lines[-1]) if lines else "Abgelehnt: keine Antwort")
         self._refresh_net(force=True)
         return ok
 

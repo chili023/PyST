@@ -28,7 +28,7 @@ from .link import (DEFAULT_SIM_PORT, SIM_PORT, DynoLink, guess_port, is_pst_firm
 from .oszi import OsziPage
 from .ratio_dialog import RatioDialog
 from .share_ui import FORMAT_FOLDER, FORMAT_HTML, ExportDialog, ImportParamsDialog
-from .auth import AuthError
+from .auth import AuthError, AuthNoReply
 from .bg import Bg, wait_in_thread, waiting
 from .plots import EXTRA_PREFIX, LOWER_DEFAULT, MAX_LOWER, MAX_OVERLAYS, DynoPlot, fmt_value, run_color
 from .rusefi import COLUMN_PREFIX
@@ -555,6 +555,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().addPermanentWidget(self.lambda_status)
         self.page_hw.lambda_text.connect(self._show_lambda_status)
         self._warn_box = None
+        self._tcp_again = ""                       # Port, an dem nach einem Abriss neu verbunden wird
+        self._auth_stop = ""                       # Grund, warum die letzte Anmeldung abgelehnt wurde
         self._fault_todo = [r.id for r in self.db.runs() if r.fehler is None]
         self.fault_bg = Bg()
         self.fault_timer = QtCore.QTimer(self)     # Fehleranteile alter Laeufe nach und nach berechnen
@@ -1517,12 +1519,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass
             self.link = self.ctrl = None
             self._manual_off = not lost                    # von Hand getrennt: nicht sofort wieder verbinden
+            self._tcp_again = ""
             s.fw_label.setText("nicht verbunden")
             self._set_status("Messboard getrennt (abgezogen?)" if lost else "Nicht verbunden – „Verbinden“ drücken",
                              "#f4b6b6" if lost else "#dddddd")
             self._update_buttons()
             return False
         self._manual_off = False
+        self._tcp_again = ""
+        self._auth_stop = ""
         port = port or s.port_combo.currentText().strip()
         if port != s.port_combo.currentText().strip():
             s.port_combo.setEditText(port)
@@ -1531,6 +1536,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.link, self.firmware = wait_in_thread(lambda: self._open_link(port))
         except Exception as exc:
             if isinstance(exc, AuthError):
+                if not isinstance(exc, AuthNoReply):
+                    self._auth_stop = str(exc)
                 self._set_status("Anmeldung an der Basis gescheitert", "#f4b6b6")
                 s.fw_label.setText(f"{port}: nicht angemeldet")
                 if not quiet:
@@ -1588,6 +1595,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass
             raise
 
+    def _tcp_reconnect(self):
+        """Nach einem Abriss neu verbinden, die Anmeldung gilt je Verbindung. Eine abgelehnte Anmeldung wird nicht
+        wiederholt: Jeder Fehlversuch verlaengert die Sperre der Basis."""
+        port = self._tcp_again
+        if self.on_connect(port, quiet=True):
+            self._set_status("Wieder mit der Basis verbunden und angemeldet", "#dddddd")
+        elif self._auth_stop:
+            QtWidgets.QMessageBox.critical(self, "Anmeldung an der Basis", self._auth_stop)
+        else:
+            self._tcp_again = port
+            self._set_status("Verbindung zur Basis weg, PyST verbindet neu …", "#f4b6b6")
+
     def _basis_key(self):
         """Per USB ist das Koppeln: Schlüssel für die Anmeldung per WLAN holen. Per TCP den Zustand anzeigen."""
         if self.link.auth_state == "alt":
@@ -1596,6 +1615,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         try:
             neu = self.link.fetch_key()
+        except AuthError as exc:
+            self.statusBar().showMessage(str(exc), 10000)
+            return
         except OSError as exc:
             self.statusBar().showMessage(f"Schlüssel der Basis nicht gespeichert: {exc.strerror or exc}", 10000)
             return
@@ -1607,11 +1629,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.page_flash.busy or waiting():              # Port gehoert gerade dem Flashen oder einer Abfrage
             return
         if self.link is not None:
-            if self.link.is_tcp:
-                if not self.link.alive:                    # WLAN-Verbindung zur Basis abgerissen
+            if self.link.needs_login:
+                if not self.link.alive:                    # WLAN-Verbindung abgerissen, z.B. Neustart der Basis
+                    port = self.link.port
                     self.on_connect(lost=True)
+                    self._tcp_again = port
+                    self._set_status("Verbindung zur Basis weg, PyST verbindet neu …", "#f4b6b6")
             elif not self.link.port.startswith(SIM_PORT) and self.link.port not in {d for d, _ in list_serial_ports()}:
                 self.on_connect(lost=True)
+            return
+        if self._tcp_again:
+            self._tcp_reconnect()
             return
         if not self.page_settings.auto_connect.isChecked() or getattr(self, "_manual_off", False):
             return
