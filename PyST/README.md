@@ -123,8 +123,8 @@ Sensoren, Klimawerte, ESP-Link, WLAN, Zange per Funk. Zange per USB: Firmware, Z
 optionaler Sollfrequenz, „Log prüfen“ und bei der Zange per USB „Ein Blitz“ (einzelner TRIG-Puls, 1–25 µs). „Protokoll
 kopieren“ legt das Ergebnis als Text in die Zwischenablage.
 
-**Reiter „Firmware“:** flasht Zange (USB-C), Basis-STM32 (USB über den Bootloader der Basis), Basis-ESP (über die ESP-Brücke)
-und für die Erstprogrammierung den STM32 per ST-Link an J10. Die Firmware der eigenen Hardware liegt nicht in diesem
+**Reiter „Firmware“:** flasht Zange (USB-C), Basis-STM32 (USB über den Bootloader der Basis), Basis-ESP (über die ESP-Brücke),
+den Lambda-Controller F042 (über die Basis per CAN) und für die Erstprogrammierung den STM32 per ST-Link an J10. Die Firmware der eigenen Hardware liegt nicht in diesem
 Repository: Man wählt die Datei oder den Ordner des Builds, PyST prüft, ob sie zum Ziel passt.
 
 „Basis STM32“ nimmt eine Update-Datei (`.pystfw`) und braucht weder Treiber noch Zusatzprogramm (reines Python mit pyserial).
@@ -132,6 +132,13 @@ PyST trennt die Verbindung, schickt `#UPDATE`, wartet auf den Bootloader, übert
 neue Anwendung und vergleicht die Version. Steckt die Basis schon im Bootloader, geht es dort weiter. Einstellungen bleiben
 erhalten. Bricht die Übertragung ab, bleibt die alte Firmware unberührt oder die Basis wartet im Bootloader: Nochmals flashen.
 Es darf nur eine Basis am USB stecken.
+
+„Lambda (F042) per CAN“ nimmt `wideband_image_with_bl.bin` aus dem Release von
+[mck1117/wideband](https://github.com/mck1117/wideband) oder die Anwendung allein (25 600 Byte). PyST prüft Größe, Vektortabelle
+und Prüfsumme und überträgt nur die Anwendung; Bootloader und Konfiguration des F042 bleiben unberührt. Das geht ab Basis-Firmware
+0.2.1 und nur, wenn weder Messung noch Lambda-Heizung laufen. Die Basis bestätigt jeden Block gegen den F042-Bootloader, prüft am
+Ende, dass 0x190-Telegramme mit Version 0xA0 wiederkommen, und hält den F042 danach wieder im Reset. Die Sonde bleibt kalt. Abbruch
+vor dem Löschen lässt die alte Anwendung stehen; danach wartet der F042-Bootloader und der nächste Versuch holt ihn zurück.
 
 Eine neue Basis: erst per ST-Link die Gesamtdatei `pyst-basis-gesamt.bin` (Bootloader + Anwendung, an 0x08000000), dann den
 ESP. Die ST-Link-Zeile lehnt die Anwendung allein ab, weil sie ab 0x08008000 gelinkt ist. ST-Link braucht `st-flash` (Mac
@@ -306,7 +313,7 @@ pyst/zange.py     Log der Zange -> Dauermessung
 pyst/mdns.py      einfaches mDNS (Basis und Steckdosen im Netz finden)
 pyst/hw_page.py   Reiter „Zange · Netz · Steckdosen“
 pyst/pruef.py     Prüfungen für die Inbetriebnahme (ohne Oberfläche); pruef_page.py Reiter „Prüfen“
-pyst/flash.py     Firmware flashen: Prüfung, Befehlszeilen, USB-Update; flash_page.py Reiter „Firmware“
+pyst/flash.py     Firmware flashen: Prüfung, Befehlszeilen, USB-Update, F042 per CAN; flash_page.py Reiter „Firmware“
 pyst/bootproto.py Bootloader der Basis: Rahmen, Update-Datei (Simulator: sim.py BootSimDevice)
 pyst/gui.py       Oberfläche (PySide6 + pyqtgraph)
 pyst/plots.py     Leistungsdiagramm mit ausgerichteten Achsen und Cursor

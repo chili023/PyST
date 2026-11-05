@@ -1,6 +1,7 @@
 """
 Firmware flashen: Zange (ESP32-C3 per USB), Basis-STM32 (per USB ueber den eigenen Bootloader, reines Python; fuer die
-Erstprogrammierung ST-Link an J10), Basis-ESP (ueber die ESP-Bruecke).
+Erstprogrammierung ST-Link an J10), Basis-ESP (ueber die ESP-Bruecke), Lambda-Controller F042 (rusEFI-Wideband, ueber die
+Basis per CAN, LambdaFlasher).
 
 Dieses Repository enthaelt keine Firmware der eigenen Hardware (PyST-HW ist nicht oeffentlich): man waehlt einen
 Ordner mit dem Build. Vor dem Flashen wird geprueft, ob der Build zum Ziel passt, damit keine Zangen-Firmware auf dem
@@ -12,10 +13,12 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import struct
 import sys
 import time
+import zlib
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Tuple
@@ -29,14 +32,26 @@ except ImportError:                       # pragma: no cover
 
 from . import bootproto as bp
 from .basis import ZANGE_USB_ID
+from .diag import parse_kv
 from .link import BASIS_USB_ID, is_esp_bridge
 
-ZANGE, BASIS_STM, BASIS_STLINK, BASIS_ESP = "zange", "basis_stm", "basis_stlink", "basis_esp"
+ZANGE, BASIS_STM, BASIS_STLINK, BASIS_ESP, LAMBDA_F042 = "zange", "basis_stm", "basis_stlink", "basis_esp", "lambda_f042"
 STM_FLASH_ADDR = 0x08000000
 STM_FLASH_MAX = 512 * 1024
 STM_SRAM = (0x20000000, 0x20020000)       # 128 KB
 ESP_IMAGE_MAGIC = 0xE9
 GESAMT_NAME = "pyst-basis-gesamt.bin"
+# U902 STM32F042, rusEFI-Wideband (wideband_layout.ld, build_wideband.sh): 6 KB Bootloader, 25 KB Anwendung mit CRC-32 in
+# den letzten 4 Byte (Big Endian), 1 KB Konfiguration
+F042_FLASH = 0x08000000
+F042_BL_SIZE = 6 * 1024
+F042_APP_BASE = F042_FLASH + F042_BL_SIZE
+F042_APP_SIZE = 25 * 1024
+F042_APP_END = F042_APP_BASE + F042_APP_SIZE
+F042_RAM = (0x20000000, 0x20001800)       # 6 KB
+F042_NAMES = ("wideband_image_with_bl.bin", "wideband_image.bin")
+WB_VERSION = "A0"                         # RUSEFI_WIDEBAND_VERSION in den 0x190-Telegrammen
+WBF_BLOCK = 16                            # eine #-Zeile der Basis
 
 
 class FlashError(Exception):
@@ -66,6 +81,11 @@ TARGETS = {
     BASIS_ESP: Target(BASIS_ESP, "Basis ESP", "basis-esp32c3", 460800,
                       "12 V an, STM32-Firmware läuft, USB-C an J20. Geht über die ESP-Brücke der Basis, "
                       "der WLAN-/Funkbetrieb ruht währenddessen."),
+    LAMBDA_F042: Target(LAMBDA_F042, "Lambda (F042) per CAN", "", 0,
+                        "12 V an, Basis-Firmware ab 0.2.1, USB-C an J20. Datei wideband_image_with_bl.bin aus dem "
+                        "rusEFI-Wideband-Release oder die Anwendung allein. Übertragen wird nur die Anwendung, der "
+                        "F042-Bootloader bleibt unangetastet. Messung und Lambda-Heizung müssen aus sein, die Sonde "
+                        "bleibt kalt. Bricht es ab: Nochmals flashen."),
 }
 
 _BUILD_FILES = {"bootloader": "bootloader.bin", "partition-table": "partitions.bin", "otadata": "ota_data_initial.bin",
@@ -82,6 +102,7 @@ class Image:
     flash_args: List[str] = field(default_factory=list)
     main: str = ""                                                  # Datei fuer Pruefsumme und Datum
     update: Optional[bp.UpdateFile] = None                          # Basis STM32 per USB
+    lambda_app: bytes = b""                                         # F042: nur die Anwendung
 
     def summary(self) -> str:
         with open(self.main, "rb") as fh:
@@ -102,6 +123,63 @@ def _esp_build_dir(folder: str) -> str:
     if hits:
         raise FlashError("Mehrere Builds im Ordner, bitte den gewünschten direkt wählen.")
     raise FlashError("Kein ESP-Build gefunden (flasher_args.json fehlt).")
+
+
+_VERSION = re.compile(r"\d+\.\d+\.\d+")
+_IMAGE_VERSION = {ZANGE: rb"fw=PyST-Zange (\d+\.\d+\.\d+)", BASIS_ESP: rb"basis-esp (\d+\.\d+\.\d+)"}
+
+
+def image_version(image: Image) -> str:
+    """Firmware-Version der gewählten Datei; leer, wenn sie sich nicht auslesen lässt (Gesamtdatei, Lambda)."""
+    if image.target == BASIS_STM:
+        return image.version
+    if image.target == BASIS_STLINK:          # Gesamtdatei: Version steht in der Update-Datei daneben
+        try:
+            return load_update_image(image.folder).version
+        except (FlashError, OSError, ValueError):
+            return ""
+    pattern = _IMAGE_VERSION.get(image.target)
+    if pattern is None:
+        return ""
+    with open(image.main, "rb") as fh:
+        hit = re.search(pattern, fh.read())
+    return hit.group(1).decode() if hit else ""
+
+
+def device_versions(link) -> dict:
+    """Versionen, die das verbundene Gerät meldet: {Ziel: 'x.y.z'}. Lambda meldet keine Build-Version."""
+    out = {}
+
+    def put(target, text):
+        hit = _VERSION.search(text or "")
+        if hit:
+            out[target] = hit.group(0)
+
+    if link.is_zange_usb:
+        put(ZANGE, link.caps.get("fw", ""))
+    elif link.is_basis:
+        put(BASIS_STM, link.caps.get("fw", ""))
+        put(BASIS_STLINK, link.caps.get("fw", ""))
+        lines = link.command("#NET", timeout=1.0, done=lambda x: x.startswith(("#NET;", "#ERR")))
+        put(BASIS_ESP, parse_kv(lines[-1]).get("esp_fw", "") if lines else "")
+        for z in link.zangen_status():
+            if z.id:
+                put(ZANGE, z.fw)
+                break
+    return out
+
+
+def version_text(current: str, new: str, stale: bool = False) -> Tuple[str, str]:
+    """-> (Text, Zustand) für die Anzeige. Zustand: neu, gleich, aelter oder leer."""
+    left = f"Auf dem Gerät: {current}{' (zuletzt gesehen)' if stale else ''}" if current else \
+        "Auf dem Gerät: unbekannt (Gerät verbinden)"
+    right = f"Neu: {new}" if new else "Neu: Version nicht lesbar"
+    if not current or not new:
+        return f"{left}  →  {right}", ""
+    a, b = (tuple(int(x) for x in v.split(".")) for v in (current, new))
+    state = "neu" if b > a else "gleich" if b == a else "aelter"
+    note = {"neu": "Update verfügbar", "gleich": "schon aktuell", "aelter": "Datei ist älter als das Gerät"}[state]
+    return f"{left}  →  {right}  ({note})", state
 
 
 def load_esp_image(target: str, folder: str) -> Image:
@@ -181,9 +259,44 @@ def load_stm_image(folder: str) -> Image:
     return Image(BASIS_STLINK, os.path.dirname(path), project, files=[(STM_FLASH_ADDR, path)], main=path)
 
 
+def parse_lambda_image(data: bytes) -> Tuple[bytes, bool]:
+    """Datei -> (Anwendung, Bootloader war dabei). Alles, was der F042-Bootloader nicht starten wuerde, wird abgelehnt."""
+    if data[:1] == bytes((ESP_IMAGE_MAGIC,)):
+        raise FlashError("Falsche Firmware: Das ist ein ESP-Abbild, kein F042.")
+    if data[:8] == bp.UPD_MAGIC:
+        raise FlashError("Falsche Firmware: Update-Datei, die gehört zu „Basis STM32“.")
+    if len(data) == F042_BL_SIZE + F042_APP_SIZE:
+        sp, reset = struct.unpack_from("<II", data)
+        if not F042_RAM[0] < sp <= F042_RAM[1] or not reset & 1 or not F042_FLASH <= reset < F042_APP_BASE:
+            raise FlashError("Falsche Firmware: Vorne steht kein F042-Bootloader.")
+        app, with_bl = data[F042_BL_SIZE:], True
+    elif len(data) == F042_APP_SIZE:
+        app, with_bl = data, False
+    else:
+        raise FlashError(f"Falsche Firmware: Größe {len(data)} Byte, erwartet {F042_BL_SIZE + F042_APP_SIZE} (mit "
+                         f"Bootloader) oder {F042_APP_SIZE} (Anwendung).")
+    sp, reset = struct.unpack_from("<II", app)
+    if not F042_RAM[0] < sp <= F042_RAM[1] or not reset & 1 or not F042_APP_BASE <= reset < F042_APP_END:
+        raise FlashError(f"Falsche Firmware: Die Vektortabelle passt nicht zur Anwendung ab {F042_APP_BASE:#x}.")
+    if zlib.crc32(app[:-4]) != int.from_bytes(app[-4:], "big"):
+        raise FlashError("Datei beschädigt: Die Prüfsumme der Anwendung stimmt nicht, der F042 würde sie nicht starten.")
+    return app, with_bl
+
+
+def load_lambda_image(folder: str) -> Image:
+    path = _find_file(folder, F042_NAMES, "Keine Wideband-Datei gefunden (wideband_image_with_bl.bin).")
+    with open(path, "rb") as fh:
+        data = fh.read()
+    app, with_bl = parse_lambda_image(data)
+    project = "rusEFI-Wideband " + ("(Anwendung wird herausgeschnitten)" if with_bl else "(nur Anwendung)")
+    return Image(LAMBDA_F042, os.path.dirname(path), project, main=path, lambda_app=app)
+
+
 def load_image(target: str, folder: str) -> Image:
     if not folder:
         raise FlashError("Noch kein Ordner gewählt.")
+    if target == LAMBDA_F042:
+        return load_lambda_image(folder)
     if target == BASIS_STM:
         return load_update_image(folder)
     if target == BASIS_STLINK:
@@ -251,14 +364,15 @@ def basis_port() -> Optional[str]:
 
 
 def target_port(target: str) -> Optional[str]:
-    return {ZANGE: zange_port, BASIS_ESP: bridge_port, BASIS_STM: basis_port}.get(target, lambda: None)()
+    return {ZANGE: zange_port, BASIS_ESP: bridge_port, BASIS_STM: basis_port,
+            LAMBDA_F042: basis_port}.get(target, lambda: None)()
 
 
 def build_command(target: str, folder: str, port: Optional[str]) -> Tuple[Image, List[str]]:
     """Alle Pruefungen; -> (Abbild, Befehlszeile) oder FlashError mit Klartext."""
     image = load_image(target, folder)
-    if target == BASIS_STM:
-        return image, []                  # kein externes Werkzeug: UsbFlasher
+    if target in (BASIS_STM, LAMBDA_F042):
+        return image, []                  # kein externes Werkzeug: UsbFlasher, LambdaFlasher
     if target == BASIS_STLINK:
         tool = find_stflash()
         if tool is None:
@@ -507,3 +621,189 @@ class UsbFlasher:
             time.sleep(0.2)
         raise FlashError("Anwendung meldet sich nicht zurück. Basis einmal stromlos machen; beginnt sie von selbst "
                          "zu kopieren, abwarten.")
+
+
+# ---------------------------------------------------------------------------------------------- Lambda per CAN
+WBF_TEXT = {
+    "ausgabe": "Die Basis gibt gerade Messdaten aus (USB, WLAN oder Debug): Erst die Messung stoppen.",
+    "lambda": "Die Lambda-Heizung ist an: Erst ausschalten (#LAMBDA 0).",
+    "heizung": "Die Lambda-Messung ist angefordert oder der F042 läuft: Heizung und Automatik (lambda_heat) ausschalten.",
+    "swd": "Der F042 ist gerade für SWD freigegeben (#LAMBDA SWD): 2 Minuten warten oder Basis neu starten.",
+    "esp": "Die ESP-Brücke ist aktiv: Erst den ESP fertig flashen.",
+    "nur_usb": "Das Update geht nur über USB.",
+    "laeuft": "Es läuft schon ein Update.",
+    "kein_bootloader": "Der F042 antwortet nicht: 12 V an? F042-Bootloader vorhanden (sonst ST-Link an J902)?",
+    "erase_keine_antwort": "Der F042 bestätigt das Löschen nicht.",
+    "daten_keine_antwort": "Der F042 bestätigt die Daten nicht.",
+    "reboot_keine_antwort": "Der F042 bestätigt den Neustart nicht.",
+    "can_voll": "CAN-Sendepuffer voll: Der F042 ist nicht mehr am Bus.",
+    "doppelte_antwort": "Doppelte Antwort vom F042.",
+    "0x190_im_bootloader": "Der F042 hat den Bootloader verlassen.",
+    "gesamt_crc": "Prüfsumme über das ganze Abbild stimmt nicht.",
+    "keine_app": "Die neue Anwendung meldet sich nicht (keine 0x190-Telegramme).",
+    "pc_schweigt": "Die Basis hat wegen Zeitüberschreitung abgebrochen.",
+    "usb_weg": "USB-Verbindung war weg.",
+}
+
+
+class LambdaFlasher:
+    """Update des F042 ueber die Basis: PC --USB--> U10 --FDCAN3--> F042-Bootloader, Befehle #WBF (Gegenstueck wbflash.c).
+    Die Basis prueft die Antworten des F042 und meldet jeden Block; nach dem Update prueft sie, dass 0x190 mit der
+    richtigen Version wiederkommen, und haelt den F042 danach wieder im Reset. run() blockiert (eigener Thread)."""
+    INFO_S = 1.0
+    START_S = 6.0             # Reset, Fenster, zweites ENTER: im Geraet hoechstens 3 s
+    ERASE_S = 5.0             # im Geraet hoechstens 3 s
+    BLOCK_S = 1.0
+    END_S = 4.0               # im Geraet hoechstens 1,5 s
+    RETRIES = 3
+
+    def __init__(self, app: bytes, ports: Callable[[], List[str]] = basis_ports,
+                 opener: Callable[[str], object] = open_serial, log: Callable[[str], None] = lambda _t: None,
+                 progress: Callable[[int, int], None] = lambda _d, _n: None,
+                 cancelled: Callable[[], bool] = lambda: False):
+        self.app = app
+        self.ports = ports
+        self.opener = opener
+        self.log = log
+        self.progress = progress
+        self.cancelled = cancelled
+        self.ser = None
+        self.buf = b""
+        self.started = False                         # #WBF START geschickt, noch nicht fertig
+        self.erased = False
+
+    # --- Ablauf
+    def run(self) -> str:
+        try:
+            ports = self.ports()
+            if len(ports) > 1:
+                raise FlashError("Mehrere Basen am USB, bitte nur eine anstecken.")
+            if not ports:
+                raise FlashError("Basis nicht am USB gefunden (1209:0001): 12 V an, USB-C an J20?")
+            self.ser = self.opener(ports[0])
+            self._check_basis(ports[0])
+            self.log("Halte den F042 im Bootloader fest …")
+            self.started = True
+            self._step("#WBF START", "#OK;WBF;START", self.START_S)
+            self._check_cancel()
+            self.log("F042-Bootloader meldet sich. Lösche die Anwendung …")
+            self.erased = True
+            self._step("#WBF ERASE", "#OK;WBF;ERASE", self.ERASE_S)
+            self.log(f"Übertrage {len(self.app)} Byte …")
+            self._transfer()
+            self.log("Prüfe im F042, starte die Anwendung …")
+            line = self._step(f"#WBF END {zlib.crc32(self.app):08X}", "#OK;WBF;END", self.END_S)
+            ver = bp.parse_info(line).get("ver", "?")
+            if ver != WB_VERSION:
+                raise FlashError(f"Falsche Version: Erwartet {WB_VERSION}, gemeldet {ver}.")
+            self.started = False
+            self.log(f"0x190-Telegramme mit Version {ver} sind wieder da. Basis hält den F042 wieder im Reset.")
+            return ver
+        except OSError as exc:                       # SerialException ist ein OSError
+            raise FlashError(f"Verbindung verloren: {exc}. Die Basis bricht von selbst ab. " + self._retry_hint())
+        finally:
+            if self.ser is not None:
+                try:
+                    if self.started:                 # Sofort zurueck in den Reset, nicht erst nach 5 s Schweigen
+                        self._send("#WBF ABORT")
+                    self.ser.close()
+                except (OSError, ValueError):
+                    pass
+                self.ser = None
+
+    def _retry_hint(self) -> str:
+        if self.erased:
+            return "Die Anwendung ist gelöscht, der F042-Bootloader wartet: Nochmals flashen."
+        return "Die Anwendung des F042 ist unberührt."
+
+    def _check_cancel(self):
+        if self.cancelled():
+            self._send("#WBF ABORT")
+            try:
+                self._wait(("#OK;WBF;ABORT",), self.INFO_S)
+            except FlashError:
+                pass                                 # sonst bricht die Basis nach 5 s selbst ab
+            raise FlashCancelled("Abgebrochen. " + self._retry_hint())
+
+    # --- Zeilen
+    def _send(self, line: str):
+        self.ser.write(line.encode("ascii") + b"\n")
+
+    def _lines(self):
+        self.buf += self.ser.read(self.ser.in_waiting or 1)   # kehrt beim ersten Byte zurueck
+        *done, self.buf = self.buf.split(b"\n")
+        return [raw.decode("latin-1").strip() for raw in done]
+
+    def _wait(self, wanted: Tuple[str, ...], seconds: float, cancel: bool = False) -> Optional[str]:
+        """Erste Zeile mit einem dieser Anfaenge oder None. Telegramme und Ereigniszeilen fallen weg."""
+        end = time.time() + seconds
+        while time.time() < end:
+            for line in self._lines():
+                if line.startswith(wanted):
+                    return line
+            if cancel:
+                self._check_cancel()
+        return None
+
+    def _error(self, line: str):
+        """#ERR;WBF;<grund>;app=…"""
+        parts = line.split(";")
+        why = parts[2] if len(parts) > 2 else "?"
+        text = WBF_TEXT.get(why, why)
+        info = bp.parse_info(line)
+        if "ver" in info:
+            text += f" Der F042 meldet Version {info['ver']}."
+        if self.erased:
+            text += " " + self._retry_hint()
+        raise FlashError(text)
+
+    def _step(self, cmd: str, ok: str, seconds: float) -> str:
+        self._send(cmd)
+        line = self._wait((ok, "#ERR;WBF"), seconds, cancel=not cmd.startswith("#WBF END"))
+        if line is None:
+            raise FlashError(f"Basis antwortet nicht auf {cmd.split()[1]}. " + self._retry_hint())
+        if line.startswith("#ERR"):
+            self._error(line)
+        return line
+
+    # --- Pruefungen
+    def _check_basis(self, port: str):
+        self.ser.reset_input_buffer()
+        self._send("#?")
+        line = self._wait(("#CAP", "#BOOTLOADER"), self.INFO_S)
+        if line is None:
+            raise FlashError(f"Keine Antwort von {port}.")
+        if line.startswith("#BOOTLOADER"):
+            raise FlashError("Die Basis steckt im Bootloader: Erst „Basis STM32“ flashen.")
+        self.log(f"Basis: {bp.parse_info(line).get('fw', '?')}.")
+        self._send("#RUN 0")                         # PyST ist getrennt: eigene Ausgabe auf diesem Port beenden
+        self._wait(("#OK;RUN",), self.INFO_S)
+        self._send("#WBF")
+        line = self._wait(("#WBF;", "#ERR;?"), self.INFO_S)
+        if line is None or line.startswith("#ERR"):
+            raise FlashError("Diese Basis-Firmware kennt das Lambda-Update nicht: Erst „Basis STM32“ auf 0.2.1 oder neuer "
+                             "flashen.")
+
+    # --- Daten
+    def _transfer(self):
+        off = 0
+        total = len(self.app)
+        fails = 0
+        while off < total:
+            self._check_cancel()
+            block = self.app[off:off + WBF_BLOCK]
+            self._send(f"#WBF D {off:X} {block.hex()} {zlib.crc32(block):08X}")
+            line = self._wait(("#OK;WBF;D;", "#ERR;WBF"), self.BLOCK_S)
+            parts = line.split(";") if line else []
+            if line is not None and line.startswith("#OK"):
+                off = int(parts[3])
+                fails = 0
+                self.progress(off, total)
+            elif line is not None and parts[2] not in ("crc", "format", "ofs"):
+                self._error(line)                    # die Basis hat abgebrochen
+            else:
+                fails += 1                           # Antwort oder Zeile kaputt: Basis wartet weiter
+                if fails > self.RETRIES:
+                    raise FlashError("Basis nimmt keine Blöcke mehr an. " + self._retry_hint())
+                if line is not None:
+                    off = int(parts[3])

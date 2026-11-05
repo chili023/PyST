@@ -709,6 +709,7 @@ class BasisSimSerial(SimSerial):
         self._wall = time.time()
         self.fw_version = "0.1.0"
         self.on_update = None                           # BootSimDevice: '#UPDATE' startet den Bootloader
+        self.on_wbf = None                              # LambdaSimDevice: '#WBF …', F042-Update ueber CAN
         super().__init__(engine=SimEngine(rate=60.0), mega=False, diag=True, faults=None, seed=seed, **kw)
         self.tick_ns = 6.25
         self.tick_offset = (1 << 32) - int(2.0e9 / self.tick_ns)
@@ -916,6 +917,8 @@ class BasisSimSerial(SimSerial):
                 self._out("#ERR;NET;parameter\r\n")
         elif cmd == "DOSE":
             self._dose_command(a, now, PLUG_TYPES)
+        elif cmd == "WBF" and self.on_wbf:
+            self.on_wbf(self, a)
         elif cmd == "UPDATE" and self.on_update:
             self._out("#OK;UPDATE\r\n")
             self.on_update()
@@ -1348,3 +1351,210 @@ class BootSimDevice:
             threading.Timer(0.01, self._detach).start()
         else:
             self._reply(port, seq, kind, b.BL_E_CMD)
+
+
+class LambdaSimPort(BasisSimSerial):
+    """Messport der Basis in LambdaSimDevice. Kabel weg: OSError wie pyserial."""
+
+    def __init__(self, dev: "LambdaSimDevice", **kw):
+        self.dev = dev
+        super().__init__(**kw)
+
+    def _alive(self):
+        if self.dev.unplugged:
+            raise OSError("Gerät abgemeldet")
+
+    @property
+    def in_waiting(self) -> int:
+        self._alive()
+        return super().in_waiting
+
+    def read(self, n: int = 1) -> bytes:
+        self._alive()
+        return super().read(n)
+
+    def write(self, data: bytes) -> int:
+        self._alive()
+        return super().write(data)
+
+
+class LambdaSimDevice:
+    """Basis mit F042 fuer Ende-zu-Ende-Tests: Ablauf von wbflash.c und Bootloader nach mck1117/wideband. Flash, Reset
+    und Zustand ueberleben Trennen und Wiederverbinden. Beim Start steckt eine gueltige alte Anwendung im F042.
+    faults:
+      old_fw    Firmware kennt '#WBF' nicht
+      refuse    '#WBF START' lehnt mit diesem Grund ab
+      streaming Basis gibt schon Telegramme aus
+      no_f042   F042 antwortet nicht
+      can_cut   bei diesem Offset bleibt das ACK aus (einmalig)
+      drop      Nummern von D-Antworten, die verloren gehen (ab 1)
+      corrupt   Nummern von D-Bloecken, die kaputt ankommen (ab 1)
+      unplug    Kabel weg beim Erreichen dieses Offsets (einmalig)
+      no_app    neue Anwendung meldet sich nicht (einmalig)
+      wrong_version  Anwendung sendet eine andere Version
+      ok_version     Basis meldet OK mit dieser Version (Firmware prueft nicht)
+      slow      Sekunden je Block"""
+    APP_SIZE = 25600
+    BLOCK = 16
+    HOST_S = 5.0
+
+    def __init__(self, version: str = "0.2.1", **faults):
+        self.version = version
+        self.faults = faults
+        self.flash = bytearray(self.APP_SIZE - 4) + bytearray(zlib.crc32(bytes(self.APP_SIZE - 4)).to_bytes(4, "big"))
+        self.nrst_low = True                         # wie Wachter: F042 im Reset, solange nichts angefordert ist
+        self.phase = "aus"
+        self.next = 0
+        self.crc = 0
+        self.app = "?"
+        self.fehler = "-"
+        self.heat = False                            # ECU-Status: wird nie erlaubt
+        self.unplugged = False
+        self.t_host = 0.0
+        self.d_count = 0
+        self.d_reply = 0
+        self.erases = 0
+        self.reboots = 0
+        self.last_crc = None
+        self.port: Optional[LambdaSimPort] = None
+
+    # --- USB
+    def ports(self) -> List[str]:
+        self.poll()
+        return [] if self.unplugged else ["/dev/cu.usbmodemSIM1"]
+
+    def open(self, port: str):
+        self.poll()
+        if self.unplugged:
+            raise OSError(f"{port} gibt es nicht")
+        self.port = LambdaSimPort(self, paired=False)
+        self.port.fw_version = self.version
+        if not self.faults.get("old_fw"):
+            self.port.on_wbf = self.wbf
+        if self.faults.get("streaming"):
+            self.port.write(b"m")
+        return self.port
+
+    def plug_in(self):
+        self.unplugged = False
+
+    # --- wbflash.c
+    def active(self) -> bool:
+        return self.phase != "aus"
+
+    def poll(self):
+        if self.phase in ("bereit", "daten") and time.time() - self.t_host >= self.HOST_S:
+            self._end("pc_schweigt")
+
+    def app_ok(self) -> bool:
+        """isAppValid() im F042-Bootloader"""
+        return zlib.crc32(bytes(self.flash[:-4])) == int.from_bytes(self.flash[-4:], "big")
+
+    def _end(self, why: Optional[str] = None):
+        self.nrst_low = True
+        self.phase = "aus"
+        if why:
+            self.fehler = why
+
+    def _err(self, port, why: str):
+        self._end(why)
+        port._out(f"#ERR;WBF;{why};app={self.app}\r\n")
+
+    def wbf(self, port, a):
+        self.poll()
+        sub = a[0].upper() if a else ""
+        if not sub:
+            port._out(f"#WBF;st={self.phase};ofs={self.next};app={self.app};fehler={self.fehler}\r\n")
+        elif sub == "START":
+            self._start(port)
+        elif sub == "ABORT":
+            if self.active():
+                self._end("abgebrochen")
+            port._out(f"#OK;WBF;ABORT;app={self.app}\r\n")
+        elif not self.active():
+            port._out("#ERR;WBF;kein_update\r\n")
+        else:
+            self.t_host = time.time()
+            if sub == "ERASE" and self.phase == "bereit":
+                self.app = "geloescht"
+                self.erases += 1
+                self.flash = bytearray(b"\xff" * self.APP_SIZE)
+                self.next = self.crc = 0
+                self.last_crc = None
+                self.phase = "daten"
+                port._out("#OK;WBF;ERASE\r\n")
+            elif sub == "D" and self.phase == "daten":
+                self._data(port, a)
+            elif sub == "END" and self.phase == "daten" and len(a) == 2:
+                self._finish(port, a[1])
+            else:
+                port._out(f"#ERR;WBF;ablauf;{self.phase}\r\n")
+
+    def _start(self, port):
+        if self.active():
+            port._out("#ERR;WBF;laeuft\r\n")
+        elif self.faults.get("refuse"):
+            port._out(f"#ERR;WBF;{self.faults['refuse']}\r\n")
+        elif port.streaming:
+            port._out("#ERR;WBF;ausgabe\r\n")
+        elif self.faults.get("no_f042"):
+            self._err(port, "kein_bootloader")
+        else:
+            self.nrst_low = False                    # F042 steht im Bootloader, Heizung aus
+            self.phase = "bereit"
+            self.fehler = "-"
+            self.next = 0
+            self.t_host = time.time()
+            port._out("#OK;WBF;START\r\n")
+
+    def _data(self, port, a):
+        time.sleep(self.faults.get("slow", 0))
+        self.d_count += 1
+        try:
+            ofs, crc = int(a[1], 16), int(a[3], 16)
+            block = bytes.fromhex(a[2])
+        except (ValueError, IndexError):
+            port._out(f"#ERR;WBF;format;{self.next}\r\n")
+            return
+        if self.d_count in self.faults.get("corrupt", ()) or zlib.crc32(block) != crc or len(block) != self.BLOCK:
+            port._out(f"#ERR;WBF;crc;{self.next}\r\n")
+            return
+        if self.next >= self.BLOCK and ofs == self.next - self.BLOCK and crc == self.last_crc:
+            self._d_ok(port)
+            return
+        if ofs != self.next or ofs + self.BLOCK > self.APP_SIZE:
+            port._out(f"#ERR;WBF;ofs;{self.next}\r\n")
+            return
+        if ofs >= self.faults.get("can_cut", 1 << 30):
+            del self.faults["can_cut"]
+            self._err(port, "daten_keine_antwort")
+            return
+        self.flash[ofs:ofs + self.BLOCK] = block
+        self.crc = zlib.crc32(block, self.crc)
+        self.last_crc = crc
+        self.next += self.BLOCK
+        if self.next >= self.faults.get("unplug", 1 << 30):
+            del self.faults["unplug"]
+            self.unplugged = True
+            return
+        self._d_ok(port)
+
+    def _d_ok(self, port):
+        self.d_reply += 1
+        if self.d_reply not in self.faults.get("drop", ()):
+            port._out(f"#OK;WBF;D;{self.next}\r\n")
+
+    def _finish(self, port, crc: str):
+        if self.next != self.APP_SIZE:
+            port._out(f"#ERR;WBF;unvollstaendig;{self.next}\r\n")
+        elif int(crc, 16) != self.crc:
+            self._err(port, "gesamt_crc")
+        elif not self.app_ok() or self.faults.pop("no_app", False):
+            self._err(port, "keine_app")
+        else:
+            self.reboots += 1
+            self.app = "neu"
+            ver = self.faults.get("wrong_version")
+            self._end("version" if ver else None)
+            okv = self.faults.get("ok_version", "A0")
+            port._out(f"#ERR;WBF;version;ver={ver};app=neu\r\n" if ver else f"#OK;WBF;END;ver={okv};n=5\r\n")

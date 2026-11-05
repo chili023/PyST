@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from pyst import bootproto as bp, flash, link  # noqa: E402
-from pyst.sim import BootSimDevice  # noqa: E402
+from pyst.sim import BootSimDevice, LambdaSimDevice  # noqa: E402
 
 
 def esp_build(folder, project, part_offset="0x8000", ota="0xf000"):
@@ -45,6 +45,17 @@ def update_file(version="0.2.0", size=4096, target=b"basis-g473", board=b"rev31"
     struct.pack_into("<IIIII", h, 56, bp.APP_BASE, size, 0x1234, size, zlib.crc32(bytes(img)))
     struct.pack_into("<I", h, 252, zlib.crc32(bytes(h[:252])))
     return bytes(h) + bytes(img)
+
+
+def lambda_app(seed=1, sp=0x20000500, reset=flash.F042_APP_BASE + 0x1A1):
+    """Kuenstliche Anwendung (keine echte Firmware im Repository), Aufbau wie build_wideband.sh."""
+    img = struct.pack("<II", sp, reset) + bytes((i * seed + (i >> 8)) & 0xFF for i in range(flash.F042_APP_SIZE - 12))
+    return img + zlib.crc32(img).to_bytes(4, "big")
+
+
+def lambda_with_bl(app=None, sp=0x20000300, reset=0x08000191):
+    boot = struct.pack("<II", sp, reset) + bytes(100)
+    return boot + b"\xff" * (flash.F042_BL_SIZE - len(boot)) + (app or lambda_app())
 
 
 class Bilder(unittest.TestCase):
@@ -171,6 +182,42 @@ class Bilder(unittest.TestCase):
         self.assertIn("0x8000", cmd)
         with self.assertRaisesRegex(flash.FlashError, "nicht am USB"):
             flash.build_command(flash.ZANGE, self.d, None)
+
+
+class Versionen(unittest.TestCase):
+    def test_text(self):
+        self.assertEqual(flash.version_text("0.2.0", "0.2.1")[1], "neu")
+        self.assertIn("Update verfügbar", flash.version_text("0.2.0", "0.2.1")[0])
+        self.assertEqual(flash.version_text("0.2.1", "0.2.1")[1], "gleich")
+        self.assertEqual(flash.version_text("0.10.0", "0.9.0")[1], "aelter")   # Zahlen, nicht Text
+        self.assertEqual(flash.version_text("", "0.2.1")[1], "")
+        self.assertIn("zuletzt gesehen", flash.version_text("0.2.0", "0.2.1", True)[0])
+
+    def test_aus_der_datei(self):
+        with tempfile.TemporaryDirectory() as d:
+            esp_build(d, "pyst-zange")
+            with open(os.path.join(d, "firmware.bin"), "wb") as fh:
+                fh.write(b"\xe9" + bytes(40) + b"#CAP;proto=1;fw=PyST-Zange 0.1.1;tick_ns=1000")
+            self.assertEqual(flash.image_version(flash.load_image(flash.ZANGE, d)), "0.1.1")
+            esp_build(d, "basis-esp32c3", "0x10000", "0x17000")
+            with open(os.path.join(d, "firmware.bin"), "wb") as fh:
+                fh.write(b"\xe9" + bytes(40) + b"basis-esp 0.3.2\0")
+            self.assertEqual(flash.image_version(flash.load_image(flash.BASIS_ESP, d)), "0.3.2")
+
+    def test_vom_geraet(self):
+        lk = link.DynoLink("SIM:basis")
+        try:
+            lk.info()
+            v = flash.device_versions(lk)
+            self.assertEqual((v[flash.BASIS_STM], v[flash.BASIS_ESP], v[flash.ZANGE]), ("0.1.0", "0.1.0", "0.1.0"))
+        finally:
+            lk.close()
+        lk = link.DynoLink("SIM:zange")
+        try:
+            lk.info()
+            self.assertEqual(flash.device_versions(lk), {flash.ZANGE: "0.1.0"})
+        finally:
+            lk.close()
 
 
 class Bruecke(unittest.TestCase):
@@ -343,6 +390,238 @@ class UsbUpdate(unittest.TestCase):
         self.assertEqual(self.flasher(dev).run(), "0.2.0")
 
 
+class LambdaDatei(unittest.TestCase):
+    """Nur was der F042-Bootloader starten wuerde, geht auf die Reise; sein eigener Teil nie."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.d = self.tmp.name
+
+    def put(self, data, name="wideband_image_with_bl.bin"):
+        path = os.path.join(self.d, name)
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return path
+
+    def test_mit_bootloader_wird_geschnitten(self):
+        app = lambda_app()
+        img = flash.load_image(flash.LAMBDA_F042, self.put(lambda_with_bl(app)))
+        self.assertEqual(img.lambda_app, app)
+        self.assertEqual(len(img.lambda_app), 25600)
+        self.assertIn("herausgeschnitten", img.summary())
+        self.assertEqual(flash.build_command(flash.LAMBDA_F042, img.main, None)[1], [])    # kein Werkzeug
+
+    def test_nur_anwendung_und_ordner(self):
+        app = lambda_app()
+        self.assertEqual(flash.load_image(flash.LAMBDA_F042, self.put(app, "eigene.bin")).lambda_app, app)
+        os.remove(os.path.join(self.d, "eigene.bin"))
+        self.put(lambda_with_bl(app))
+        self.assertEqual(flash.load_image(flash.LAMBDA_F042, self.d).lambda_app, app)
+
+    def test_falsche_dateien(self):
+        good = lambda_app()
+        nocrc = bytearray(good)
+        nocrc[1000] ^= 1
+        base = flash.F042_APP_BASE
+        bad = {
+            "leer": (b"", "Größe 0"),
+            "kurz": (good[:-16], "Größe"),
+            "lang": (good + bytes(16), "Größe"),
+            "esp": (b"\xe9" + good[1:], "ESP-Abbild"),
+            "pystfw": (update_file(), "Update-Datei"),
+            "kippbit": (bytes(nocrc), "Prüfsumme"),
+            "crc_little": (good[:-4] + good[-4:][::-1], "Prüfsumme"),
+            "fuer_0": (lambda_app(reset=0x080001A1), "Vektortabelle"),
+            "basis": (lambda_app(sp=0x20020000, reset=base + 0x1A1), "Vektortabelle"),
+            "ohne_thumb": (lambda_app(reset=base + 0x1A0), "Vektortabelle"),
+            "konfig": (lambda_app(reset=flash.F042_APP_END + 1), "Vektortabelle"),
+            "ram_klein": (lambda_app(sp=0x20000000), "Vektortabelle"),
+            "bl_kaputt": (lambda_with_bl(reset=0x08002001), "Bootloader"),
+            "bl_ram": (lambda_with_bl(sp=0x10000000), "Bootloader"),
+            "app_in_bl": (lambda_with_bl(lambda_app(reset=0x080001A1)), "Vektortabelle"),
+        }
+        for name, (data, text) in bad.items():
+            with self.subTest(name), self.assertRaisesRegex(flash.FlashError, text):
+                flash.load_image(flash.LAMBDA_F042, self.put(data, name + ".bin"))
+        for f in os.listdir(self.d):
+            os.remove(os.path.join(self.d, f))
+        with self.assertRaisesRegex(flash.FlashError, "Keine Wideband-Datei"):
+            flash.load_image(flash.LAMBDA_F042, self.d)
+
+
+class LambdaUpdate(unittest.TestCase):
+    """Ende zu Ende gegen die simulierte Basis mit F042."""
+
+    def flasher(self, dev, app=None, **kw):
+        self.logs = []
+        self.prog = []
+        f = flash.LambdaFlasher(app or lambda_app(), ports=dev.ports, opener=dev.open, log=self.logs.append,
+                                progress=lambda a, b: self.prog.append((a, b)), **kw)
+        f.INFO_S, f.START_S, f.ERASE_S, f.BLOCK_S, f.END_S = 0.3, 0.3, 0.3, 0.05, 0.3
+        return f
+
+    def sicher(self, dev):
+        self.assertFalse(dev.active())
+        self.assertTrue(dev.nrst_low)
+        self.assertFalse(dev.heat)
+
+    def test_erfolg(self):
+        dev = LambdaSimDevice()
+        app = lambda_app(3)
+        self.assertEqual(self.flasher(dev, app).run(), "A0")
+        self.sicher(dev)
+        self.assertEqual(bytes(dev.flash), app)
+        self.assertEqual(self.prog[-1], (25600, 25600))
+        self.assertEqual(len(self.prog), 1600)
+        self.assertEqual((dev.app, dev.reboots, dev.erases), ("neu", 1, 1))
+
+    def test_wiederholung_nach_erfolg(self):
+        dev = LambdaSimDevice()
+        self.flasher(dev).run()
+        self.assertEqual(self.flasher(dev, lambda_app(5)).run(), "A0")
+        self.assertEqual(bytes(dev.flash), lambda_app(5))
+
+    def test_basis_ohne_wbf(self):
+        dev = LambdaSimDevice("0.2.0", old_fw=True)
+        with self.assertRaisesRegex(flash.FlashError, "0.2.1"):
+            self.flasher(dev).run()
+        self.assertEqual(dev.erases, 0)
+
+    def test_basis_im_bootloader(self):
+        dev = BootSimDevice("0.1.0", mode="boot")
+        with self.assertRaisesRegex(flash.FlashError, "im Bootloader"):
+            self.flasher(dev).run()
+
+    def test_keine_oder_mehrere_basen(self):
+        with self.assertRaisesRegex(flash.FlashError, "nicht am USB"):
+            flash.LambdaFlasher(lambda_app(), ports=list, opener=None).run()
+        with self.assertRaisesRegex(flash.FlashError, "Mehrere"):
+            flash.LambdaFlasher(lambda_app(), ports=lambda: ["a", "b"], opener=None).run()
+
+    def test_sperren(self):
+        for why, text in (("ausgabe", "Messung"), ("lambda", "LAMBDA 0"), ("heizung", "lambda_heat"), ("swd", "SWD"),
+                          ("esp", "ESP")):
+            dev = LambdaSimDevice(refuse=why)
+            with self.subTest(why), self.assertRaisesRegex(flash.FlashError, text):
+                self.flasher(dev).run()
+            self.assertEqual(dev.erases, 0)
+            self.sicher(dev)
+
+    def test_eigene_ausgabe_wird_beendet(self):
+        dev = LambdaSimDevice(streaming=True)
+        self.assertEqual(self.flasher(dev).run(), "A0")
+
+    def test_f042_antwortet_nicht(self):
+        dev = LambdaSimDevice(no_f042=True)
+        with self.assertRaisesRegex(flash.FlashError, "antwortet nicht") as cm:
+            self.flasher(dev).run()
+        self.assertNotIn("gelöscht", str(cm.exception))
+        self.assertEqual(dev.erases, 0)
+        self.assertTrue(dev.app_ok())
+        self.sicher(dev)
+
+    def test_ack_bleibt_aus_und_wiederholung(self):
+        dev = LambdaSimDevice(can_cut=4096)
+        with self.assertRaisesRegex(flash.FlashError, "bestätigt die Daten nicht.*Nochmals flashen"):
+            self.flasher(dev).run()
+        self.sicher(dev)
+        self.assertFalse(dev.app_ok())               # F042 bliebe im Bootloader und wartet
+        app = lambda_app(2)
+        self.assertEqual(self.flasher(dev, app).run(), "A0")
+        self.assertEqual(bytes(dev.flash), app)
+
+    def test_verlorene_antworten_und_kaputte_bloecke(self):
+        dev = LambdaSimDevice(drop={3, 500}, corrupt={7, 8, 900})
+        app = lambda_app(2)
+        self.assertEqual(self.flasher(dev, app).run(), "A0")
+        self.assertEqual(bytes(dev.flash), app)
+
+    def test_basis_nimmt_keine_bloecke_mehr(self):
+        dev = LambdaSimDevice(corrupt=set(range(5, 12)))
+        with self.assertRaisesRegex(flash.FlashError, "keine Blöcke"):
+            self.flasher(dev).run()
+
+    def test_kabel_weg_basis_faellt_zurueck(self):
+        dev = LambdaSimDevice(unplug=10240)
+        dev.HOST_S = 0.05
+        with self.assertRaisesRegex(flash.FlashError, "Verbindung verloren.*Nochmals flashen"):
+            self.flasher(dev).run()
+        time.sleep(0.06)
+        dev.plug_in()
+        dev.poll()
+        self.sicher(dev)
+        self.assertEqual(dev.fehler, "pc_schweigt")
+        self.assertEqual(self.flasher(dev).run(), "A0")
+
+    def test_abbruch_vor_dem_loeschen(self):
+        dev = LambdaSimDevice()
+        f = self.flasher(dev, cancelled=lambda: dev.phase == "bereit")
+        with self.assertRaisesRegex(flash.FlashCancelled, "unberührt"):
+            f.run()
+        self.sicher(dev)
+        self.assertEqual(dev.erases, 0)
+        self.assertTrue(dev.app_ok())
+
+    def test_abbruch_mitten_in_den_daten(self):
+        for at in (16, 4096, 25584, 25600):
+            dev = LambdaSimDevice()
+            stop = threading.Event()
+            f = self.flasher(dev, cancelled=stop.is_set)
+            f.progress = lambda a, _b, at=at: stop.set() if a >= at else None
+            if at == 25600:                          # letzter Block ist durch: END laeuft trotzdem
+                self.assertEqual(f.run(), "A0")
+                continue
+            with self.subTest(at), self.assertRaisesRegex(flash.FlashCancelled, "gelöscht.*Nochmals flashen"):
+                f.run()
+            self.sicher(dev)
+            self.assertEqual(dev.app, "geloescht")
+            self.assertFalse(dev.app_ok())
+            app = lambda_app(2)
+            self.assertEqual(self.flasher(dev, app).run(), "A0")   # Wiederholung rettet ihn
+            self.assertEqual(bytes(dev.flash), app)
+
+    def test_nach_fehler_sofort_zurueck_in_den_reset(self):
+        dev = LambdaSimDevice()
+        real = dev.wbf
+
+        def hang(port, a):                           # Basis antwortet auf ERASE nicht, bleibt aber im Ablauf
+            if a[:1] != ["ERASE"]:
+                real(port, a)
+        dev.open = lambda p, o=dev.open: self._hook(o(p), hang)
+        with self.assertRaisesRegex(flash.FlashError, "antwortet nicht auf ERASE"):
+            self.flasher(dev).run()
+        self.sicher(dev)
+
+    @staticmethod
+    def _hook(port, fn):
+        port.on_wbf = fn
+        return port
+
+    def test_anwendung_meldet_sich_nicht(self):
+        dev = LambdaSimDevice(no_app=True)
+        with self.assertRaisesRegex(flash.FlashError, "meldet sich nicht"):
+            self.flasher(dev).run()
+        self.sicher(dev)
+        self.assertEqual(self.flasher(dev).run(), "A0")
+
+    def test_falsche_crc_im_abbild_faellt_im_f042_auf(self):
+        dev = LambdaSimDevice()
+        bad = bytearray(lambda_app())
+        bad[500] ^= 1                                # Pruefung in PyST umgangen
+        with self.assertRaisesRegex(flash.FlashError, "meldet sich nicht"):
+            self.flasher(dev, bytes(bad)).run()
+        self.sicher(dev)
+
+    def test_falsche_version(self):
+        dev = LambdaSimDevice(wrong_version="90")
+        with self.assertRaisesRegex(flash.FlashError, "Version 90"):
+            self.flasher(dev).run()
+        self.sicher(dev)
+        with self.assertRaisesRegex(flash.FlashError, "Falsche Version"):
+            self.flasher(LambdaSimDevice(ok_version="90")).run()
+
+
 class FlashSeite(unittest.TestCase):
     """Reiter „Firmware“: Update laeuft im Hintergrund, Fortschritt kommt an, Port bleibt reserviert."""
 
@@ -385,7 +664,9 @@ class FlashSeite(unittest.TestCase):
         return seen
 
     def test_ziele(self):
-        self.assertEqual(set(self.page.rows), {flash.ZANGE, flash.BASIS_STM, flash.BASIS_STLINK, flash.BASIS_ESP})
+        self.assertEqual(set(self.page.rows), {flash.ZANGE, flash.BASIS_STM, flash.BASIS_STLINK, flash.BASIS_ESP,
+                                               flash.LAMBDA_F042})
+        self.assertEqual(flash.TARGETS[flash.LAMBDA_F042].name, "Lambda (F042) per CAN")
 
     def test_erfolg(self):
         seen = self.run_page(BootSimDevice("0.1.0"))
@@ -401,6 +682,56 @@ class FlashSeite(unittest.TestCase):
         self.run_page(dev, cancel_at=4096)
         self.assertIn("abgebrochen", self.page.status.text())
         self.assertIsNone(dev.commit)
+
+
+class FlashSeiteLambda(unittest.TestCase):
+    """Gleiche Oberflaeche, Ziel „Lambda (F042) per CAN“."""
+    wait = FlashSeite.wait
+
+    @classmethod
+    def setUpClass(cls):
+        from PySide6 import QtWidgets
+        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+    def setUp(self):
+        from pyst import flash_page
+        self.page = flash_page.FlashPage({}, lambda: None, lambda: None, lambda: None)
+        self.page.timer.stop()
+        self.real_l = flash.LambdaFlasher
+        self.addCleanup(lambda: setattr(flash, "LambdaFlasher", self.real_l))
+
+    def run_lambda(self, dev, cancel_at=None):
+        def make(app, **kw):
+            f = self.real_l(app, ports=dev.ports, opener=dev.open, **kw)
+            f.INFO_S, f.START_S, f.ERASE_S, f.BLOCK_S, f.END_S = 0.3, 0.3, 0.3, 0.1, 0.3
+            return f
+        flash.LambdaFlasher = make
+        seen = []
+        img = flash.Image(flash.LAMBDA_F042, "", lambda_app=lambda_app())
+        self.page.run_usb(flash.LAMBDA_F042, img)
+        self.assertTrue(self.page.busy)
+        self.assertFalse(self.page.rows[flash.LAMBDA_F042].b_go.isEnabled())
+        self.assertEqual(self.page.bar.maximum(), 25600)
+        self.page.bar.valueChanged.connect(seen.append)
+        if cancel_at:
+            self.page.bar.valueChanged.connect(lambda v: self.page._cancel() if v >= cancel_at else None)
+        self.wait()
+        return seen
+
+    def test_erfolg_lambda(self):
+        seen = self.run_lambda(LambdaSimDevice())
+        self.assertEqual(seen[-1], 25600)
+        self.assertIn("Version A0", self.page.status.text())
+        self.assertTrue(self.page.bar.isHidden())
+        self.assertTrue(self.page.rows[flash.LAMBDA_F042].b_go.isEnabled())
+
+    def test_fehler_und_abbruch_lambda(self):
+        self.run_lambda(LambdaSimDevice(no_f042=True))
+        self.assertIn("antwortet nicht", self.page.status.text())
+        dev = LambdaSimDevice(slow=0.001)
+        self.run_lambda(dev, cancel_at=1024)
+        self.assertIn("Nochmals flashen", self.page.status.text())
+        self.assertTrue(dev.nrst_low)
 
 
 class LinkImBootloader(unittest.TestCase):

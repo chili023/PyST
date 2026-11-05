@@ -1,4 +1,4 @@
-"""Reiter „Firmware“: Zange und Basis aus PyST flashen. Pruefungen und Befehlszeilen in flash.py."""
+"""Reiter „Firmware“: Zange, Basis und Lambda-Controller aus PyST flashen. Pruefungen und Befehlszeilen in flash.py."""
 import os
 from typing import Callable, Dict
 
@@ -6,6 +6,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import flash
 from .flash import FlashCancelled, FlashError
+from .hw_page import _Bg
 
 
 class UsbWorker(QtCore.QThread):
@@ -29,6 +30,19 @@ class UsbWorker(QtCore.QThread):
             self.done.emit("fehler", str(exc))
 
 
+class LambdaWorker(UsbWorker):
+    """F042 ueber die Basis per CAN: Fortschritt, Abbrechen und Ergebnis wie beim USB-Update."""
+
+    def run(self):
+        f = flash.LambdaFlasher(self.update, log=self.log.emit, progress=self.progress.emit, cancelled=lambda: self.stop)
+        try:
+            self.done.emit("ok", f.run())
+        except FlashCancelled as exc:
+            self.done.emit("abbruch", str(exc))
+        except (FlashError, OSError, ValueError) as exc:
+            self.done.emit("fehler", str(exc))
+
+
 class FlashRow(QtWidgets.QGroupBox):
     """Ein Flash-Ziel: Ordner, Stand der Firmware, Hinweis, Knopf."""
     start = QtCore.Signal(str)
@@ -39,20 +53,24 @@ class FlashRow(QtWidgets.QGroupBox):
         self.changed = changed
         lay = QtWidgets.QGridLayout(self)
         self.path = QtWidgets.QLineEdit(folder)
-        self.is_file = target.key in (flash.BASIS_STM, flash.BASIS_STLINK)
+        self.is_file = target.key in (flash.BASIS_STM, flash.BASIS_STLINK, flash.LAMBDA_F042)
         self.path.setPlaceholderText("Firmware-Datei wählen" if self.is_file else "Ordner mit dem Build wählen")
         b_pick = QtWidgets.QPushButton("Datei …" if self.is_file else "Ordner …")
         self.b_go = QtWidgets.QPushButton("Flashen")
         self.info = QtWidgets.QLabel("")
         self.info.setWordWrap(True)
+        self.versions = QtWidgets.QLabel("")
+        self.versions.setStyleSheet("font-weight: 600;")
+        self.current, self.stale = "", False
         hint = QtWidgets.QLabel(target.hint)
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #555;")
         lay.addWidget(self.path, 0, 0)
         lay.addWidget(b_pick, 0, 1)
         lay.addWidget(self.b_go, 0, 2)
-        lay.addWidget(self.info, 1, 0, 1, 3)
-        lay.addWidget(hint, 2, 0, 1, 3)
+        lay.addWidget(self.versions, 1, 0, 1, 3)
+        lay.addWidget(self.info, 2, 0, 1, 3)
+        lay.addWidget(hint, 3, 0, 1, 3)
         b_pick.clicked.connect(self.pick)
         self.path.editingFinished.connect(self._edited)
         self.b_go.clicked.connect(lambda: self.start.emit(target.key))
@@ -61,7 +79,8 @@ class FlashRow(QtWidgets.QGroupBox):
     def pick(self):
         title = f"Firmware {self.target.name}"
         if self.is_file:
-            pattern = "Update-Datei (*.pystfw)" if self.target.key == flash.BASIS_STM else "Gesamtdatei (*.bin)"
+            pattern = {flash.BASIS_STM: "Update-Datei (*.pystfw)",
+                       flash.LAMBDA_F042: "Wideband-Abbild (*.bin)"}.get(self.target.key, "Gesamtdatei (*.bin)")
             d = QtWidgets.QFileDialog.getOpenFileName(self, title, self.path.text(), pattern)[0]
         else:
             d = QtWidgets.QFileDialog.getExistingDirectory(self, title, self.path.text())
@@ -74,11 +93,20 @@ class FlashRow(QtWidgets.QGroupBox):
         self.refresh()
 
     def refresh(self):
+        new = ""
         try:
-            text = flash.load_image(self.target.key, self.path.text().strip()).summary()
+            image = flash.load_image(self.target.key, self.path.text().strip())
+            text, new = image.summary(), flash.image_version(image)
             color = "#2e7d32"
         except (FlashError, OSError, ValueError) as exc:
             text, color = str(exc), "#c62828"
+        if self.target.key == flash.LAMBDA_F042:
+            self.versions.setText("Version: der F042 meldet nur das Protokoll, geprüft wird nach dem Update (0xA0)")
+        else:
+            line, state = flash.version_text(self.current, new, self.stale)
+            self.versions.setText(line)
+            self.versions.setStyleSheet("font-weight: 600; color: %s;" % {
+                "neu": "#ef6c00", "gleich": "#2e7d32", "aelter": "#c62828"}.get(state, "#333333"))
         port = flash.target_port(self.target.key)
         if self.target.key != flash.BASIS_STLINK:
             text += f"\nPort: {port or 'nicht gefunden'}"
@@ -101,7 +129,7 @@ class FlashPage(QtWidgets.QScrollArea):
         self.setWidget(inner)
         root = QtWidgets.QVBoxLayout(inner)
         info = QtWidgets.QLabel("Reihenfolge an einer neuen Basis: erst per ST-Link die Gesamtdatei, dann ESP. Danach "
-                                "geht das Basis-Update über USB. Eine bestehende Verbindung wird vor dem Flashen getrennt.")
+                                "geht das Basis-Update über USB und das Update des Lambda-Controllers über die Basis. Eine bestehende Verbindung wird vor dem Flashen getrennt.")
         info.setWordWrap(True)
         root.addWidget(info)
         folders: Dict[str, str] = settings.setdefault("flash_ordner", {})
@@ -129,6 +157,7 @@ class FlashPage(QtWidgets.QScrollArea):
         self.log.setFont(QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont))
         self.log.setMinimumHeight(180)
         root.addWidget(self.log, 1)
+        self.bg = _Bg()
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._refresh)
         self.timer.start(2000)
@@ -143,9 +172,25 @@ class FlashPage(QtWidgets.QScrollArea):
         return self.proc is not None or self.worker is not None
 
     def _refresh(self):
-        if not self.busy and self.isVisible():
+        self.bg.poll()
+        if self.busy or not self.isVisible():
+            return
+        link = self.get_link()
+        if link is not None and (link.is_basis or link.is_zange_usb):
+            self.bg.submit("versionen", lambda: flash.device_versions(link), self._versions)
+        else:
             for row in self.rows.values():
-                row.refresh()
+                row.stale = bool(row.current)
+        for row in self.rows.values():
+            row.refresh()
+
+    def _versions(self, found, err):
+        if err is not None or found is None:
+            return
+        for key, row in self.rows.items():
+            if key in found:
+                row.current, row.stale = found[key], False
+            row.refresh()
 
     def _set_busy(self, busy: bool):
         for row in self.rows.values():
@@ -170,7 +215,7 @@ class FlashPage(QtWidgets.QScrollArea):
         text = f"{t.name} jetzt flashen?\n\n{image.summary()}\n\n{t.hint}"
         if QtWidgets.QMessageBox.question(self, "Flashen", text) != QtWidgets.QMessageBox.Yes:
             return
-        if key == flash.BASIS_STM:
+        if key in (flash.BASIS_STM, flash.LAMBDA_F042):
             self.run_usb(key, image)
         else:
             self.run(key, cmd)
@@ -179,12 +224,13 @@ class FlashPage(QtWidgets.QScrollArea):
         self.log.clear()
         self._status(f"{flash.TARGETS[key].name}: läuft, Basis nicht vom Strom trennen …", "#ef6c00")
         self._set_busy(True)
-        self.bar.setRange(0, image.update.image_len)
+        is_lambda = key == flash.LAMBDA_F042
+        self.bar.setRange(0, len(image.lambda_app) if is_lambda else image.update.image_len)
         self.bar.setValue(0)
         self.bar.show()
         self.b_cancel.setEnabled(True)
         self.b_cancel.show()
-        self.worker = UsbWorker(image.update, self)
+        self.worker = LambdaWorker(image.lambda_app, self) if is_lambda else UsbWorker(image.update, self)
         self.worker.log.connect(self.log.appendPlainText)
         self.worker.progress.connect(lambda done, _n: self.bar.setValue(done))
         self.worker.done.connect(lambda state, text: self._usb_done(key, state, text))
@@ -202,8 +248,12 @@ class FlashPage(QtWidgets.QScrollArea):
         self.b_cancel.hide()
         self._set_busy(False)
         t = flash.TARGETS[key]
-        if state == "ok":
+        if state == "ok" and key == flash.LAMBDA_F042:
+            self._status(f"{t.name}: geflasht, 0x190-Telegramme mit Version {text} kamen wieder.", "#2e7d32")
+        elif state == "ok":
             self._status(f"{t.name}: Version {text} läuft.", "#2e7d32")
+        elif state == "abbruch" and key == flash.LAMBDA_F042:
+            self._status(f"{t.name}: {text}", "#ef6c00")
         elif state == "abbruch":
             self._status(f"{t.name}: abgebrochen, alte Firmware bleibt.", "#ef6c00")
         else:

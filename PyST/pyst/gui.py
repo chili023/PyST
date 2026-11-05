@@ -2107,6 +2107,10 @@ def main():
     app = QtWidgets.QApplication(sys.argv)
     _apply_ui_scale(app)
     app.setApplicationName("PyST")
+    icons = QtGui.QIcon()
+    for size in (16, 32, 64, 128, 256, 512):
+        icons.addFile(os.path.join(os.path.dirname(__file__), "data", "icon", f"pyst_{size}.png"))
+    app.setWindowIcon(icons)
     win = MainWindow()
     # Dateien (pyst datei.pyst, Doppelklick): relativ zum Aufrufort (Startskripte wechseln das Verzeichnis)
     cwd = os.environ.get("PYST_CWD", os.getcwd())
