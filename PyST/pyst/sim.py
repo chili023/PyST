@@ -13,7 +13,10 @@ Rollenspruenge, Wackelkontakt). Die Stoerungen sind als Einstellungen sim_* eins
 (#SET bzw. Dialog „Geräte-Einstellungen“) – Werte = Ereignisse pro Minute.
 """
 import bisect
+import hashlib
+import hmac
 import math
+import os
 import random
 import struct
 import threading
@@ -286,6 +289,8 @@ class SimSerial:
         self.mode = "N"
         self.line: Optional[str] = None             # '#'-Zeile im Empfang
         self.vor_antwort: List[str] = []            # Tests: je Befehl eine Zeile vor der eigentlichen Antwort einschieben
+        self.line_max = 63                          # '#'-Zeile samt '#', wie CL_LINE_MAX
+        self.line_too_long = False
         self.t_sim = 0.0
         # Zeitstempel starten kurz vor dem uint32-Ueberlauf (Test der Entfaltung in PyST)
         self.tick_offset = (1 << 32) - int(2.0e9 / self.tick_ns)
@@ -322,9 +327,15 @@ class SimSerial:
                     line, self.line = self.line, None
                     if self.vor_antwort:
                         self._out(self.vor_antwort.pop(0) + "\r\n")
-                    self._diag_command(line)
-                elif len(self.line) < 63:
+                    if self.line_too_long:
+                        self.line_too_long = False
+                        self._out("#ERR;?;zu lang\r\n")
+                    else:
+                        self._diag_command(line)
+                elif len(self.line) < self.line_max:
                     self.line += c
+                else:
+                    self.line_too_long = True
                 continue
             if c == "#" and self.diag:
                 self.line = "#"                     # Zeichen der '#'-Zeile nicht als Einzelbefehle werten
@@ -684,13 +695,51 @@ LAMBDA_MOTOR_HOLD_S = 3.0                               # wie WBM_HOLD_MS der Ba
 PLUG_LOAD_W = {"SHELLY2": 180.0, "SHELLY1": 650.0, "TASMOTA": 2000.0, "ESPHOME": 40.0}
 
 
+class AuthSim:
+    """Schluessel und Sperre einer simulierten Basis, Gegenstueck zu auth.py. Der Schluessel entsteht je Programmlauf
+    neu; USB-Port und TCP-Port derselben Basis teilen sich ein AuthSim. Die Sperre verdoppelt sich je Fehlversuch."""
+    LABEL = b"PyST-Auth-1"
+
+    def __init__(self, uid: str = "SIM0123456789ABCD", key: Optional[bytes] = None, sperre_s: float = 1.0):
+        self.uid = uid
+        self.key = key or os.urandom(32)
+        self.sperre_s = sperre_s
+        self.fehler = 0
+        self.gesperrt_bis = 0.0
+
+    def neu(self):
+        self.key = os.urandom(32)
+        self.fehler = 0
+        self.gesperrt_bis = 0.0
+
+    def key_line(self) -> str:
+        return f"#AUTH;id={self.uid};key={self.key.hex()}\r\n"
+
+    @property
+    def gesperrt(self) -> bool:
+        return time.time() < self.gesperrt_bis
+
+    def pruefe(self, nonce: Optional[bytes], antwort: str) -> bool:
+        soll = hmac.new(self.key, self.LABEL + (nonce or b"") + self.uid.encode("ascii"), hashlib.sha256).hexdigest()
+        if nonce is not None and not self.gesperrt and hmac.compare_digest(soll, antwort.lower()):
+            self.fehler = 0
+            return True
+        self.fehler += 1
+        self.gesperrt_bis = time.time() + self.sperre_s * 2 ** (self.fehler - 1)
+        return False
+
+
+SIM_AUTH = AuthSim()                                    # die eine Basis der Simulator-Ports
+
+
 class BasisSimSerial(SimSerial):
     """PyST-Basis (G473 + ESP) mit gekoppelter Funk-Zange, WLAN und Steckdosen – nach
     docs/04_PST_Diag_1.md §10: '#CAP' mit ign=zange|none und hw=, D-Telegramm mit ign_peak_mv;ign_src,
     '#ZANGE', '#PAIR', '#NET', '#DOSE' und Ereigniszeilen 'E;…'. Simuliert Paketverlust der Funkstrecke
     (Zuendung 'stale'), Abbrueche der Zange, Akku, Signal, Marker-Tasten und Steckdosen mit Totmann."""
 
-    def __init__(self, paired: bool = True, faults: Optional[Dict[str, float]] = None, seed: int = 11, **kw):
+    def __init__(self, paired: bool = True, faults: Optional[Dict[str, float]] = None, seed: int = 11,
+                 tcp: bool = False, auth: Optional[AuthSim] = None, **kw):
         from .basis import ZANGE_KEYS
         self.brng = random.Random(seed)
         self.z_paired = paired
@@ -719,6 +768,10 @@ class BasisSimSerial(SimSerial):
         self.fw_version = "0.1.0"
         self.on_update = None                           # BootSimDevice: '#UPDATE' startet den Bootloader
         self.on_wbf = None                              # LambdaSimDevice: '#WBF …', F042-Update ueber CAN
+        self.tcp = tcp                                  # True = TCP-Port 2323: Anmeldung noetig, einiges nur per USB
+        self.auth = auth or SIM_AUTH
+        self.authed = False
+        self.nonce: Optional[bytes] = None
         # Lambda-Heizung wie wb_bedien.c der Basis
         self.lam_st = "aus"
         self.lam_grund = "-"
@@ -729,6 +782,7 @@ class BasisSimSerial(SimSerial):
         self.lam_watchdog = False                       # Sperre nach Watchdog-Reset, Test setzt sie
         self.lam_swd_until = 0.0
         super().__init__(engine=SimEngine(rate=60.0), mega=False, diag=True, faults=None, seed=seed, **kw)
+        self.line_max = 71                              # '#AUTH <64 hex>' + Reserve: CL_LINE_MAX 63 reicht dafuer nicht
         self.tick_ns = 6.25
         self.tick_offset = (1 << 32) - int(2.0e9 / self.tick_ns)
         self.defaults.update(BASIS_SIM_KEYS)
@@ -953,10 +1007,47 @@ class BasisSimSerial(SimSerial):
 
     # --- Befehle
     def _command(self, c: str):
+        if self.tcp and not self.authed:
+            return                                              # Einzelzeichen brauchen die Anmeldung wie alle Befehle
         if c in "v?":
             self._out("PyST-Basis SIMULATOR 0.1.0;\r\nMessfrequenz [Hz]:60;\r\n")
             return
         super()._command(c)
+
+    def _auth_command(self, a: List[str]):
+        """'#AUTH', '#AUTH <64 hex>', nur USB: '#AUTH KEY', '#AUTH NEU'"""
+        sub = a[0].upper() if a else ""
+        if sub in ("KEY", "NEU"):
+            if self.tcp:
+                self._out("#ERR;AUTH;nur_usb\r\n")
+                return
+            if sub == "NEU":
+                self.auth.neu()
+                self._out("#OK;AUTH;NEU\r\n")
+            else:
+                self._out(self.auth.key_line())
+        elif self.auth.gesperrt:
+            self._out("#ERR;AUTH;nein\r\n")
+        elif not a:
+            self.nonce = os.urandom(16)
+            self._out(f"#AUTH;id={self.auth.uid};nonce={self.nonce.hex()}\r\n")
+        else:
+            nonce, self.nonce = self.nonce, None                # jede Anfrage gilt fuer genau einen Versuch
+            self.authed = self.auth.pruefe(nonce, a[0])
+            self._out("#OK;AUTH\r\n" if self.authed else "#ERR;AUTH;nein\r\n")
+
+    def _tcp_gate(self, cmd: str, a: List[str]) -> bool:
+        """TCP-Port: True = Befehl ist hier nicht erlaubt und beantwortet."""
+        if not self.tcp or cmd in ("?", "AUTH"):
+            return False
+        if not self.authed:
+            self._out(f"#ERR;{cmd or '?'};anmeldung\r\n")
+            return True
+        sub = a[0].upper() if a else ""
+        if cmd in ("WBF", "UPDATE") or (cmd == "LAMBDA" and sub == "SWD") or (cmd == "ESP" and sub in ("BRIDGE", "BOOT")):
+            self._out(f"#ERR;{cmd};nur_usb\r\n")
+            return True
+        return False
 
     def _zange_line(self) -> str:
         mv = 3300 + int(self.z_akku * 9)
@@ -973,7 +1064,11 @@ class BasisSimSerial(SimSerial):
         cmd = parts[0].upper() if parts else ""
         a = parts[1:]
         now = time.time()
-        if cmd == "?":
+        if self._tcp_gate(cmd, a):
+            return
+        if cmd == "AUTH":
+            self._auth_command(a)
+        elif cmd == "?":
             ch = "I,R" if self.z_paired else "R"
             ign = "zange" if self.z_paired else "none"
             self._out(f"#CAP;proto=1;fw=PyST-Basis {self.fw_version} SIM;tick_ns=6.25;ch={ch};burst_max={self.burst_max()};"
@@ -1066,10 +1161,12 @@ class BasisSimSerial(SimSerial):
             if not sub:
                 self._out(f"#NET;mode={n['mode']};kanal={n['kanal']};ssid={n['ssid']};ip={n['ip']};"
                           f"clients={n['clients']};rssi={n['rssi']};tcp={n['tcp']};err={n['err']};esp=1;esp_fw=basis-esp 0.1.0 SIM;esp_neustarts=0\r\n")
-            elif sub == "AP" and len(a) >= 3 and a[1].isdigit() and 1 <= int(a[1]) <= 13:
+            elif sub in ("AP", "STA") and len(a) < (4 if sub == "AP" else 3) or sub in ("AP", "STA") and len(a[-1]) < 8:
+                self._out("#ERR;NET;passwort\r\n")             # offenes WLAN gibt es nicht
+            elif sub == "AP" and a[1].isdigit() and 1 <= int(a[1]) <= 13:
                 n.update(mode="AP", kanal=int(a[1]), ssid=a[2], ip="192.168.4.1", clients=0, rssi="", err=0)
                 self._out("#OK;NET;AP\r\n")
-            elif sub == "STA" and len(a) >= 2:
+            elif sub == "STA":
                 n.update(mode="STA", ssid=a[1], ip="192.168.178.57", clients=0, rssi=-63, kanal=11, err=0)
                 self._out("#OK;NET;STA\r\n")
             elif sub == "OFF":

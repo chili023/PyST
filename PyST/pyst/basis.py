@@ -344,21 +344,23 @@ def parse_net(line: str) -> Optional[NetState]:
 
 def net_commands(mode: str, ssid: str = "", password: str = "", channel: int = 6) -> str:
     """Befehlszeile fuer die Netzwerk-Einstellung. Leerzeichen in SSID/Passwort sind im Zeilenformat nicht
-    moeglich (ValueError), ebenso Zeilen ueber 63 Zeichen."""
+    moeglich (ValueError), ebenso Zeilen ueber 63 Zeichen. Ein offenes WLAN wird abgelehnt: auf einem Port ohne
+    Verschluesselung saehe jeder in Funkreichweite den Messbetrieb."""
     mode = mode.upper()
     for x in (ssid, password):
         if any(c in x for c in " ;\r\n"):
             raise ValueError("SSID und Passwort dürfen keine Leerzeichen oder ';' enthalten")
-    if mode == "AP":
+    if mode in ("AP", "STA"):
         if not ssid:
             raise ValueError("SSID fehlt")
-        if password and len(password) < 8:
+        if not password:
+            raise ValueError("Offenes WLAN wird abgelehnt: Passwort eintragen")
+        if len(password) < 8:
             raise ValueError("WLAN-Passwort: mindestens 8 Zeichen (WPA2)")
-        cmd = f"#NET AP {int(channel)} {ssid} {password}".rstrip()
+    if mode == "AP":
+        cmd = f"#NET AP {int(channel)} {ssid} {password}"
     elif mode == "STA":
-        if not ssid:
-            raise ValueError("SSID fehlt")
-        cmd = f"#NET STA {ssid} {password}".rstrip()
+        cmd = f"#NET STA {ssid} {password}"
     elif mode == "OFF":
         cmd = "#NET OFF"
     else:

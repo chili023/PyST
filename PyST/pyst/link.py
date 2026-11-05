@@ -32,6 +32,8 @@ except ImportError:  # nur Simulator moeglich
     serial = None
     list_ports = None
 
+from . import auth
+from .auth import AuthError, KeyStore
 from .basis import (BASIS_AP_IP, BASIS_MDNS_NAME, BASIS_TCP_PORT, ZANGE_USB_ID, BasisCommands, _f, _i, parse_event,
                     parse_log_line, parse_zange)
 from .diag import DIAG_FIELDS, Burst, parse_kv
@@ -78,6 +80,7 @@ SIM_VARIANTS = [
     (SIM_PORT + ":basis", "Simulator: PyST-Basis mit gekoppelter Funk-Zange und Steckdosen"),
     (SIM_PORT + ":basis:stoerung", "Simulator: PyST-Basis, Funk mit Paketverlust und Zangen-Abbrüchen"),
     (SIM_PORT + ":basis:ohne", "Simulator: PyST-Basis ohne Zange (Koppeln vorführen)"),
+    (SIM_PORT + ":basis:wlan", "Simulator: PyST-Basis am TCP-Port (mit Anmeldung, Schlüssel vorher über SIM:basis holen)"),
     (SIM_PORT + ":zange", "Simulator: Zange direkt per USB (Zündungs-Oszi, Log auslesen)"),
 ]
 SIM_NAMES = {name for name, _d in SIM_VARIANTS}
@@ -358,8 +361,10 @@ LOG_BAD_LINES = 20                                       # so viele verworfene Z
 class DynoLink(BasisCommands):
     """Serieller Port, TCP (Basis per WLAN) oder Simulator; ein Lesethread zerlegt die Zeilen."""
 
-    def __init__(self, port: str, baud: int = 115200):
+    def __init__(self, port: str, baud: int = 115200, keys: Optional[KeyStore] = None):
         self.port = port
+        self.keys = keys or KeyStore()
+        self.auth_state = ""                                  # TCP: "ok", "alt" (Firmware ohne Anmeldung), sonst ""
         self.replay = None
         self._bootloader = ""
         if port in SIM_NAMES and port.split(":")[1:2] in (["basis"], ["zange"]):
@@ -367,7 +372,7 @@ class DynoLink(BasisCommands):
             if parts[0] == "zange":
                 self.ser = ZangeUsbSimSerial()
             else:
-                self.ser = BasisSimSerial(paired="ohne" not in parts,
+                self.ser = BasisSimSerial(paired="ohne" not in parts, tcp="wlan" in parts,
                                           faults=BASIS_FAULTS if "stoerung" in parts else None)
         elif is_tcp_port(port):
             host, tport = parse_tcp_port(port)
@@ -422,6 +427,11 @@ class DynoLink(BasisCommands):
     @property
     def is_tcp(self) -> bool:
         return isinstance(self.ser, TcpSerial)
+
+    @property
+    def needs_login(self) -> bool:
+        """TCP-Port der Basis: vor allem anderen anmelden (auch der Simulator 'SIM:basis:wlan')."""
+        return self.is_tcp or getattr(self.ser, "tcp", False)
 
     @property
     def alive(self) -> bool:
@@ -500,7 +510,8 @@ class DynoLink(BasisCommands):
         except Exception as exc:
             self.bad_lines += 1
             if self.bad_lines <= LOG_BAD_LINES or self.bad_lines % 1000 == 0:
-                log.warning("Zeile verworfen (%d.): %s: %r", self.bad_lines, type(exc).__name__, str(line)[:80])
+                log.warning("Zeile verworfen (%d.): %s: %r", self.bad_lines, type(exc).__name__,
+                            auth.redact(str(line))[:80])
 
     def _line(self, line: str):
         if line.startswith("#BOOTLOADER"):
@@ -616,7 +627,11 @@ class DynoLink(BasisCommands):
         return time.time() - self.last_frame_t < 0.5
 
     def info(self) -> str:
+        """Geraet abfragen; am TCP-Port zuerst anmelden (AuthError, wenn das scheitert)."""
         with self._cmd_lock:
+            if self.needs_login:
+                self.probe_caps()
+                self.login()
             self._flush()
             self.send("v")
             text = "\n".join(self._collect_text(0.6))
@@ -691,12 +706,65 @@ class DynoLink(BasisCommands):
                     continue
                 if is_foreign_reply(word, line):
                     self.foreign_replies += 1
-                    log.debug("Antwort gehoert nicht zu #%s: %s", word, line[:40])
+                    log.debug("Antwort gehoert nicht zu #%s: %s", word, auth.redact(line)[:40])
                     continue
                 out.append(line)
                 if done(line):
                     break
             return out
+
+    # ------------------------------------------------------------------ Anmeldung (auth.py)
+    def login(self) -> bool:
+        """Anmeldung am TCP-Port, genau ein Versuch: jeder Fehlversuch verlaengert die Sperre der Basis.
+        True = angemeldet, False = Firmware ohne '#AUTH' (vor Basis 0.3.0). Sonst AuthError mit Text fuer die Oberflaeche."""
+        self.auth_state = ""
+        if not self.has_diag:
+            raise AuthError(auth.TEXT_KEINE_ANTWORT)
+        with self._cmd_lock:
+            lines = self.command("#AUTH", timeout=2.0, done=lambda x: x.startswith(("#AUTH;", "#ERR")))
+            if not lines:
+                raise AuthError(auth.TEXT_KEINE_ANTWORT)
+            if lines[-1].startswith("#ERR;?"):
+                self.auth_state = "alt"
+                return False
+            if lines[-1].startswith("#ERR"):
+                raise AuthError(auth.refusal_text(lines[-1]))
+            challenge = auth.parse_challenge(lines[-1])
+            if challenge is None:
+                raise AuthError(auth.TEXT_FORMAT)
+            uid, nonce = challenge
+            key = self.keys.get(uid)
+            if key is None:
+                raise AuthError(auth.TEXT_KEIN_SCHLUESSEL.format(id=uid))
+            lines = self.command(f"#AUTH {auth.response(key, nonce, uid)}", timeout=2.0)
+            if not lines:
+                raise AuthError(auth.TEXT_KEINE_ANTWORT)
+            if lines[-1].startswith("#ERR;?"):
+                raise AuthError(auth.TEXT_ZU_LANG)
+            if not self.ok(lines):
+                raise AuthError(auth.TEXT_FALSCH)
+            self.auth_state = "ok"
+            return True
+
+    def fetch_key(self) -> Optional[bool]:
+        """Nur per USB: Schluessel der Basis holen und ablegen. True = neu oder geaendert, False = unveraendert,
+        None = keiner zu holen (Firmware ohne '#AUTH'). Schreibfehler (OSError) gehen an den Aufrufer."""
+        if self.needs_login:
+            return None
+        for line in self.command("#AUTH KEY", timeout=1.0, done=lambda x: x.startswith(("#AUTH;", "#ERR"))):
+            parsed = auth.parse_key_line(line)
+            if parsed is not None:
+                return self.keys.put(*parsed)
+        return None
+
+    def renew_key(self) -> bool:
+        """Nur per USB: neuen Schluessel vergeben lassen und ablegen. Alte Anmeldungen gelten dann nicht mehr."""
+        if self.needs_login:
+            return False
+        lines = self.command("#AUTH NEU", timeout=2.0, done=lambda x: x.startswith(("#AUTH;", "#OK", "#ERR")))
+        if not lines or lines[-1].startswith("#ERR"):
+            return False
+        return self.fetch_key() is not None
 
     @staticmethod
     def ok(lines: List[str]) -> bool:

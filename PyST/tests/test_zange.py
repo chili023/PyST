@@ -7,6 +7,7 @@ Shelly Gen2/Gen1, Tasmota und ESPHome geprueft. Mit PYST_SCREENSHOTS=<Ordner> le
 Bildschirmfotos ab.
 """
 import os
+import shutil
 import socket
 import struct
 import sys
@@ -20,7 +21,8 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from pyst import basis, channels, diag, link, mdns, physics, plugs, pruef, storage, zange  # noqa: E402
 from pyst.recorder import Recorder  # noqa: E402
-from pyst.sim import BasisSimSerial  # noqa: E402
+from pyst.auth import KeyStore  # noqa: E402
+from pyst.sim import AuthSim, BasisSimSerial  # noqa: E402
 
 D_BASIS = "D;12;4294966914;60.00;49.991;727.981;nan;0.00;nan;1;20104.7;20104.7;0;12;1366.1;1373.7;0;10;3955;1"
 
@@ -205,7 +207,7 @@ class Parser(unittest.TestCase):
 
     def test_net_commands(self):
         self.assertEqual(basis.net_commands("AP", "PyST", "geheim123", 6), "#NET AP 6 PyST geheim123")
-        self.assertEqual(basis.net_commands("sta", "Werkstatt", "pw"), "#NET STA Werkstatt pw")
+        self.assertEqual(basis.net_commands("sta", "Werkstatt", "geheim123"), "#NET STA Werkstatt geheim123")
         self.assertEqual(basis.net_commands("OFF"), "#NET OFF")
         for args in (("AP", "mit Leer", "12345678"), ("AP", "x", "kurz"), ("STA", "", "x"),
                      ("STA", "s" * 32, "p" * 30), ("XX",)):
@@ -383,7 +385,7 @@ class BasisSim(unittest.TestCase):
         self.assertTrue(l.ok(l.net_set("STA", "Werkstatt", "geheim123")))
         n = l.net_state()
         self.assertEqual((n.mode, n.ssid, n.ip), ("STA", "Werkstatt", "192.168.178.57"))
-        self.assertTrue(l.ok(l.net_set("AP", "PyST-Basis", "", 11)))
+        self.assertTrue(l.ok(l.net_set("AP", "PyST-Basis", "geheim123", 11)))
         self.assertEqual(l.net_state().channel, 11)
         self.assertEqual(len(l.dose_list()), 2)
         self.assertTrue(l.ok(l.dose_add(3, "tasmota", "192.168.4.22")))
@@ -442,7 +444,12 @@ class TcpBasis(unittest.TestCase):
         srv.bind(("127.0.0.1", 0))
         srv.listen(1)
         port = srv.getsockname()[1]
-        sim = BasisSimSerial()
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        keys = KeyStore(os.path.join(tmp, "schluessel.json"))
+        auth = AuthSim()
+        keys.put(auth.uid, auth.key.hex())
+        sim = BasisSimSerial(tcp=True, auth=auth)
         stop = threading.Event()
 
         def serve():
@@ -462,12 +469,13 @@ class TcpBasis(unittest.TestCase):
             conn.close()
         th = threading.Thread(target=serve, daemon=True)
         th.start()
-        l = link.DynoLink(f"tcp://127.0.0.1:{port}")
+        l = link.DynoLink(f"tcp://127.0.0.1:{port}", keys=keys)
         try:
             self.assertTrue(l.is_tcp)
             t0 = time.time()
             self.assertIn("PyST-Basis", l.info())
             self.assertLess(time.time() - t0, 1.5)                       # keine Wartezeit wie beim Mega-Reset
+            self.assertEqual(l.auth_state, "ok")
             self.assertEqual(l.ign_source, "zange")
             l.set_mode("D")
             l.start()

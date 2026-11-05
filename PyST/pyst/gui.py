@@ -27,6 +27,7 @@ from .link import (DEFAULT_SIM_PORT, SIM_PORT, DynoLink, guess_port, is_pst_firm
 from .oszi import OsziPage
 from .ratio_dialog import RatioDialog
 from .share_ui import FORMAT_FOLDER, FORMAT_HTML, ExportDialog, ImportParamsDialog
+from .auth import AuthError
 from .plots import EXTRA_PREFIX, LOWER_DEFAULT, MAX_LOWER, MAX_OVERLAYS, DynoPlot, fmt_value, run_color
 from .rusefi import COLUMN_PREFIX
 from .runner import ABORTED, DONE, IDLE, RUN, WAIT, RunController
@@ -1504,7 +1505,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 except Exception:
                     pass
             self.link = None
-            if not quiet:
+            if isinstance(exc, AuthError):
+                self._set_status("Anmeldung an der Basis gescheitert", "#f4b6b6")
+                s.fw_label.setText(f"{port}: nicht angemeldet")
+                if not quiet:
+                    QtWidgets.QMessageBox.critical(self, "Anmeldung an der Basis", str(exc))
+            elif not quiet:
                 QtWidgets.QMessageBox.critical(self, "Verbindung", f"{port} lässt sich nicht öffnen:\n{exc}")
             return False
         finally:
@@ -1530,6 +1536,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.link.is_basis:
             s.fw_label.setText(f"{port}: PyST-Basis – {self.link.caps.get('fw', '')} · Zündung: "
                                + ("Funk-Zange" if self.link.ign_source == "zange" else "keine (Zange koppeln)"))
+            self._basis_key()
         if self.link.is_zange_usb:
             s.fw_label.setText(f"{port}: Zange per USB – {self.link.caps.get('fw', '')}")
             self._set_status("Zange per USB – nur Auslesen/Testen", "#f4b6b6")
@@ -1542,6 +1549,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_buttons()
         s.update_filter_label(self._current_rate())
         return True
+
+    def _basis_key(self):
+        """Per USB ist das Koppeln: Schlüssel für die Anmeldung per WLAN holen. Per TCP den Zustand anzeigen."""
+        if self.link.auth_state == "alt":
+            self.statusBar().showMessage("Diese Basis-Firmware kennt keine Anmeldung: WLAN-Port ungeschützt.", 10000)
+        if self.link.needs_login:
+            return
+        try:
+            neu = self.link.fetch_key()
+        except OSError as exc:
+            self.statusBar().showMessage(f"Schlüssel der Basis nicht gespeichert: {exc.strerror or exc}", 10000)
+            return
+        if neu:
+            self.statusBar().showMessage("Schlüssel der Basis gespeichert: Anmeldung per WLAN möglich.", 6000)
 
     def _auto_connect(self):
         if self.page_flash.busy:                           # Port gehoert gerade dem Flashen

@@ -190,7 +190,7 @@ PyST die angegebene Antwortform als Schlüssel=Wert-Felder in beliebiger Reihenf
 | `#PAIR 1` / `#PAIR 0` | Kopplungsfenster (30 s) auf/zu, `#OK;PAIR;1/0`; Ergebnis als Ereignis `ZANGE;verbunden` |
 | `#PAIR LIST` / `#PAIR DEL <id>` | *erwartet* je Gerät `#PAIR;id=..;mac=..;typ=..;sn=..;fw=..;verbunden=0/1`, dann `#OK;PAIR;LIST` |
 | `#NET` | *erwartet* `#NET;mode=AP/STA/OFF;kanal=..;ssid=..;ip=..;clients=..;rssi=..;tcp=0/1;err=0` |
-| `#NET AP <kanal> <ssid> <pw>` · `#NET STA <ssid> <pw>` · `#NET OFF` | `#OK;NET;…` (SSID/Passwort ohne Leerzeichen, Zeile ≤ 63 Zeichen) |
+| `#NET AP <kanal> <ssid> <pw>` · `#NET STA <ssid> <pw>` · `#NET OFF` | `#OK;NET;…` (SSID/Passwort ohne Leerzeichen, Zeile ≤ 63 Zeichen); ein offenes WLAN wird abgelehnt, das Passwort hat mindestens 8 Zeichen |
 | `#DOSE` | *erwartet* je Steckdose `#DOSE;nr=..;typ=..;host=..;an=0/1;p_mw=..;erreichbar=0/1;rest_s=..;fehler=0`, dann `#OK;DOSE` |
 | `#DOSE ADD <nr> <typ> <ip/name>` · `#DOSE <nr> 1/0/TOGGLE [sek]` · `#DOSE DEL <nr>` | `#OK;DOSE;…`; `sek` = Rückfallzeit (Totmann) |
 | `#DOSE SCAN` | *erwartet* je Fund `#DOSE;SCAN;nr=0;typ=..;host=..;ip=..`, dann `#OK;DOSE;SCAN` |
@@ -217,3 +217,20 @@ Rohlog `zange_log.csv`), die wie jede Messung als `.pyst` weitergegeben werden k
 **Simulator**: `SIM:basis` (Basis mit gekoppelter Zange und zwei Steckdosen), `SIM:basis:stoerung` (Paketverlust,
 Zange zeitweise weg), `SIM:basis:ohne` (Koppeln vorführen), `SIM:zange` (Zange per USB mit Log). Einstellungen
 `sim_funkverlust` (%), `sim_zange_weg`, `sim_zange_mark` (je Minute).
+
+### Anmeldung am TCP-Port (Basis ab 0.3.0, PyST ab 1.4)
+
+USB ist das Koppeln. Am TCP-Port 2323 gelten ohne Anmeldung nur `#?` und `#AUTH`.
+
+| Befehl | Antwort |
+|---|---|
+| `#AUTH KEY` (nur USB) | `#AUTH;id=<UID>;key=<64 hex>`, 32-Byte-Schlüssel aus dem Zufallsgenerator, im Flash der Basis |
+| `#AUTH NEU` (nur USB) | neuer Schlüssel, der alte gilt nicht mehr |
+| `#AUTH` | `#AUTH;id=<UID>;nonce=<32 hex>` |
+| `#AUTH <64 hex>` | `#OK;AUTH` oder `#ERR;AUTH;nein`, danach wachsende Sperre |
+
+Antwort = `HMAC-SHA256(key, "PyST-Auth-1" || nonce_bytes || id_ascii)`. Die Zeile hat 70 Zeichen, die Zeilengrenze
+der Basis muss das zulassen. Nur per USB: `#AUTH KEY/NEU`, `#LAMBDA SWD`, `#WBF`, `#UPDATE`, `#ESP BRIDGE`/`BOOT`.
+
+PyST holt den Schlüssel bei jedem USB-Verbinden und legt ihn je `id` in `~/PyST/schluessel.json` ab (Rechte 600).
+Vor jedem TCP-Betrieb meldet es sich mit genau einem Versuch an. Der Schlüssel erscheint nie im Log.

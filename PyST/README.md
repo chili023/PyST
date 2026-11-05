@@ -164,11 +164,16 @@ Aufzeichnung von vorn; aus dem Log der Zange gelesene zeigen die Taste dazu, z. 
   das Doppelte bzw. Halbe von bisher) gibt es nichts zu übernehmen, nur eine Meldung. Eine wirklich verdoppelte Übersetzung trägt man im Dialog ein.
 
 Protokoll: `../docs/04_PST_Diag_1.md` §10. Ohne Hardware vorführbar mit den Simulator-Ports `SIM:basis`,
-`SIM:basis:stoerung`, `SIM:basis:ohne` und `SIM:zange` sowie dem Knopf „Demo-Steckdosen (Simulator)“.
+`SIM:basis:stoerung`, `SIM:basis:ohne`, `SIM:basis:wlan` (TCP-Port mit Anmeldung, Schlüssel vorher über `SIM:basis`
+holen) und `SIM:zange` sowie dem Knopf „Demo-Steckdosen (Simulator)“.
 
 - **Verbinden**: Basis per USB wie bisher, oder **per WLAN**: Port `tcp://192.168.4.1:2323` (Basis als Access Point)
   bzw. `tcp://<name>.local:2323` (Werkstattnetz, mDNS) – oder Knopf „PC per WLAN verbinden“. Ein Abriss der
   WLAN-Verbindung wird erkannt.
+- **Anmeldung per WLAN** (Basis ab 0.3.0): USB ist das Koppeln. Beim Verbinden per USB holt PyST den Schlüssel der
+  Basis und legt ihn in `~/PyST/schluessel.json` ab (nur für den Benutzer lesbar). Per WLAN meldet sich PyST damit an;
+  ohne Schlüssel oder bei falschem Schlüssel steht in der Meldung, was zu tun ist. Fehlversuche sperren die Basis
+  immer länger. Der Knopf „Neuer Schlüssel“ (nur per USB) sperrt alle anderen PCs aus.
 - **Zange** (Einstellungen › Zange · Netz · Steckdosen, Kurzfassung rechts in der Statusleiste): Akku, Signal, Sync,
   Funken, Blitz φ. **Koppeln …** öffnet das Kopplungsfenster (an der Zange T1 + T2 gleichzeitig 3 s halten),
   **Markieren (F3)** setzt einen Marker (erscheint wie die Tasten der Zange im Oszi und im Lauf),
@@ -177,7 +182,8 @@ Protokoll: `../docs/04_PST_Diag_1.md` §10. Ohne Hardware vorführbar mit den Si
   laufen auch Leistungsläufe im Diagnose-Telegramm, damit die Zündstärke mitgespeichert wird.
 - **Ereignisse** der Basis (Marker, Zange verbunden/verloren, Steckdose an/aus) stehen in der Oszi-Ereignisliste,
   in `marker.csv`/`ereignisse.csv` von Lauf und Dauermessung und als Linien im Auswerter.
-- **Netzwerk**: WLAN der Basis als Access Point (Kanal, SSID, Passwort), im Werkstatt-WLAN oder aus.
+- **Netzwerk**: WLAN der Basis als Access Point (Kanal, SSID, Passwort), im Werkstatt-WLAN oder aus. Für den Access
+  Point schlägt PyST ein Passwort vor, ein offenes WLAN wird abgelehnt.
 - **Steckdosen** über die Basis oder **direkt vom PC** (gleiches Netz, ohne Basis): Shelly Gen2/3/4 und Gen1,
   Tasmota, ESPHome. Suchen (mDNS), Hinzufügen (Typ wird erkannt, Einschaltzustand nach Stromausfall = aus,
   Shelly mit Passwort oder ohne Relais wird abgewiesen), Ein/Aus, Leistung, Totmann-Zeit („fällt aus“ = Rückfallzeit,

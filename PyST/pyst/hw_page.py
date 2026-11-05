@@ -19,6 +19,7 @@ from typing import Callable, Dict, List, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import storage
+from .auth import wlan_password
 from .basis import (LAMBDA_GRUND, MAX_PLUGS, PLUG_TYPE_TEXT, PLUG_TYPES, ZANGE_KEYS, ZANGE_USB_WARNUNG, LambdaStatus,
                     NetState, ZangeStatus, main_zange, net_commands)
 from .plugs import NO_FALLBACK, PlugConfig, PlugManager, start_demo_plugs
@@ -357,13 +358,22 @@ class HardwarePage(QtWidgets.QScrollArea):
         form.addRow("Betrieb", self.net_mode)
         form.addRow("Kanal (AP)", self.net_ch)
         form.addRow("SSID", self.net_ssid)
-        form.addRow("Passwort", self.net_pw)
+        pw_row = QtWidgets.QHBoxLayout()
+        self.b_net_pw = QtWidgets.QPushButton("Vorschlagen")
+        self.b_net_pw.setToolTip("Zufälliges Passwort eintragen. Offenes WLAN gibt es nicht.")
+        pw_row.addWidget(self.net_pw, 1)
+        pw_row.addWidget(self.b_net_pw)
+        form.addRow("Passwort", pw_row)
         row = QtWidgets.QHBoxLayout()
         self.b_net_apply = QtWidgets.QPushButton("Übernehmen")
         self.b_net_read = QtWidgets.QPushButton("Neu lesen")
         self.b_tcp = QtWidgets.QPushButton("PC per WLAN verbinden")
-        self.b_tcp.setToolTip("Statt USB: PyST verbindet sich über TCP (Port 2323) mit der Basis")
-        for b in (self.b_net_apply, self.b_net_read, self.b_tcp):
+        self.b_tcp.setToolTip("Statt USB: PyST verbindet sich über TCP (Port 2323) mit der Basis und meldet sich mit dem "
+                              "Schlüssel an, den es beim letzten USB-Verbinden geholt hat")
+        self.b_key_neu = QtWidgets.QPushButton("Neuer Schlüssel")
+        self.b_key_neu.setToolTip("Nur per USB: Die Basis vergibt einen neuen Schlüssel. Andere PCs müssen dann einmal "
+                                  "per USB verbinden.")
+        for b in (self.b_net_apply, self.b_net_read, self.b_tcp, self.b_key_neu):
             row.addWidget(b)
         form.addRow(row)
         self.net_msg = QtWidgets.QLabel("Der Kanal gilt auch für den Funk zur Zange (ESP-NOW).")
@@ -374,6 +384,8 @@ class HardwarePage(QtWidgets.QScrollArea):
         self.b_net_apply.clicked.connect(self.net_apply)
         self.b_net_read.clicked.connect(lambda: self._refresh_net(force=True))
         self.b_tcp.clicked.connect(self._connect_tcp)
+        self.b_net_pw.clicked.connect(self._suggest_pw)
+        self.b_key_neu.clicked.connect(self.key_new)
         self._net_mode_ui()
         return g
 
@@ -444,7 +456,8 @@ class HardwarePage(QtWidgets.QScrollArea):
         self.b_log.setEnabled(usb)
         if not basis:
             self._show_lambda(None)
-        for w in (self.net_mode, self.net_ch, self.net_ssid, self.net_pw, self.b_net_apply, self.b_net_read):
+        self.b_key_neu.setEnabled(bool(basis and not link.needs_login))
+        for w in (self.net_mode, self.net_ch, self.net_ssid, self.net_pw, self.b_net_pw, self.b_net_apply, self.b_net_read):
             w.setEnabled(basis)
         if not basis:
             self.net_state.setText("–")
@@ -653,6 +666,28 @@ class HardwarePage(QtWidgets.QScrollArea):
         self.net_ch.setEnabled(m == "AP" and self.net_mode.isEnabled())
         self.net_ssid.setEnabled(m != "OFF" and self.net_mode.isEnabled())
         self.net_pw.setEnabled(m != "OFF" and self.net_mode.isEnabled())
+        self.b_net_pw.setEnabled(m == "AP" and self.net_mode.isEnabled())
+        if m == "AP" and self.net_mode.isEnabled() and not self.net_pw.text():
+            self._suggest_pw()
+
+    def _suggest_pw(self):
+        """Vorschlag sichtbar eintragen, damit man ihn notieren kann. Gespeichert wird er nirgends in PyST."""
+        self.net_pw.setEchoMode(QtWidgets.QLineEdit.Normal)
+        self.net_pw.setText(wlan_password())
+
+    def key_new(self):
+        link = self.link
+        if link is None or link.needs_login:
+            return
+        if QtWidgets.QMessageBox.question(
+                self, "Neuer Schlüssel", "Die Basis vergibt einen neuen Schlüssel für die Anmeldung per WLAN. Andere PCs "
+                                         "müssen dann einmal per USB verbinden. Weiter?") != QtWidgets.QMessageBox.Yes:
+            return
+        self.bg.submit("key_new", link.renew_key, self._key_done)
+
+    def _key_done(self, ok, err):
+        self.net_msg.setText(f"Schlüssel nicht gespeichert: {err}" if err is not None else
+                             "Neuer Schlüssel gespeichert." if ok else "Die Basis hat keinen neuen Schlüssel vergeben.")
 
     def _show_net(self, st: Optional[NetState], err=None):
         if err is not None or st is None:

@@ -15,6 +15,7 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from conftest import close_window  # noqa: E402
 from pyst import basis, storage, tasten, zange  # noqa: E402
 from pyst.tasten import TastenSync, UebersetzungMessung, auswerten  # noqa: E402
 
@@ -280,8 +281,8 @@ class Gui(unittest.TestCase):
         self.shots = os.environ.get("PYST_SCREENSHOTS", "")
 
     def tearDown(self):
-        self.w.close()
-        self.app.processEvents()
+        close_window(self.w, self.app)
+        self.w = None
         self.tmp.cleanup()
         for k, v in self.old.items():
             if v is None:
