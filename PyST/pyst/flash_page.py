@@ -4,6 +4,7 @@ from typing import Callable, Dict
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from . import farben
 from . import flash, update
 from .flash import FlashCancelled, FlashError
 from .bg import Bg, wait_in_thread
@@ -120,9 +121,9 @@ class FlashRow(QtWidgets.QGroupBox):
             return self._info
         try:
             image = flash.load_image(self.target.key, self.path.text().strip())
-            info = image.summary(), flash.image_version(image), "#2e7d32"
+            info = image.summary(), flash.image_version(image), farben.GUT
         except (FlashError, OSError, ValueError) as exc:
-            info = str(exc), "", "#c62828"
+            info = str(exc), "", farben.FEHLER
         self._seen, self._info = stamp, info
         return info
 
@@ -134,7 +135,7 @@ class FlashRow(QtWidgets.QGroupBox):
             line, state = flash.version_text(self.current, new, self.stale)
             self.versions.setText(line)
             self.versions.setStyleSheet("font-weight: 600; color: %s;" % {
-                "neu": "#ef6c00", "gleich": "#2e7d32", "aelter": "#c62828"}.get(state, "#333333"))
+                "neu": farben.WARNUNG, "gleich": farben.GUT, "aelter": farben.FEHLER}.get(state, "#333333"))
         port = flash.target_port(self.target.key)
         if self.target.key != flash.BASIS_STLINK:
             text += f"\nPort: {port or 'nicht gefunden'}"
@@ -222,19 +223,19 @@ class FlashPage(QtWidgets.QScrollArea):
         e = self.remote.get(key)
         if e is None or self.busy:
             return
-        self._status(f"Lade {e.file} …", "#ef6c00")
+        self._status(f"Lade {e.file} …", farben.WARNUNG)
         self.bg.submit("laden", lambda: update.download(e, self.download_dir, self.update_base),
                        lambda path, err: self._downloaded(key, path, err))
 
     def _downloaded(self, key: str, path, err):
         if err is not None:
-            self._status(f"Download fehlgeschlagen: {err}", "#c62828")
+            self._status(f"Download fehlgeschlagen: {err}", farben.FEHLER)
             return
         row = self.rows[key]
         row.path.setText(path)
         self._folder_changed(key, path)
         row.refresh()
-        self._status(f"{os.path.basename(path)} geladen und geprüft, bereit zum Flashen.", "#2e7d32")
+        self._status(f"{os.path.basename(path)} geladen und geprüft, bereit zum Flashen.", farben.GUT)
 
     def _folder_changed(self, key: str, folder: str):
         self.settings.setdefault("flash_ordner", {})[key] = folder
@@ -285,7 +286,7 @@ class FlashPage(QtWidgets.QScrollArea):
         try:
             image, cmd = flash.build_command(key, row.path.text().strip(), flash.target_port(key))
         except (FlashError, OSError, ValueError) as exc:
-            self._status(str(exc), "#c62828")
+            self._status(str(exc), farben.FEHLER)
             return
         text = f"{t.name} jetzt flashen?\n\n{image.summary()}\n\n{t.hint}"
         if QtWidgets.QMessageBox.question(self, "Flashen", text) != QtWidgets.QMessageBox.Yes:
@@ -294,7 +295,7 @@ class FlashPage(QtWidgets.QScrollArea):
             try:
                 wait_in_thread(lambda: flash.esp_bridge_on(flash.basis_port()))
             except FlashError as exc:
-                self._status(str(exc), "#c62828")
+                self._status(str(exc), farben.FEHLER)
                 self.flash_done.emit()
                 return
         if key in (flash.BASIS_STM, flash.LAMBDA_F042):
@@ -304,7 +305,7 @@ class FlashPage(QtWidgets.QScrollArea):
 
     def run_usb(self, key: str, image):
         self.log.clear()
-        self._status(f"{flash.TARGETS[key].name}: läuft, Basis nicht vom Strom trennen …", "#ef6c00")
+        self._status(f"{flash.TARGETS[key].name}: läuft, Basis nicht vom Strom trennen …", farben.WARNUNG)
         self._set_busy(True)
         is_lambda = key == flash.LAMBDA_F042
         self.bar.setRange(0, len(image.lambda_app) if is_lambda else image.update.image_len)
@@ -332,21 +333,21 @@ class FlashPage(QtWidgets.QScrollArea):
         self._set_busy(False)
         t = flash.TARGETS[key]
         if state == "ok" and key == flash.LAMBDA_F042:
-            self._status(f"{t.name}: geflasht, 0x190-Telegramme mit Version {text} kamen wieder.", "#2e7d32")
+            self._status(f"{t.name}: geflasht, 0x190-Telegramme mit Version {text} kamen wieder.", farben.GUT)
         elif state == "ok":
-            self._status(f"{t.name}: Version {text} läuft.", "#2e7d32")
+            self._status(f"{t.name}: Version {text} läuft.", farben.GUT)
         elif state == "abbruch" and key == flash.LAMBDA_F042:
-            self._status(f"{t.name}: {text}", "#ef6c00")
+            self._status(f"{t.name}: {text}", farben.WARNUNG)
         elif state == "abbruch":
-            self._status(f"{t.name}: abgebrochen, alte Firmware bleibt.", "#ef6c00")
+            self._status(f"{t.name}: abgebrochen, alte Firmware bleibt.", farben.WARNUNG)
         else:
             self.log.appendPlainText(text)
-            self._status(f"{t.name}: {text}", "#c62828")
+            self._status(f"{t.name}: {text}", farben.FEHLER)
 
     def run(self, key: str, cmd):
         self.log.clear()
         self.log.appendPlainText(" ".join(os.path.basename(c) if i == 0 else c for i, c in enumerate(cmd)))
-        self._status(f"{flash.TARGETS[key].name}: läuft …", "#ef6c00")
+        self._status(f"{flash.TARGETS[key].name}: läuft …", farben.WARNUNG)
         self._set_busy(True)
         self.proc = QtCore.QProcess(self)
         self.proc.setProcessChannelMode(QtCore.QProcess.MergedChannels)
@@ -371,13 +372,13 @@ class FlashPage(QtWidgets.QScrollArea):
         t = flash.TARGETS[key]
         if code == 0:
             nach = " 12 V einmal aus und ein." if key == flash.BASIS_STLINK else ""
-            self._status(f"{t.name}: geflasht.{nach}", "#2e7d32")
+            self._status(f"{t.name}: geflasht.{nach}", farben.GUT)
         else:
-            self._status(f"{t.name}: Flashen fehlgeschlagen (Code {code}), siehe Ausgabe.", "#c62828")
+            self._status(f"{t.name}: Flashen fehlgeschlagen (Code {code}), siehe Ausgabe.", farben.FEHLER)
 
     def _failed(self, key: str):
         if self.proc is not None and self.proc.error() == QtCore.QProcess.FailedToStart:
             self.proc = None
             self._set_busy(False)
             self.flash_done.emit()
-            self._status(f"{flash.TARGETS[key].name}: Werkzeug ließ sich nicht starten.", "#c62828")
+            self._status(f"{flash.TARGETS[key].name}: Werkzeug ließ sich nicht starten.", farben.FEHLER)

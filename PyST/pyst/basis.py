@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
-from .diag import parse_kv
+from .felder import parse_kv, to_float as _f, to_int as _i
 
 # USB-Kennung der Zange (ESP32-C3, USB-Serial-JTAG). Dieselbe Kennung haben viele ESP32-Boards –
 # ob es wirklich eine Zange ist, entscheidet erst '#CAP' (ch=I, tick_ns=1000, fw=…Zange…).
@@ -52,20 +52,6 @@ PLUG_TYPE_TEXT = {"SHELLY2": "Shelly Gen2/3/4 (RPC)", "SHELLY1": "Shelly Gen1", 
                   "ESPHOME": "ESPHome (Web-Server)"}
 MAX_PLUGS = 8
 MAX_LINE = 63                                # PST-Diag 1: Befehlszeile hoechstens 63 Zeichen
-
-
-def _f(v, default=float("nan")) -> float:
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return default
-
-
-def _i(v, default=0) -> int:
-    try:
-        return int(float(v))
-    except (TypeError, ValueError, OverflowError):       # 'inf' laesst sich nicht wandeln
-        return default
 
 
 def _pick(kv: Dict[str, str], *names, default=None):

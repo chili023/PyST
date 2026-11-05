@@ -16,6 +16,7 @@ from typing import Callable, Dict, List, Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from . import farben
 from . import storage
 from .auth import AuthError, refusal_text, wlan_password
 from .bg import Bg, wait_in_thread
@@ -419,8 +420,8 @@ class HardwarePage(QtWidgets.QScrollArea):
             return
         nan = lambda x: x != x
         v["verb"].setText(("verbunden" if st.connected else "nicht erreichbar") + (f" (ID {st.id})" if st.id else ""))
-        v["verb"].setStyleSheet("font-size: 15px; font-weight: 600; color: %s;" % ("#2e7d32" if st.connected
-                                                                                   else "#c62828"))
+        v["verb"].setStyleSheet("font-size: 15px; font-weight: 600; color: %s;" % (farben.GUT if st.connected
+                                                                                   else farben.FEHLER))
         v["akku"].setText("–" if nan(st.akku_pct) else f"{st.akku_pct:.0f} %" +
                           ("" if nan(st.akku_mv) else f" ({st.akku_mv / 1000:.2f} V)") + (" lädt" if st.vbus else ""))
         v["rssi"].setText("–" if nan(st.rssi) else f"{st.rssi:.0f} dBm")
@@ -452,7 +453,7 @@ class HardwarePage(QtWidgets.QScrollArea):
         text = f"● Lambda {st.state_text}"
         if st.on:
             text += " · 12 V zu niedrig" if st.low_voltage else f" · aus in {st.rest_s // 60}:{st.rest_s % 60:02d}"
-        self.lambda_text.emit(text, "#c62828" if st.low_voltage else st.color)
+        self.lambda_text.emit(text, farben.FEHLER if st.low_voltage else st.color)
 
     def _lambda_result(self, st, err):
         if err is None and st is not None and self.link is not None and self.link.is_basis:

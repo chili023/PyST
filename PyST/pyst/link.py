@@ -1,5 +1,6 @@
 """
-Verbindung zur Messelektronik (PST-STM32-Firmware 1.x oder Arduino-Mega-Sketch 3.x).
+Verbindung zur Messelektronik: PyST-Basis (USB oder TCP) und Zange (USB), F446-Firmware PST-STM32 1.x,
+Arduino-Mega-Sketch 3.x und Simulator.
 
 Protokoll: 'v' Info, 'e' Klima "T;P;H", 'm' Start, 's' Stop (nur STM-Firmware),
 Telegramm "Zyklus;Messfrequenz;f_Zuend;f_Rolle;EGT1;AFR;EGT2\\n".
@@ -37,7 +38,6 @@ from .auth import AuthError, AuthNoReply, KeyStore
 from .basis import (BASIS_AP_IP, BASIS_MDNS_NAME, BASIS_TCP_PORT, ZANGE_USB_ID, BasisCommands, _f, _i, parse_event,
                     parse_log_line, parse_zange)
 from .diag import DIAG_FIELDS, Burst, parse_kv
-from .sim import BASIS_FAULTS, FAULT_PRESET, BasisSimSerial, ReplaySource, SimEngine, SimSerial, ZangeUsbSimSerial
 
 log = logging.getLogger("pyst.link")
 
@@ -247,13 +247,6 @@ def parse_frame(line: str, t: float) -> Optional[Frame]:
     return Frame(t, int(vals[0]), vals[1], vals[2], vals[3], vals[4], vals[5], vals[6])
 
 
-def _num(x: str) -> float:
-    try:
-        return float(x)
-    except ValueError:
-        return float("nan")
-
-
 def parse_diag(line: str, t: float) -> Optional[Frame]:
     """D;zyklus;t_ms;rate;ign;roll;egt1;afr;egt2;ign_n;ign_pmin;ign_pmax;ign_rej;roll_n;roll_pmin;roll_pmax;
     roll_rej;flags(hex) -> Frame mit diag. Mindestens bis roll noetig; fehlende Zusatzfelder = nan,
@@ -268,11 +261,11 @@ def parse_diag(line: str, t: float) -> Optional[Frame]:
         return None
     if not all(math.isfinite(v) for v in (rate, ign, roll)):
         return None
-    rest = [_num(x) for x in f[6:9]]
+    rest = [_f(x) for x in f[6:9]]
     rest += [0.0] * (3 - len(rest))
     d: Dict[str, float] = {"t_ms": t_ms}
     for k, x in zip(DIAG_FIELDS[1:-1], f[9:17]):
-        d[k] = _num(x)
+        d[k] = _f(x)
     for k in DIAG_FIELDS[1:-1]:
         d.setdefault(k, float("nan"))
     try:
@@ -281,8 +274,8 @@ def parse_diag(line: str, t: float) -> Optional[Frame]:
         d["flags"] = 0
     # PyST-Basis: angehaengt ign_peak_mv (Mittel der Spitzenwerte im Fenster), ign_src (0/1/2)
     if len(f) > 18 and f[18] != "":
-        d["ign_peak_mv"] = _num(f[18])
-        d["ign_src"] = _num(f[19]) if len(f) > 19 and f[19] != "" else float("nan")
+        d["ign_peak_mv"] = _f(f[18])
+        d["ign_src"] = _f(f[19]) if len(f) > 19 and f[19] != "" else float("nan")
     return Frame(t, cycle, rate, ign, roll, rest[0], rest[1], rest[2], diag=d)
 
 
@@ -388,27 +381,12 @@ class DynoLink(BasisCommands):
         self.auth_state = ""                                  # TCP: "ok", "alt" (Firmware ohne Anmeldung), sonst ""
         self.replay = None
         self._bootloader = ""
-        if port in SIM_NAMES and port.split(":")[1:2] in (["basis"], ["zange"]):
-            parts = port.split(":")[1:]
-            if parts[0] == "zange":
-                self.ser = ZangeUsbSimSerial()
-            else:
-                self.ser = BasisSimSerial(paired="ohne" not in parts, tcp="wlan" in parts,
-                                          faults=BASIS_FAULTS if "stoerung" in parts else None)
-        elif is_tcp_port(port):
+        if is_tcp_port(port):
             host, tport = parse_tcp_port(port)
             self.ser = TcpSerial(host, tport)
-        elif port in SIM_NAMES:
-            # SIM[:mega|:mega300][:stoerung]
-            parts = port.split(":")[1:]
-            mega = "mega" in parts or "mega300" in parts
-            faults = FAULT_PRESET if "stoerung" in parts else None
-            self.ser = SimSerial(engine=SimEngine(rate=61.0) if mega else None, mega=mega,
-                                 diag="mega300" not in parts, faults=faults)
-        elif port.startswith(SIM_PORT + ":"):
-            # SIM:<Datei> = gespeicherten Lauf abspielen
-            self.replay = ReplaySource(resolve_sim_file(port))
-            self.ser = SimSerial(source=self.replay)
+        elif port in SIM_NAMES or port.startswith(SIM_PORT + ":"):
+            from .sim import open_sim                         # Messbetrieb braucht den Simulator nicht
+            self.ser, self.replay = open_sim(port, "" if port in SIM_NAMES else resolve_sim_file(port))
         else:
             if serial is None:
                 raise RuntimeError("pyserial fehlt: pip install pyserial")

@@ -15,6 +15,7 @@ from typing import Dict, Optional
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from . import farben
 from . import __version__, htmlexport, physics, report, storage, tasten
 from .channels import fault_text, lambda_from_afr, run_channels, run_faults
 from .db import SETUP_SUMMARY_KEYS, VEHICLE_FIELDS, Database, base_dir, field_label
@@ -737,7 +738,7 @@ class MainWindow(QtWidgets.QMainWindow):
         split.addWidget(right)
         split.setStretchFactor(0, 1)
         lay.addWidget(split, 1)
-        self._set_status("Nicht verbunden – „Verbinden“ drücken", "#dddddd")
+        self._set_status("Nicht verbunden – „Verbinden“ drücken", farben.BALKEN_NORMAL)
         return w
 
     def _build_menu(self):
@@ -1343,7 +1344,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if row.fehler:
                 it.setToolTip(4, "Fehleranteil (Messfehler Rolle/Zündung): " + fault_text(row.fehler))
                 if max(row.fehler.values()) >= 1.0:
-                    it.setForeground(4, QtGui.QBrush(QtGui.QColor("#c62828")))
+                    it.setForeground(4, QtGui.QBrush(QtGui.QColor(farben.FEHLER)))
             it.setData(0, QtCore.Qt.UserRole, row.id)
             it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
             it.setCheckState(0, QtCore.Qt.Checked if row.sichtbar else QtCore.Qt.Unchecked)
@@ -1522,7 +1523,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._tcp_again = ""
             s.fw_label.setText("nicht verbunden")
             self._set_status("Messboard getrennt (abgezogen?)" if lost else "Nicht verbunden – „Verbinden“ drücken",
-                             "#f4b6b6" if lost else "#dddddd")
+                             farben.BALKEN_FEHLER if lost else farben.BALKEN_NORMAL)
             self._update_buttons()
             return False
         self._manual_off = False
@@ -1538,7 +1539,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if isinstance(exc, AuthError):
                 if not isinstance(exc, AuthNoReply):
                     self._auth_stop = str(exc)
-                self._set_status("Anmeldung an der Basis gescheitert", "#f4b6b6")
+                self._set_status("Anmeldung an der Basis gescheitert", farben.BALKEN_FEHLER)
                 s.fw_label.setText(f"{port}: nicht angemeldet")
                 if not quiet:
                     QtWidgets.QMessageBox.critical(self, "Anmeldung an der Basis", str(exc))
@@ -1562,7 +1563,7 @@ class MainWindow(QtWidgets.QMainWindow):
             s.fw_label.setToolTip(self.link.bootloader)
         self.ctrl = RunController(self.link, s.params(), auto_climate=s.climate_auto.isChecked(),
                                   ecu=self.page_rusefi.active_link())
-        self._set_status("Verbunden – START drücken (F1)", "#dddddd")
+        self._set_status("Verbunden – START drücken (F1)", farben.BALKEN_NORMAL)
         if self.link.default_mode != "N":
             self.link.set_mode(self.link.default_mode)       # Basis mit Zange: Zuendstaerke im D-Telegramm
         if self.link.is_basis:
@@ -1571,7 +1572,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._basis_key()
         if self.link.is_zange_usb:
             s.fw_label.setText(f"{port}: Zange per USB – {self.link.caps.get('fw', '')}")
-            self._set_status("Zange per USB – nur Auslesen/Testen", "#f4b6b6")
+            self._set_status("Zange per USB – nur Auslesen/Testen", farben.BALKEN_FEHLER)
             self._warn_box = QtWidgets.QMessageBox(QtWidgets.QMessageBox.Warning, "Zange per USB",
                                                    ZANGE_USB_WARNUNG, QtWidgets.QMessageBox.Ok, self)
             self._warn_box.open()                          # nicht blockierend
@@ -1600,12 +1601,12 @@ class MainWindow(QtWidgets.QMainWindow):
         wiederholt: Jeder Fehlversuch verlaengert die Sperre der Basis."""
         port = self._tcp_again
         if self.on_connect(port, quiet=True):
-            self._set_status("Wieder mit der Basis verbunden und angemeldet", "#dddddd")
+            self._set_status("Wieder mit der Basis verbunden und angemeldet", farben.BALKEN_NORMAL)
         elif self._auth_stop:
             QtWidgets.QMessageBox.critical(self, "Anmeldung an der Basis", self._auth_stop)
         else:
             self._tcp_again = port
-            self._set_status("Verbindung zur Basis weg, PyST verbindet neu …", "#f4b6b6")
+            self._set_status("Verbindung zur Basis weg, PyST verbindet neu …", farben.BALKEN_FEHLER)
 
     def _basis_key(self):
         """Per USB ist das Koppeln: Schlüssel für die Anmeldung per WLAN holen. Per TCP den Zustand anzeigen."""
@@ -1634,7 +1635,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     port = self.link.port
                     self.on_connect(lost=True)
                     self._tcp_again = port
-                    self._set_status("Verbindung zur Basis weg, PyST verbindet neu …", "#f4b6b6")
+                    self._set_status("Verbindung zur Basis weg, PyST verbindet neu …", farben.BALKEN_FEHLER)
             elif not self.link.port.startswith(SIM_PORT) and self.link.port not in {d for d, _ in list_serial_ports()}:
                 self.on_connect(lost=True)
             return
@@ -1653,11 +1654,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._auto_failed[port] = time.time()
                 continue
             if is_pst_firmware(self.firmware):
-                self._set_status("Messboard automatisch verbunden – START drücken (F1)", "#dddddd")
+                self._set_status("Messboard automatisch verbunden – START drücken (F1)", farben.BALKEN_NORMAL)
                 return
             # anderes Geraet (oder alte Firmware ohne Kennung): wieder trennen, bis zum Abziehen in Ruhe lassen
             self.on_connect(lost=True)
-            self._set_status("Nicht verbunden – „Verbinden“ drücken", "#dddddd")
+            self._set_status("Nicht verbunden – „Verbinden“ drücken", farben.BALKEN_NORMAL)
             self._auto_failed[port] = time.time()
         if self.link is None:
             zp = zange_usb_ports()
@@ -1749,7 +1750,7 @@ class MainWindow(QtWidgets.QMainWindow):
         r = self.ctrl.result
         self.plot.freeze(False)
         if r is None:
-            self._set_status("Fertig – keine Auswertung möglich", "#f4b6b6")
+            self._set_status("Fertig – keine Auswertung möglich", farben.BALKEN_FEHLER)
             return
         self.result_label.setText(r.summary() + f"\nEnde: {r.end_reason}   |   "
                                   f"{len(self.ctrl.frames)} Telegramme, {self.link.lost} verloren")
@@ -2133,7 +2134,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._finish_run()
             else:
                 self.plot.freeze(False)
-                self._set_status(self.ctrl.message or "Abgebrochen", "#f4b6b6")
+                self._set_status(self.ctrl.message or "Abgebrochen", farben.BALKEN_FEHLER)
             self._update_buttons()
         if st in (WAIT, RUN):
             self._update_buttons()
@@ -2161,7 +2162,7 @@ class MainWindow(QtWidgets.QMainWindow):
                              QtWidgets.QApplication.activeModalWidget() is not None, bool(self.page_pruef.bg.pending))
 
     def _taste_abgelehnt(self, was: str, grund: str):
-        self.band.zeige(f"{was}: {grund}", "#c62828", 6.0)
+        self.band.zeige(f"{was}: {grund}", farben.FEHLER, 6.0)
         self.statusBar().showMessage(f"Zange: {was} abgelehnt: {grund}", 6000)
         self.page_tasten.led(tasten.LED_FEHLER)
 
@@ -2181,7 +2182,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._taste_abgelehnt("Neuer Lauf", grund)
             return
         self.page_tasten.led(tasten.LED_OK)                # vor dem Start: Klima lesen hält die Antwort sonst auf
-        self.band.zeige("Neuer Lauf gestartet", "#2e7d32", 3.0)
+        self.band.zeige("Neuer Lauf gestartet", farben.GUT, 3.0)
         self.on_start()
 
     def _taste_ratio(self):
@@ -2204,13 +2205,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.page_settings.fields["ratio"].setValue(wert)
             self._persist()
             self._set_status(f"Übersetzung = {wert:.3f}", "#b8e6b8")
-            self.band.zeige(f"Übersetzung {wert:.3f} übernommen (bisher {self.ratio_mess.bisher:.3f})", "#2e7d32", 6.0)
+            self.band.zeige(f"Übersetzung {wert:.3f} übernommen (bisher {self.ratio_mess.bisher:.3f})", farben.GUT, 6.0)
             self.page_tasten.led(tasten.LED_OK)
 
     def _ratio_band(self, now: float):
         m = self.ratio_mess
         if m.zustand == m.MISST:
-            self.band.zeige(f"Übersetzung wird gemessen, Drehzahl halten … {m.rest_s(now)} s", "#ef6c00")
+            self.band.zeige(f"Übersetzung wird gemessen, Drehzahl halten … {m.rest_s(now)} s", farben.WARNUNG)
         elif m.zustand == m.WARTET:
             geste = tasten.geste_von(self.page_tasten.setup, "uebersetzung")
             self.band.zeige(f"Übersetzung neu {m.wert:.3f}   bisher {m.bisher:.3f}\n"
@@ -2234,7 +2235,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.page_tasten.led(tasten.LED_FERTIG)
             self._ratio_band(now)
         else:
-            self.band.zeige(f"Übersetzung nicht übernommen: {ereignis.text}", "#c62828", 8.0)
+            self.band.zeige(f"Übersetzung nicht übernommen: {ereignis.text}", farben.FEHLER, 8.0)
             self.statusBar().showMessage(f"Übersetzung nicht übernommen: {ereignis.text}", 8000)
             self.page_tasten.led(tasten.LED_FEHLER)
 
@@ -2282,8 +2283,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _show_zange_led(self, state: str):
         """Statusleiste: auf einen Blick, ob die Zange da ist."""
-        text, farbe = {"ok": ("Zange verbunden", "#2e7d32"), "weg": ("Zange nicht verbunden", "#c62828"),
-                       "usb": ("Zange per USB", "#ef6c00")}.get(state, ("", ""))
+        text, farbe = {"ok": ("Zange verbunden", farben.GUT), "weg": ("Zange nicht verbunden", farben.FEHLER),
+                       "usb": ("Zange per USB", farben.WARNUNG)}.get(state, ("", ""))
         self.zange_led.setText(f"● {text}" if text else "")
         self.zange_led.setStyleSheet(f"color: {farbe}; font-weight: 700;" if text else "")
 

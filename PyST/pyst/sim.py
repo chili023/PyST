@@ -1846,3 +1846,20 @@ class LambdaSimDevice:
             self._end("version" if ver else None)
             okv = self.faults.get("ok_version", "A0")
             port._out(f"#ERR;WBF;version;ver={ver};app=neu\r\n" if ver else f"#OK;WBF;END;ver={okv};n=5\r\n")
+
+
+def open_sim(port: str, replay_file: str = ""):
+    """Portname -> (Ersatz fuer den seriellen Port, abgespielter Lauf oder None).
+    SIM[:mega|:mega300][:stoerung], SIM:basis[:ohne|:wlan|:stoerung], SIM:zange; replay_file spielt einen Lauf ab."""
+    if replay_file:
+        source = ReplaySource(replay_file)
+        return SimSerial(source=source), source
+    parts = port.split(":")[1:]
+    if parts[:1] == ["zange"]:
+        return ZangeUsbSimSerial(), None
+    if parts[:1] == ["basis"]:
+        return BasisSimSerial(paired="ohne" not in parts, tcp="wlan" in parts,
+                              faults=BASIS_FAULTS if "stoerung" in parts else None), None
+    mega = "mega" in parts or "mega300" in parts
+    return SimSerial(engine=SimEngine(rate=61.0) if mega else None, mega=mega, diag="mega300" not in parts,
+                     faults=FAULT_PRESET if "stoerung" in parts else None), None

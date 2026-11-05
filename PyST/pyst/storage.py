@@ -30,6 +30,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from .felder import to_float
 from . import __version__, lvxml, physics, rusefi
 
 PYST_EXT = ".pyst"
@@ -150,13 +151,6 @@ def save_run(ctrl, vehicle: str = "", firmware: str = "", base_dir: str = "") ->
     return folder
 
 
-def _float(v: str) -> float:
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return float("nan")
-
-
 def _read_csv_slow(text: str) -> Dict[str, np.ndarray]:
     """Jede Zelle einzeln: vertraegt Text, leere Zellen und zu kurze Zeilen (= nan)."""
     cols: Dict[str, list] = {}
@@ -164,7 +158,7 @@ def _read_csv_slow(text: str) -> Dict[str, np.ndarray]:
     for row in rd:
         for k, v in row.items():
             if k is not None:
-                cols.setdefault(k, []).append(_float(v))
+                cols.setdefault(k, []).append(to_float(v))
     return {k: np.array(v) for k, v in cols.items()}
 
 
@@ -190,12 +184,12 @@ def _read_side_files(read: Callable[[str], Optional[str]], names: List[str]) -> 
     if txt:
         for row in csv.reader(io.StringIO(txt), delimiter=";"):
             if len(row) >= 2 and row[0] != "zeit_s":
-                out["markers"].append((_float(row[0]), row[1]))
+                out["markers"].append((to_float(row[0]), row[1]))
     txt = read("ereignisse.csv")
     if txt:
         for row in csv.reader(io.StringIO(txt), delimiter=";"):
             if len(row) >= 3 and row[0] != "zeit_s":
-                out["events"].append((_float(row[0]), row[1], row[2]))
+                out["events"].append((to_float(row[0]), row[1], row[2]))
     out["notes"] = read("notizen.txt") or ""
     for n in sorted(x for x in names if x.startswith("bursts/") and x.endswith(".csv")):
         txt = read(n)
@@ -497,7 +491,7 @@ def parse_terminal_log(path: str, params: Optional[physics.DynoParams] = None) -
     zange = has_diag and has_zange_fields(frames)
     header = ROH_HEADER + (DIAG_HEADER if has_diag else []) + (ZANGE_HEADER if zange else [])
     rows = [frame_row(f, 0.0, p, has_diag, zange) for f in frames]
-    cols = {h: np.array([_float(str(r[i])) for r in rows]) for i, h in enumerate(header)}
+    cols = {h: np.array([to_float(str(r[i])) for r in rows]) for i, h in enumerate(header)}
     date = _dt.datetime.fromtimestamp(first_stamp if first_stamp is not None else os.path.getmtime(path))
     meta = {"programm": f"PyST {__version__} – Import Terminal-Mitschnitt", "quelle": os.path.basename(path),
             "datum": date.isoformat(timespec="seconds"), "fahrzeug": "", "firmware": " | ".join(info),

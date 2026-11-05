@@ -8,7 +8,9 @@ Datei: 256 Byte Kopf + Nutzdaten. Felder fuer Signatur und Verschluesselung sind
 import struct
 import zlib
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
+
+from .felder import parse_kv
 
 BL_PING, BL_START, BL_DATA, BL_END, BL_ABORT, BL_BOOT, BL_RESP = 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x80
 (BL_OK, BL_BUSY, BL_E_STATE, BL_E_OFFSET, BL_E_HEADER, BL_E_TARGET, BL_E_UNSUPPORTED, BL_E_LENGTH, BL_E_FLASH,
@@ -115,9 +117,7 @@ def parse_resp(data: bytes) -> Tuple[int, int, int, str]:
     return cmd, status, value, data[6:].decode("latin-1")
 
 
-def parse_info(text: str) -> Dict[str, str]:
-    """'#BOOTLOADER;proto=1;bl=1.0.0;…' -> Felder"""
-    return dict(p.split("=", 1) for p in text.strip().split(";") if "=" in p)
+parse_info = parse_kv                                   # '#BOOTLOADER;proto=1;bl=1.0.0;…' -> Felder
 
 
 def _text(b: bytes) -> str:

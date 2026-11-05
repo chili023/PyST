@@ -7,12 +7,13 @@ from typing import Callable, List
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from . import farben
 from . import pruef
 from .bg import Bg
 from .hw_page import RED_BANNER
 from .pruef import Check
 
-FARBE = {pruef.OK: "#2e7d32", pruef.WARN: "#ef6c00", pruef.FEHLER: "#c62828", pruef.INFO: "#666666"}
+FARBE = {pruef.OK: farben.GUT, pruef.WARN: farben.WARNUNG, pruef.FEHLER: farben.FEHLER, pruef.INFO: "#666666"}
 BLITZ_WARNUNG = ("Nicht in die LED schauen. Mit kurzem Puls beginnen und U_DS am Blitzkopf (TP7 gegen TP8) messen: "
                  "über 24 V sofort aufhören.")
 

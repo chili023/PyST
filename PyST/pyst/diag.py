@@ -14,6 +14,8 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from .felder import parse_kv  # noqa: F401  (auch von basis, auth, link benutzt)
+
 # Zusatzfelder des D-Telegramms (nach zyklus;t_ms;rate;ign;roll;egt1;afr;egt2 – siehe link.parse_diag)
 DIAG_FIELDS = ("t_ms", "ign_n", "ign_pmin_us", "ign_pmax_us", "ign_rej",
                "roll_n", "roll_pmin_us", "roll_pmax_us", "roll_rej", "flags")
@@ -119,16 +121,6 @@ def unwrap_ticks(ticks) -> np.ndarray:
         return a
     d = (np.diff(a) + (1 << 31)) % (1 << 32) - (1 << 31)     # vorzeichenbehaftet: |Abstand| < 2^31
     return np.concatenate([[a[0]], a[0] + np.cumsum(d)])
-
-
-def parse_kv(text: str) -> Dict[str, str]:
-    """'#BURST;BEGIN;n=800;tick_ns=62.5' -> {'n': '800', 'tick_ns': '62.5'} (Felder ohne '=' werden ignoriert)."""
-    out = {}
-    for part in text.split(";"):
-        if "=" in part:
-            k, v = part.split("=", 1)
-            out[k.strip()] = v.strip()
-    return out
 
 
 # ---------------------------------------------------------------------------------------------- Ereignisse

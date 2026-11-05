@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from . import farben
 from . import physics
 
 GESTEN: Tuple[Tuple[str, str], ...] = (("t1_kurz", "T1 kurz"), ("t2_kurz", "T2 kurz"), ("t3_kurz", "T3 kurz"),
@@ -139,13 +140,13 @@ class TastenSync:
     def text(self) -> Tuple[str, str]:
         """Für die Anzeige: Text, Farbe."""
         if self.zustand == self.OK:
-            return "Die Zange hat das Setup bestätigt.", "#2e7d32"
+            return "Die Zange hat das Setup bestätigt.", farben.GUT
         if self.zustand in (self.OFFEN, self.UNTERWEGS):
-            return "Wird an die Zange geschickt …", "#ef6c00"
+            return "Wird an die Zange geschickt …", farben.WARNUNG
         if self.zustand == self.ALT:
-            return f"Firmware zu alt für das Setup: Zange ab {ZANGE_VERSION}, Basis ab {BASIS_VERSION}.", "#c62828"
+            return f"Firmware zu alt für das Setup: Zange ab {ZANGE_VERSION}, Basis ab {BASIS_VERSION}.", farben.FEHLER
         if self.zustand == self.FEHLER:
-            return f"Die Zange hat das Setup nicht bestätigt ({self.grund}).", "#c62828"
+            return f"Die Zange hat das Setup nicht bestätigt ({self.grund}).", farben.FEHLER
         return "Keine Zange verbunden. Das Setup geht beim Verbinden hinaus, bis dahin gilt der Standard.", "#666666"
 
 

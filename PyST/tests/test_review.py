@@ -5,6 +5,8 @@ import json
 import os
 import queue
 import sys
+import math
+import subprocess
 import tempfile
 import time
 import unittest
@@ -14,7 +16,7 @@ from unittest import mock
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from pyst import auth, channels, flash, link, physics, pruef, runcache, sim, storage  # noqa: E402
+from pyst import auth, bootproto, channels, diag, felder, flash, link, physics, pruef, runcache, sim, storage  # noqa: E402
 from conftest import close_window  # noqa: E402
 from pyst.recorder import Recorder  # noqa: E402
 from pyst.runcache import RunCache  # noqa: E402
@@ -494,6 +496,37 @@ class FlashSeiteEsp(unittest.TestCase):
 
     def test_zange_braucht_keine_bruecke(self):
         self.assertEqual(self.starte(self.qt.QMessageBox.Yes, flash.ZANGE), ["frage", "run"])
+
+
+class Abhaengigkeiten(unittest.TestCase):
+    def test_link_laedt_den_simulator_nicht(self):
+        code = "import sys; import pyst.link; sys.exit('pyst.sim' in sys.modules)"
+        root = os.path.join(os.path.dirname(__file__), "..")
+        self.assertEqual(subprocess.run([sys.executable, "-c", code], cwd=root).returncode, 0)
+
+    def test_simulator_kommt_bei_bedarf(self):
+        for port, typ in (("SIM", sim.SimSerial), ("SIM:zange", sim.ZangeUsbSimSerial), ("SIM:basis", sim.BasisSimSerial)):
+            lk = link.DynoLink(port)
+            self.addCleanup(lk.close)
+            self.assertIsInstance(lk.ser, typ)
+            self.assertIsNone(lk.replay)
+        lk = link.DynoLink("SIM:161802")
+        self.addCleanup(lk.close)
+        self.assertIsNotNone(lk.replay)
+
+
+class Felder(unittest.TestCase):
+    def test_kv(self):
+        self.assertEqual(bootproto.parse_info("#BOOTLOADER;proto=1;bl=1.0.0;x\r\n"), {"proto": "1", "bl": "1.0.0"})
+        self.assertIs(diag.parse_kv, felder.parse_kv)
+
+    def test_zahlen(self):
+        self.assertEqual(felder.to_float("1.5"), 1.5)
+        self.assertTrue(math.isnan(felder.to_float("x")))
+        self.assertTrue(math.isnan(felder.to_float(None)))
+        self.assertEqual(felder.to_int("12.9"), 12)
+        for bad in ("x", None, "inf", "nan"):
+            self.assertEqual(felder.to_int(bad, -1), -1)
 
 
 if __name__ == "__main__":
