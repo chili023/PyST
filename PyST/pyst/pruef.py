@@ -1,5 +1,5 @@
 """
-Pruefungen fuer die Inbetriebnahme von Basis und Zange (Reiter „Prüfen“), ohne Oberflaeche.
+Pruefungen fuer die Inbetriebnahme von Basis und Zange (Unterreiter „Prüfen“), ohne Oberflaeche.
 
 Jede Pruefung liefert Check-Eintraege (Gruppe, Name, Ergebnis, Wert, Soll). Soll-Werte aus der
 Inbetriebnahme-Checkliste (PyST-HW docs/INBETRIEBNAHME.md, Abschnitte 1.7, 2.6, 5.1, 5.2, 5.3).
@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 from . import physics, zange
-from .basis import (LOG_BOOT, LOG_MARK, LOG_SPARK, LOG_STATUS, LOG_SYNC, LogEntry, ZangeStatus, _f, _i)
+from .basis import (LOG_BOOT, LOG_MARK, LOG_SPARK, LOG_STATUS, LOG_SYNC, LogEntry, ZangeStatus, _f, _i, parse_lambda)
 from .diag import parse_kv
 
 OK, WARN, FEHLER, INFO = "ok", "warnung", "fehler", "info"
@@ -77,6 +77,11 @@ def check_basis(caps: Dict[str, str], stat: List[str], net: List[str]) -> List[C
             out.append(Check(g, name, INFO, kv[k]))
     wb = kv.get("wb", "")
     out.append(Check(g, "Wideband", INFO, wb or "–", "ohne F042-Firmware: reset, can_err zählt hoch"))
+    lam = parse_lambda(kv)
+    if lam.known:
+        warn = lam.low_voltage or lam.grund == "gesperrt_watchdog"
+        out.append(Check(g, "Lambda-Heizung", WARN if warn else INFO, lam.summary.replace("Lambda ", "", 1),
+                         "aus, bereit oder heizt"))
     return out + check_net(net)
 
 

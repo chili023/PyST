@@ -18,7 +18,7 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from pyst import basis, channels, link, mdns, physics, plugs, pruef, storage, zange  # noqa: E402
+from pyst import basis, channels, diag, link, mdns, physics, plugs, pruef, storage, zange  # noqa: E402
 from pyst.recorder import Recorder  # noqa: E402
 from pyst.sim import BasisSimSerial  # noqa: E402
 
@@ -135,7 +135,31 @@ class Parser(unittest.TestCase):
         self.assertEqual(basis.parse_event("E;5;DOSE;2;1").text, "Steckdose 2 an")
         self.assertEqual(basis.parse_event("E;5;DOSE;2;aus").text, "Steckdose 2 aus")
         self.assertEqual(basis.parse_event("E;5;NEU;x;y").text, "NEU x y")
+        # Lambda: Bedienung, kein Marker
+        e = basis.parse_event("E;5;LAMBDA;aus;zeit")
+        self.assertFalse(e.is_marker)
+        self.assertEqual(e.text, "Lambda aus: kein Motor, abgeschaltet")
+        self.assertEqual(basis.parse_event("E;5;LAMBDA;scharf;t4;180").text, "Lambda bereit (an der Zange)")
+        self.assertEqual(basis.parse_event("E;5;LAMBDA;heizt;motor").text, "Lambda heizt")
+        self.assertIn("Watchdog", basis.parse_event("E;5;LAMBDA;abgelehnt;gesperrt_watchdog").text)
         self.assertIsNone(basis.parse_event("E;abc;MARK"))
+
+    def test_lambda(self):
+        kv = diag.parse_kv("#OK;LAMBDA;1;heat=0;wb=wartet;lambda_st=scharf;lambda_grund=-;lambda_rest=151;"
+                           "lambda_motor=0;lambda_uv=0")
+        st = basis.parse_lambda(kv)
+        self.assertTrue(st.known and st.on and not st.low_voltage)
+        self.assertEqual(st.state_text, "bereit")
+        self.assertEqual(st.detail, "wartet auf Motor, aus in 2:31")
+        st = basis.parse_lambda({"lambda_st": "scharf", "lambda_grund": "unterspannung", "lambda_rest": "60",
+                                 "lambda_uv": "1"})
+        self.assertTrue(st.low_voltage)
+        self.assertEqual(st.detail, "12 V zu niedrig, aus in 1:00")
+        st = basis.parse_lambda({"lambda_st": "aus", "lambda_grund": "zeit", "lambda_uv": "1"})
+        self.assertFalse(st.on or st.low_voltage)        # aus: keine Warnung, nur der Grund
+        self.assertEqual(st.summary, "Lambda aus · kein Motor, abgeschaltet")
+        self.assertEqual(basis.parse_lambda({"lambda_st": "heizt", "lambda_grund": "-"}).detail, "Motor läuft")
+        self.assertFalse(basis.parse_lambda(diag.parse_kv("#OK;LAMBDA;0;heat=0;wb=reset")).known)   # Firmware bis 0.2.1
 
     def test_zange(self):
         st = basis.parse_zange("#ZANGE;id=1;mac=34:85:18:a1:b2:c3;akku_mv=4082;akku_pct=87;vbus=1;rssi=-61;"
@@ -281,6 +305,77 @@ class BasisSim(unittest.TestCase):
         self.assertTrue(wait_until(lambda: any(e.text == "Zange verloren" for e in l.drain_events())))
         self.assertFalse(l.zange_status().connected)
         self.assertIsNotNone(l.zange)                                    # letzter Status bleibt gemerkt
+
+    def sim_lambda(self):
+        l = self.l
+        l.drain_events()
+        return l.lambda_status(), l.ser
+
+    def test_lambda(self):
+        l = self.l
+        st, sim = self.sim_lambda()
+        self.assertEqual(st.st, "aus")
+        # Knopf: bereit, Restzeit sofort, ohne Motor keine Heizung
+        self.assertTrue(link.DynoLink.ok(l.lambda_set(True)))
+        st = l.lambda_status()
+        self.assertEqual((st.st, st.motor), ("scharf", False))
+        self.assertGreater(st.rest_s, 170)
+        # Motor kommt
+        sim.lam_motor_t = time.time()
+        self.assertTrue(wait_until(lambda: l.lambda_status().st == "heizt"))
+        self.assertTrue(l.lambda_status().motor)
+        # Motor weg, 12 V zu niedrig, Basis schaltet nach der Zeit selbst ab
+        sim.lam_motor_t = 0.0
+        self.assertTrue(wait_until(lambda: l.lambda_status().st == "scharf"))
+        sim.settings["sim_u12"] = "10.2"
+        self.assertTrue(l.lambda_status().low_voltage)
+        sim.settings["sim_u12"] = "13.8"
+        sim.lam_t_ref -= 200.0
+        self.assertTrue(wait_until(lambda: l.lambda_status().st == "aus"))
+        self.assertEqual(l.lambda_status().grund, "zeit")
+        self.assertTrue(wait_until(lambda: any(e.text.startswith("Lambda aus") for e in l.drain_events())))
+        # T4 lang: ein, aus; nicht als Marker
+        sim.sim_t4()
+        self.assertEqual(l.lambda_status().st, "scharf")
+        sim.sim_t4()
+        st = l.lambda_status()
+        self.assertEqual((st.st, st.grund), ("aus", "t4"))
+        self.assertFalse(any(e.is_marker and "LAMBDA" in e.kind for e in l.drain_events()))
+        # Sperre nach Watchdog-Reset: T4 abgelehnt, der Knopf löst sie
+        sim.lam_watchdog = True
+        sim.sim_t4()
+        self.assertEqual(l.lambda_status().st, "aus")
+        self.assertEqual(l.lambda_status().grund, "gesperrt_watchdog")
+        self.assertTrue(wait_until(lambda: any("abgelehnt" in e.text for e in l.drain_events())))
+        l.lambda_set(True)
+        self.assertEqual(l.lambda_status().st, "scharf")
+        # SWD: Scharf endet, Einschalten abgelehnt
+        l.command("#LAMBDA SWD")
+        self.assertTrue(wait_until(lambda: l.lambda_status().st == "aus"))
+        self.assertEqual(l.lambda_status().grund, "swd")
+        self.assertIn("#ERR;LAMBDA;swd", l.lambda_set(True))
+        # Prüfen zeigt den Zustand
+        sim.lam_swd_until = 0.0
+        l.lambda_set(True)
+        c = _by_name(pruef.check_basis(l.caps, l.command("#STAT", timeout=1.0, done=lambda s: s.startswith("#STAT;u12")), []))
+        self.assertEqual(c["Lambda-Heizung"].ergebnis, pruef.INFO)
+        self.assertTrue(c["Lambda-Heizung"].wert.startswith("bereit"))
+        sim.settings["sim_u12"] = "10.2"
+        c = _by_name(pruef.check_basis(l.caps, l.command("#STAT", timeout=1.0, done=lambda s: s.startswith("#STAT;u12")), []))
+        self.assertEqual(c["Lambda-Heizung"].ergebnis, pruef.WARN)
+
+    def test_lambda_automatik(self):
+        l = self.l
+        _st, sim = self.sim_lambda()
+        sim.settings["lambda_heat"] = "1"
+        self.assertTrue(wait_until(lambda: l.lambda_status().st == "aus"))
+        sim.lam_motor_t = time.time()
+        self.assertTrue(wait_until(lambda: l.lambda_status().on))
+        # aus von Hand bei laufendem Motor bleibt aus
+        l.lambda_set(False)
+        sim.lam_motor_t = time.time()
+        time.sleep(0.1)
+        self.assertEqual(l.lambda_status().st, "aus")
 
     def test_net_and_plugs(self):
         l = self.l
@@ -435,7 +530,7 @@ class ZangeUsb(unittest.TestCase):
             self.assertEqual(run["kind"], "dauermessung")
             self.assertEqual(run["params"].imp, 1.0)                     # aus imp_per_rev_x10 = 10
             self.assertEqual(len(run["markers"]), 2)
-            self.assertEqual(run["markers"][0][1], "Taste T1")
+            self.assertEqual(run["markers"][0][1], "Marker 1 (Taste T1)")
             self.assertAlmostEqual(run["markers"][0][0], 12.0, delta=0.1)
             n = run["n_meas"]
             self.assertGreater(np.nanmax(n), 10000)
@@ -631,7 +726,7 @@ class StorageZange(unittest.TestCase):
             os.makedirs(os.path.join(tmp, "lauf"))
             self.assertEqual(storage.write_side_events(os.path.join(tmp, "lauf"), 100.0, evs), (1, 2))
             side = storage._read_side_files(storage._folder_reader(os.path.join(tmp, "lauf"))[0], [])
-            self.assertEqual(side["markers"], [(0.2, "Marker Zange: T1")])
+            self.assertEqual(side["markers"], [(0.2, "Marker 1")])
             self.assertEqual([e[1] for e in side["events"]], ["Steckdose", "Zange"])
             hdr = storage.ROH_HEADER + storage.DIAG_HEADER + storage.ZANGE_HEADER
             self.assertEqual(len(storage.frame_row(fr[0], 100.0, physics.DynoParams(), True, True)), len(hdr))
@@ -785,7 +880,7 @@ class PlugHttp(unittest.TestCase):
 
 # ---------------------------------------------------------------------------------------------- Oberflaeche
 class GuiZange(unittest.TestCase):
-    """Reiter „Zange · Netz · Steckdosen“ offscreen: Basis-Simulator, Demo-Steckdosen mit Automatik,
+    """Unterreiter „Zange · Netz · Steckdosen“ offscreen: Basis-Simulator, Demo-Steckdosen mit Automatik,
     Marker der Zange in Oszi und Lauf, Zange per USB mit Warnhinweis und Log -> .pyst."""
 
     def test_gui(self):
@@ -821,17 +916,44 @@ class GuiZange(unittest.TestCase):
                 self.assertTrue(w.on_connect())
                 self.assertEqual(w.link.mode, "D")
                 hw = w.page_hw
-                w.tabs.setCurrentWidget(hw)
+                w.show_page(hw)
                 hw.start_demo()
                 self.assertTrue(run(5, lambda: "Akku" in w.zange_status.text()))
                 self.assertTrue(run(5, lambda: len(hw.plugs.states) == 4))
                 self.assertTrue(hw.b_mark.isEnabled())
+                # Lambda: Knopf, Zustand, Statusleiste, Warnung bei 12 V
+                self.assertTrue(run(3, lambda: hw.b_lambda.isEnabled()))
+                self.assertEqual((hw.b_lambda.text(), hw.lam_state.text()), ("Lambda ein", "aus"))
+                self.assertEqual(w.lambda_status.text(), "● Lambda aus")
+                w.link.ser.settings["sim_motor"] = "0"
+                w.link.ser.lam_motor_t = 0.0
+                hw.b_lambda.click()
+                self.assertTrue(run(3, lambda: hw.lam_state.text() == "bereit"))
+                self.assertEqual(hw.b_lambda.text(), "Lambda aus")
+                self.assertIn("wartet auf Motor, aus in", hw.lam_detail.text())
+                hw.b_lambda.click()
+                self.assertTrue(run(3, lambda: hw.lam_state.text() == "aus"))
+                self.assertEqual(hw.lam_detail.text(), "von PyST ausgeschaltet")
+                hw.b_lambda.click()
+                self.assertTrue(run(3, lambda: hw.lam_state.text() == "bereit"))
+                self.assertIn("Lambda bereit · aus in", w.lambda_status.text())
+                self.assertTrue(hw.lam_warn.isHidden())
+                w.link.ser.settings["sim_u12"] = "10.1"
+                self.assertTrue(run(3, lambda: not hw.lam_warn.isHidden()))
+                self.assertIn("12 V zu niedrig", w.lambda_status.text())
+                w.link.ser.settings["sim_u12"] = "13.8"
+                w.link.ser.settings["sim_motor"] = "1"
+                self.assertTrue(run(3, lambda: hw.lam_state.text() == "heizt"))
+                self.assertIn("Lambda heizt", w.lambda_status.text())
+                w.link.ser.sim_t4()                                  # T4 lang an der Zange
+                self.assertTrue(run(3, lambda: hw.lam_state.text() == "aus"))
+                self.assertEqual(hw.lam_detail.text(), "an der Zange ausgeschaltet")
                 # Lauf: Automatik schaltet Gebläse und Absaugung ein, Marker der Zange gehoert zum Lauf
                 w.on_start()
                 self.assertTrue(run(5, lambda: hw.plugs.states.get(1) is not None and hw.plugs.states[1].on))
                 hw.mark()
                 self.assertTrue(run(3, lambda: any(e.is_marker for e in w.ctrl.basis_events)))
-                w.tabs.setCurrentWidget(hw)
+                w.show_page(hw)
                 run(1.0)
                 shot("zange_netz_steckdosen.png")
                 w.on_abort()
@@ -839,7 +961,7 @@ class GuiZange(unittest.TestCase):
                 self.assertTrue(hw.plugs.automation.pending_text(1).startswith("aus in"))
                 # Oszi: Dauermessung mit Zuendstaerke und Marker der Zange
                 o = w.page_oszi
-                w.tabs.setCurrentWidget(o)
+                w.show_page(o)
                 o._toggle_channel("Zündstärke", True)
                 o.rec_btn.setChecked(True)
                 run(2.0)
@@ -862,7 +984,7 @@ class GuiZange(unittest.TestCase):
                 self.assertIsNotNone(w._warn_box)
                 self.assertIn("galvanische", w._warn_box.text())
                 w._warn_box.close()
-                w.tabs.setCurrentWidget(hw)
+                w.show_page(hw)
                 run(0.5)
                 self.assertFalse(hw.banner.isHidden())
                 self.assertTrue(hw.b_log.isEnabled())

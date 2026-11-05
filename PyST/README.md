@@ -31,8 +31,7 @@ Testablauf für den Vergleich alt/neu: siehe [TESTPLAN.md](TESTPLAN.md).
 | **Fahrzeuge & Setups** | Datenbank: Hersteller, Modell, Vergaser/EFI; je Setup Motor (Hubraum, CR, Steuerzeiten), Vergaser (Düsen, Nadel, Clip …), ECU/Tune, Zündung, Antrieb (Übersetzung, Vario, Rollen, Federn), Ein-/Auslass, Kraftstoff. Setups kopieren, „für neue Läufe verwenden“. |
 | **Auswertung** | Fahrzeug wählen → Läufe nach Datum oder nach Setup gruppiert → **Hinzufügen**, dann nächstes Fahrzeug. Fahrzeug/Setup direkt bearbeiten (auch Rechtsklick: Setup zuordnen, neues Setup). Log-Viewer wie MegaLogViewer: bis 4 Felder, beliebige Kanäle (gleiche Einheit = gleiche Skala), Cursor mit Maus und ←/→, X-Achse Zeit oder Drehzahl, beliebig viele Läufe (Farbe je Lauf, Linienart je Kanal). **Setup-Vergleich** mit markierten Unterschieden. Kanal „Übersetzung Zündung/Rolle“. |
 | **Oszi / Dauermessung** | Messwerkzeug für die Fehlersuche (Zündung oder Rolle?), siehe unten |
-| **Zange · Netz · Steckdosen** | PyST-Basis mit Funk-Zündzange, WLAN der Basis, WLAN-Steckdosen, Zange per USB – siehe unten |
-| **Einstellungen** | Verbindung, Prüfstand, Lauf, Filter & Verluste, Klima, Anzeige (λ oder AFR) |
+| **Einstellungen** | Unterreiter **Allgemein** (Prüfstand, Lauf, Filter & Verluste, Klima, Anzeige λ oder AFR), **Verbindung** (Port, Verbinden, Live-Anzeige, automatisches Verbinden), **Zange · Netz · Steckdosen** (PyST-Basis mit Funk-Zündzange, WLAN der Basis, WLAN-Steckdosen, Zange per USB), **Tasten** (Tasten-Setup der Zange), **Prüfen**, **Firmware** – siehe unten |
 
 - Während eines Laufs bleibt die Skalierung wie beim vorherigen Lauf stehen; danach wird neu skaliert.
 - Achsgrenzen über dem Diagramm: Drehzahl von/bis, PS von/bis, Nm von/bis (z.B. ab 5000 1/min und ab 5 PS);
@@ -118,12 +117,12 @@ Mit `ign_lockout_pct` (z.B. 50) filtert der Simulator Doppelimpulse wie die Firm
 
 ## Inbetriebnahme: Prüfen und Firmware
 
-**Reiter „Prüfen“:** „Alles prüfen“ bewertet das verbundene Gerät mit Sollwerten, ohne Terminal. Basis: Takt, Spannungen,
+**Einstellungen › Prüfen:** „Alles prüfen“ bewertet das verbundene Gerät mit Sollwerten, ohne Terminal. Basis: Takt, Spannungen,
 Sensoren, Klimawerte, ESP-Link, WLAN, Zange per Funk. Zange per USB: Firmware, Zähler, Kopplung. Dazu „Funken zählen“ mit
 optionaler Sollfrequenz, „Log prüfen“ und bei der Zange per USB „Ein Blitz“ (einzelner TRIG-Puls, 1–25 µs). „Protokoll
 kopieren“ legt das Ergebnis als Text in die Zwischenablage.
 
-**Reiter „Firmware“:** flasht Zange (USB-C), Basis-STM32 (USB über den Bootloader der Basis), Basis-ESP (über die ESP-Brücke),
+**Einstellungen › Firmware:** flasht Zange (USB-C), Basis-STM32 (USB über den Bootloader der Basis), Basis-ESP (über die ESP-Brücke),
 den Lambda-Controller F042 (über die Basis per CAN) und für die Erstprogrammierung den STM32 per ST-Link an J10. Die Firmware der eigenen Hardware liegt nicht in diesem
 Repository: Man wählt die Datei oder den Ordner des Builds, PyST prüft, ob sie zum Ziel passt.
 
@@ -148,13 +147,29 @@ ESP. Die ST-Link-Zeile lehnt die Anwendung allein ab, weil sie ab 0x08008000 gel
 
 ## PyST-Basis, Funk-Zange und Steckdosen
 
+Lambda-Heizung: Knopf „Lambda ein/aus“ unter Einstellungen › Zange · Netz · Steckdosen oder an der Zange (Standard T4 lang). „Bereit“ heißt nur
+Vorheizen, volle Heizung erst mit Motor (Rolle oder Zündfunken). Ohne Motor schaltet die Basis nach `lambda_off_min` (Standard
+3 min) selbst ab, auch wenn PC oder USB ausfallen. Zustand auch in der Statusleiste und unter Einstellungen › Prüfen.
+
+**Tasten der Zange** (Einstellungen › Tasten, Zange ab 0.1.3, Basis ab 0.2.3): Fest in der Firmware und ohne PC nutzbar sind Einschalten, T1
+lang aus, T1 + T2 koppeln, T2 lang Blitzmodus und im Blitzmodus Marker, Aufnahme und φ. Sechs Gesten sind außerhalb des Blitzmodus frei
+belegbar, Standard: T1 kurz Marker, T2 kurz Aufnahme, T3 kurz Neuer Lauf, T3 lang Übersetzung messen, T4 kurz nichts, T4 lang Lambda.
+Das Setup liegt in den PyST-Einstellungen. PyST schickt es beim Verbinden, wenn sich die Zange neu meldet und bei jeder Änderung. Die
+Zange speichert es nicht, ohne PC gilt der Standard. Marker heißen im Lauf und in der Aufzeichnung „Marker 1, 2, 3 …“, je Lauf bzw.
+Aufzeichnung von vorn; aus dem Log der Zange gelesene zeigen die Taste dazu, z. B. „Marker 1 (Taste T1)“.
+- **Neuer Lauf** wirkt wie START. Während eines Laufs, einer Oszi-Aufnahme, einer Prüfung, des Flashens oder mit offenem Dialog gibt
+  es einen Hinweis im Band über den Reitern und das Fehlerbild an der Zange. Abbrechen per Taste gibt es nicht.
+- **Übersetzung messen** braucht Ruhe und gehaltene Drehzahl: Die Taste startet 5 s Messung, das Band zeigt groß neu und bisher, erst ein
+  zweiter Druck innerhalb von 30 s übernimmt den Wert. Bei unruhiger Drehzahl oder doppelt zählender Zange (Abweichung zu rusEFI, oder genau
+  das Doppelte bzw. Halbe von bisher) gibt es nichts zu übernehmen, nur eine Meldung. Eine wirklich verdoppelte Übersetzung trägt man im Dialog ein.
+
 Protokoll: `../docs/04_PST_Diag_1.md` §10. Ohne Hardware vorführbar mit den Simulator-Ports `SIM:basis`,
 `SIM:basis:stoerung`, `SIM:basis:ohne` und `SIM:zange` sowie dem Knopf „Demo-Steckdosen (Simulator)“.
 
 - **Verbinden**: Basis per USB wie bisher, oder **per WLAN**: Port `tcp://192.168.4.1:2323` (Basis als Access Point)
   bzw. `tcp://<name>.local:2323` (Werkstattnetz, mDNS) – oder Knopf „PC per WLAN verbinden“. Ein Abriss der
   WLAN-Verbindung wird erkannt.
-- **Zange** (Reiter „Zange · Netz · Steckdosen“, Kurzfassung rechts in der Statusleiste): Akku, Signal, Sync,
+- **Zange** (Einstellungen › Zange · Netz · Steckdosen, Kurzfassung rechts in der Statusleiste): Akku, Signal, Sync,
   Funken, Blitz φ. **Koppeln …** öffnet das Kopplungsfenster (an der Zange T1 + T2 gleichzeitig 3 s halten),
   **Markieren (F3)** setzt einen Marker (erscheint wie die Tasten der Zange im Oszi und im Lauf),
   **Einstellungen …** liest/schreibt die Zangen-Schlüssel (`imp_per_rev_x10`, `deadtime_us`, `blitz_phi_x10` …).
@@ -311,9 +326,10 @@ pyst/basis.py     PyST-Basis: Parser und Befehle (#ZANGE, #NET, #DOSE, #PAIR, #L
 pyst/plugs.py     WLAN-Steckdosen (Shelly/Tasmota/ESPHome per HTTP, Automatik, Simulator)
 pyst/zange.py     Log der Zange -> Dauermessung
 pyst/mdns.py      einfaches mDNS (Basis und Steckdosen im Netz finden)
-pyst/hw_page.py   Reiter „Zange · Netz · Steckdosen“
-pyst/pruef.py     Prüfungen für die Inbetriebnahme (ohne Oberfläche); pruef_page.py Reiter „Prüfen“
-pyst/flash.py     Firmware flashen: Prüfung, Befehlszeilen, USB-Update, F042 per CAN; flash_page.py Reiter „Firmware“
+pyst/hw_page.py   Unterreiter „Zange · Netz · Steckdosen“
+pyst/tasten.py    Tasten-Setup der Zange, Neuer Lauf und Übersetzung (ohne Oberfläche); tasten_page.py Unterreiter „Tasten“
+pyst/pruef.py     Prüfungen für die Inbetriebnahme (ohne Oberfläche); pruef_page.py Unterreiter „Prüfen“
+pyst/flash.py     Firmware flashen: Prüfung, Befehlszeilen, USB-Update, F042 per CAN; flash_page.py Unterreiter „Firmware“
 pyst/bootproto.py Bootloader der Basis: Rahmen, Update-Datei (Simulator: sim.py BootSimDevice)
 pyst/gui.py       Oberfläche (PySide6 + pyqtgraph)
 pyst/plots.py     Leistungsdiagramm mit ausgerichteten Achsen und Cursor

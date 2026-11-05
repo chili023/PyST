@@ -6,7 +6,7 @@ Oeffentliche Beschreibung: docs/04_PST_Diag_1.md §10 „Erweiterungen PyST-Basi
 - '#CAP' meldet zusaetzlich 'ign=zange|none' und 'hw=…'. Die Zange direkt per USB meldet 'ch=I', 'tick_ns=1000'.
 - D-Telegramm: zwei angehaengte Felder 'ign_peak_mv' (Mittel der Spitzenwerte im Fenster) und 'ign_src'
   (0 keine, 1 Zange-Ferrit, 2 Zange-Probe) – siehe link.parse_diag.
-- Ereigniszeilen 'E;<master_ms>;<art>;…' (MARK, ZANGE, DOSE …), Logzeilen der USB-Zange 'L;idx;art;lokal_us;…'.
+- Ereigniszeilen 'E;<master_ms>;<art>;…' (MARK, ZANGE, DOSE, LAMBDA, ZTASTE …), Logzeilen der USB-Zange 'L;idx;art;lokal_us;…'.
 - Antworten '#ZANGE;…', '#NET;…', '#DOSE;…', '#PAIR;…', '#LOG;…' als Schluessel=Wert-Felder.
 
 Wo die Spezifikation nur den Befehl, nicht aber das genaue Antwortformat festlegt, ist PyST tolerant:
@@ -85,6 +85,86 @@ def _bool(v) -> Optional[bool]:
     return None
 
 
+# ---------------------------------------------------------------------------------------------- Lambda-Heizung
+# Basis-Firmware wb_bedien.h: aus (F042 im Reset), scharf (nur Vorheizen), heizt (Motor erkannt). Die Abschaltzeit
+# lambda_off_min laeuft in der Basis, PyST zeigt sie nur an.
+LAMBDA_GRUND = {
+    "pc": "von PyST ausgeschaltet", "t4": "an der Zange ausgeschaltet", "zeit": "kein Motor, abgeschaltet",
+    "kein_can": "F042 meldet sich nicht", "swd": "SWD-Freigabe läuft", "update": "F042-Update läuft",
+    "gesperrt_watchdog": "gesperrt nach Watchdog-Reset, nur der Knopf hier löst das",
+    "gesperrt_kein_can": "F042 meldet sich nicht", "unterspannung": "12 V zu niedrig", "start": "F042 startet",
+}
+
+
+def _mmss(s: int) -> str:
+    return f"{s // 60}:{s % 60:02d}"
+
+
+@dataclass
+class LambdaStatus:
+    """'#LAMBDA' bzw. '#STAT': lambda_st, lambda_grund, lambda_rest, lambda_motor, lambda_uv. st leer = Firmware zu alt."""
+    st: str = ""
+    grund: str = ""
+    rest_s: int = 0
+    motor: bool = False
+    uv: bool = False
+
+    @property
+    def known(self) -> bool:
+        return bool(self.st)
+
+    @property
+    def on(self) -> bool:
+        return self.st in ("scharf", "heizt")
+
+    @property
+    def low_voltage(self) -> bool:
+        return self.on and self.uv
+
+    @property
+    def state_text(self) -> str:
+        return {"aus": "aus", "scharf": "bereit", "heizt": "heizt"}.get(self.st, self.st or "–")
+
+    @property
+    def color(self) -> str:
+        return {"scharf": "#ef6c00", "heizt": "#2e7d32"}.get(self.st, "#757575")
+
+    @property
+    def detail(self) -> str:
+        """Restzeit und Grund in Worten."""
+        grund = LAMBDA_GRUND.get(self.grund, self.grund) if self.grund not in ("", "-") else ""
+        if self.st == "heizt":
+            return grund or "Motor läuft"
+        if self.st == "scharf":
+            warte = "Motor läuft" if self.motor else "wartet auf Motor"
+            return f"{grund or warte}, aus in {_mmss(self.rest_s)}"
+        return grund
+
+    @property
+    def summary(self) -> str:
+        return f"Lambda {self.state_text}" + (f" · {self.detail}" if self.detail else "")
+
+
+def parse_lambda(kv: Dict[str, str]) -> LambdaStatus:
+    return LambdaStatus(kv.get("lambda_st", ""), kv.get("lambda_grund", ""), _i(kv.get("lambda_rest")),
+                        kv.get("lambda_motor") == "1", kv.get("lambda_uv") == "1")
+
+
+def lambda_event_text(a: List[str]) -> str:
+    """'E;…;LAMBDA;scharf;t4;180', 'aus;zeit', 'heizt;motor', 'abgelehnt;gesperrt_watchdog'."""
+    st = a[0] if a else "?"
+    why = a[1] if len(a) > 1 else ""
+    if st == "aus":
+        return "Lambda aus" + (f": {LAMBDA_GRUND.get(why, why)}" if why not in ("", "-") else "")
+    if st == "abgelehnt":
+        return f"Lambda abgelehnt: {LAMBDA_GRUND.get(why, why)}"
+    if st == "heizt":
+        return "Lambda heizt"
+    quelle = {"pc": "von PyST", "t4": "an der Zange", "auto": "Automatik", "motor_weg": "Motor weg",
+              "unterspannung": "12 V zu niedrig", "kein_can": "F042 meldet sich nicht"}.get(why, why)
+    return f"Lambda bereit ({quelle})"
+
+
 # ---------------------------------------------------------------------------------------------- Ereignisse
 @dataclass
 class BasisEvent:
@@ -104,17 +184,29 @@ class BasisEvent:
             src = {"zange": "Zange", "pyst": "PyST", "taster": "Taster", "basis": "Basis"}.get(quelle.lower(), quelle)
             return f"Marker {src}" + (f": {txt}" if txt else "")
         if self.kind == "ZANGE":
-            return "Zange " + (a[0] if a else "?")
+            return "Zange " + {"neustart": "neu gestartet"}.get(a[0] if a else "?", a[0] if a else "?")
         if self.kind == "DOSE":
             nr = a[0] if a else "?"
             st = a[1] if len(a) > 1 else "?"
             st = {"1": "an", "0": "aus"}.get(st, st)
             return f"Steckdose {nr} {st}"
+        if self.kind == "LAMBDA":
+            return lambda_event_text(a)
+        if self.kind == "ZTASTE":
+            return "Zange: Taste " + {"lauf": "Neuer Lauf", "uebersetzung": "Übersetzung"}.get(a[0] if a else "?", a[0] if a else "?")
         return f"{self.kind} " + " ".join(a)
 
     @property
     def is_marker(self) -> bool:
         return self.kind == "MARK"
+
+    def marker_text(self, nr: int) -> str:
+        """Marker von Taste oder F3 als „Marker <nr>“. Die Nummer zählt der Aufrufer je Lauf bzw. Aufzeichnung."""
+        a = self.args
+        if not self.is_marker or not a or a[0].lower() not in ("zange", "pyst"):
+            return self.text
+        zange = a[1].split("/Z")[1] if len(a) > 1 and "/Z" in a[1] else ""
+        return f"Marker {nr}" + (f" (Zange {zange})" if zange else "")
 
 
 def parse_event(line: str, t_pc: float = 0.0) -> Optional[BasisEvent]:
@@ -429,6 +521,17 @@ class BasisCommands:
         """Kanaele laut '#CAP' ('I,R', 'R', 'I')."""
         return self.caps.get("ch", "I,R") if self.caps else "I,R"
 
+    # --- Lambda-Heizung
+    def lambda_status(self, timeout: float = 1.0) -> Optional[LambdaStatus]:
+        """Zustand der Basis; None = keine Antwort. Aeltere Firmware antwortet ohne lambda_st (known = False)."""
+        for line in self.command("#LAMBDA", timeout=timeout):
+            if line.startswith("#OK;LAMBDA"):
+                return parse_lambda(parse_kv(line))
+        return None
+
+    def lambda_set(self, on: bool) -> List[str]:
+        return self.command(f"#LAMBDA {1 if on else 0}")
+
     # --- Zange
     def zangen_status(self, timeout: float = 1.5) -> List[ZangeStatus]:
         """Alle gekoppelten Zangen: je Zange eine '#ZANGE;id=…'-Zeile, Ende '#OK;ZANGE;n=…' bzw. '#ERR;ZANGE;…'.
@@ -463,8 +566,22 @@ class BasisCommands:
         return out
 
     def zange_cmd(self, sub: str) -> List[str]:
-        """'MARK', 'REC 1', 'REC 0', 'LOG', 'IDENT', 'OFF'"""
+        """'MARK', 'REC 1', 'REC 0', 'LOG', 'IDENT', 'OFF', 'LED <muster>'"""
         return self.command(f"#ZANGE {sub}", timeout=2.5)
+
+    def zange_tasten(self, wert: int) -> List[str]:
+        """Tasten-Setup (tasten.py) über die Basis oder direkt per USB; '#OK…' = die Zange hat es."""
+        return self.set_setting("tasten", wert) if self.is_zange_usb else self.zange_set("tasten", wert)
+
+    def zange_led(self, muster: int) -> List[str]:
+        """Rückmeldung auf eine Tasten-Aktion. Die Basis hat einen Befehlsplatz: belegt heißt hier gleich noch einmal."""
+        lines: List[str] = []
+        for _ in range(3):
+            lines = self.zange_cmd(f"LED {muster}")
+            if not (lines and "belegt" in lines[-1]):
+                break
+            time.sleep(0.1)
+        return lines
 
     # --- Koppeln
     def pair(self, on: bool) -> bool:

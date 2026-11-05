@@ -1,9 +1,10 @@
 """
-Reiter „Zange · Netz · Steckdosen“ (PyST-Basis, Funk-Zange, Zange per USB, WLAN-Steckdosen).
+Unterreiter „Zange · Netz · Steckdosen“ (PyST-Basis, Funk-Zange, Zange per USB, WLAN-Steckdosen).
 
 - Zange: Akku, Signal, Sync, Funken, Blitz φ; Koppeln, gekoppelte Geräte, Markieren, Aufnahme, Identifizieren,
   Ausschalten, Einstellungen (#ZANGE SET/GET). Zange per USB: Warnhinweis (galvanische Verbindung),
   Log auslesen -> Dauermessung / .pyst.
+- Lambda-Heizung: Knopf ein/aus, Zustand mit Restzeit und Grund. Die Abschaltzeit läuft in der Basis.
 - Netzwerk: WLAN der Basis (Access Point / im Werkstattnetz / aus), PC per WLAN mit der Basis verbinden.
 - Steckdosen: über die Basis oder direkt vom PC (Shelly Gen1/Gen2+, Tasmota, ESPHome), Ein/Aus, Leistung,
   Totmann-Zeit, Automatik (beim Laufstart ein, nach Laufende + Nachlaufzeit aus).
@@ -18,8 +19,8 @@ from typing import Callable, Dict, List, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import storage
-from .basis import (MAX_PLUGS, PLUG_TYPE_TEXT, PLUG_TYPES, ZANGE_KEYS, ZANGE_USB_WARNUNG, NetState, ZangeStatus,
-                    main_zange, net_commands)
+from .basis import (LAMBDA_GRUND, MAX_PLUGS, PLUG_TYPE_TEXT, PLUG_TYPES, ZANGE_KEYS, ZANGE_USB_WARNUNG, LambdaStatus,
+                    NetState, ZangeStatus, main_zange, net_commands)
 from .plugs import NO_FALLBACK, PlugConfig, PlugManager, start_demo_plugs
 
 RED_BANNER = "background: #c62828; color: white; font-weight: 700; padding: 6px; border-radius: 4px;"
@@ -211,6 +212,7 @@ class PlugDialog(QtWidgets.QDialog):
 class HardwarePage(QtWidgets.QScrollArea):
     zange_text = QtCore.Signal(str)          # Kurztext für die Statusleiste
     zange_state = QtCore.Signal(str)         # Anzeige Statusleiste: ok, weg, usb oder leer
+    lambda_text = QtCore.Signal(str, str)    # Statusleiste: Text, Farbe; leer = keine Basis
     log_saved = QtCore.Signal(str)           # ausgelesenes Zangen-Log (Ordner) -> Datenbank
     connect_port = QtCore.Signal(str)        # „Per WLAN verbinden“ -> Hauptfenster
 
@@ -229,6 +231,8 @@ class HardwarePage(QtWidgets.QScrollArea):
         self._last_zange = 0.0
         self._last_plugs = 0.0
         self._last_net = 0.0
+        self._last_lambda = 0.0
+        self.lam: Optional[LambdaStatus] = None
         self.setWidgetResizable(True)
         inner = QtWidgets.QWidget()
         self.setWidget(inner)
@@ -242,6 +246,7 @@ class HardwarePage(QtWidgets.QScrollArea):
         top.addWidget(self._build_zange(), 3)
         top.addWidget(self._build_net(), 2)
         root.addLayout(top)
+        root.addWidget(self._build_lambda())
         root.addWidget(self._build_plugs(), 1)
         mode = settings.get("steckdosen_weg", "direkt")
         key = "steckdosen" if mode == "direkt" else "steckdosen_basis"
@@ -309,7 +314,27 @@ class HardwarePage(QtWidgets.QScrollArea):
         self.b_ident.clicked.connect(lambda: self._zcmd("IDENT"))
         self.b_set.clicked.connect(self.zange_settings)
         self.b_log.clicked.connect(lambda: self.read_log())
-        QtGui.QShortcut(QtGui.QKeySequence("F3"), self, activated=self.mark, context=QtCore.Qt.ApplicationShortcut)
+        return g
+
+    def _build_lambda(self):
+        g = QtWidgets.QGroupBox("Lambda-Heizung")
+        lay = QtWidgets.QHBoxLayout(g)
+        self.b_lambda = QtWidgets.QPushButton("Lambda ein")
+        self.b_lambda.setToolTip("Schaltet die Sonde bereit: Vorheizen, volle Heizung erst mit Motor. Ohne Motor schaltet "
+                                 "die Basis selbst ab (lambda_off_min). An der Zange: Standard T4 lang, siehe Unterreiter Tasten.")
+        self.b_lambda.clicked.connect(self.lambda_toggle)
+        self.lam_state = QtWidgets.QLabel("–")
+        self.lam_state.setStyleSheet("font-size: 15px; font-weight: 600;")
+        self.lam_detail = QtWidgets.QLabel("")
+        self.lam_detail.setStyleSheet("color: #555;")
+        self.lam_warn = QtWidgets.QLabel("12-V-Spannung zu niedrig: Sonde heizt nicht (lambda_umin).")
+        self.lam_warn.setStyleSheet(RED_BANNER)
+        self.lam_warn.hide()
+        lay.addWidget(self.b_lambda)
+        lay.addWidget(self.lam_state)
+        lay.addWidget(self.lam_detail)
+        lay.addWidget(self.lam_warn)
+        lay.addStretch(1)
         return g
 
     def _build_net(self):
@@ -417,6 +442,8 @@ class HardwarePage(QtWidgets.QScrollArea):
             b.setEnabled(zange_ok)
         self.b_log.setVisible(usb)
         self.b_log.setEnabled(usb)
+        if not basis:
+            self._show_lambda(None)
         for w in (self.net_mode, self.net_ch, self.net_ssid, self.net_pw, self.b_net_apply, self.b_net_read):
             w.setEnabled(basis)
         if not basis:
@@ -440,7 +467,7 @@ class HardwarePage(QtWidgets.QScrollArea):
             self.z_msg.setText("Keine Zange gekoppelt – „Koppeln …“ drücken.")
         else:
             self.z_msg.setText("")
-        self._last_zange = self._last_net = 0.0
+        self._last_zange = self._last_net = self._last_lambda = 0.0
 
     def _check_link(self):
         link = self.get_link()
@@ -473,6 +500,46 @@ class HardwarePage(QtWidgets.QScrollArea):
         v["fw"].setText(st.fw or "–")
         self.zange_text.emit(st.summary())
         self.zange_state.emit("ok" if st.connected else "weg")
+
+    # ------------------------------------------------------------------ Lambda
+    def _show_lambda(self, st: Optional[LambdaStatus]):
+        self.lam = st
+        known = st is not None and st.known
+        self.b_lambda.setEnabled(known)
+        self.b_lambda.setText("Lambda aus" if known and st.on else "Lambda ein")
+        self.lam_warn.setVisible(known and st.low_voltage)
+        if not known:
+            self.lam_state.setText("–")
+            self.lam_state.setStyleSheet("font-size: 15px; font-weight: 600;")
+            self.lam_detail.setText("Basis-Firmware ab 0.2.2 nötig" if st is not None else "")
+            self.lambda_text.emit("", "")
+            return
+        self.lam_state.setText(st.state_text)
+        self.lam_state.setStyleSheet(f"font-size: 15px; font-weight: 600; color: {st.color};")
+        self.lam_detail.setText(st.detail)
+        text = f"● Lambda {st.state_text}"
+        if st.on:
+            text += " · 12 V zu niedrig" if st.low_voltage else f" · aus in {st.rest_s // 60}:{st.rest_s % 60:02d}"
+        self.lambda_text.emit(text, "#c62828" if st.low_voltage else st.color)
+
+    def _lambda_result(self, st, err):
+        if err is None and st is not None and self.link is not None and self.link.is_basis:
+            self._show_lambda(st)
+
+    def _lambda_done(self, res, err):
+        if err is not None:
+            self.lam_detail.setText(str(err))
+        elif res and res[-1].startswith("#ERR"):
+            why = res[-1].split(";")[-1]
+            self.lam_detail.setText("Basis lehnt ab: " + LAMBDA_GRUND.get(why, why))
+        self._last_lambda = 0.0
+
+    def lambda_toggle(self):
+        link = self.link
+        if link is None or not link.is_basis or self.lam is None:
+            return
+        on = not self.lam.on
+        self.bg.submit("lam_set", lambda: link.lambda_set(on), self._lambda_done)
 
     # ------------------------------------------------------------------ Zange
     def _zcmd(self, sub: str):
@@ -528,6 +595,8 @@ class HardwarePage(QtWidgets.QScrollArea):
             self.z_msg.setText(ev.text)
         elif ev.kind == "DOSE":
             self.plugs.refresh()
+        elif ev.kind == "LAMBDA":
+            self._last_lambda = 0.0                        # Wechsel sofort anzeigen, auch von T4 an der Zange
 
     def read_log(self, save_pyst: Optional[str] = None, ask: bool = True) -> Optional[str]:
         """Zange per USB: Log auslesen -> Dauermessung (Ordner) und optional .pyst. Liefert den Ordner."""
@@ -780,6 +849,9 @@ class HardwarePage(QtWidgets.QScrollArea):
         if link is not None and link.is_basis and now - self._last_zange > 2.0:
             self._last_zange = now
             self.bg.submit("zst", link.zangen_status, self._zange_result)
+        if link is not None and link.is_basis and now - self._last_lambda > 1.0:
+            self._last_lambda = now
+            self.bg.submit("lam", link.lambda_status, self._lambda_result)
         if link is not None and link.is_basis and now - self._last_net > 10.0:
             self._last_net = now
             self._refresh_net()

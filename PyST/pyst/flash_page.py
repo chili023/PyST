@@ -1,10 +1,10 @@
-"""Reiter „Firmware“: Zange, Basis und Lambda-Controller aus PyST flashen. Pruefungen und Befehlszeilen in flash.py."""
+"""Unterreiter „Firmware“: Zange, Basis und Lambda-Controller aus PyST flashen. Pruefungen und Befehlszeilen in flash.py."""
 import os
 from typing import Callable, Dict
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import flash
+from . import flash, update
 from .flash import FlashCancelled, FlashError
 from .hw_page import _Bg
 
@@ -46,6 +46,7 @@ class LambdaWorker(UsbWorker):
 class FlashRow(QtWidgets.QGroupBox):
     """Ein Flash-Ziel: Ordner, Stand der Firmware, Hinweis, Knopf."""
     start = QtCore.Signal(str)
+    load = QtCore.Signal(str)
 
     def __init__(self, target: flash.Target, folder: str, changed: Callable[[str, str], None]):
         super().__init__(target.name)
@@ -61,6 +62,11 @@ class FlashRow(QtWidgets.QGroupBox):
         self.info.setWordWrap(True)
         self.versions = QtWidgets.QLabel("")
         self.versions.setStyleSheet("font-weight: 600;")
+        self.remote = QtWidgets.QLabel("")
+        self.remote.hide()
+        self.b_load = QtWidgets.QPushButton("Herunterladen")
+        self.b_load.hide()
+        self.b_load.clicked.connect(lambda: self.load.emit(target.key))
         self.current, self.stale = "", False
         hint = QtWidgets.QLabel(target.hint)
         hint.setWordWrap(True)
@@ -69,8 +75,10 @@ class FlashRow(QtWidgets.QGroupBox):
         lay.addWidget(b_pick, 0, 1)
         lay.addWidget(self.b_go, 0, 2)
         lay.addWidget(self.versions, 1, 0, 1, 3)
-        lay.addWidget(self.info, 2, 0, 1, 3)
-        lay.addWidget(hint, 3, 0, 1, 3)
+        lay.addWidget(self.remote, 2, 0, 1, 2)
+        lay.addWidget(self.b_load, 2, 2)
+        lay.addWidget(self.info, 3, 0, 1, 3)
+        lay.addWidget(hint, 4, 0, 1, 3)
         b_pick.clicked.connect(self.pick)
         self.path.editingFinished.connect(self._edited)
         self.b_go.clicked.connect(lambda: self.start.emit(target.key))
@@ -115,6 +123,8 @@ class FlashRow(QtWidgets.QGroupBox):
 
 
 class FlashPage(QtWidgets.QScrollArea):
+    pyst_update = QtCore.Signal(str)         # neue PyST-Version in main
+
     def __init__(self, settings: dict, save_settings: Callable[[], None], get_link: Callable[[], object],
                  disconnect: Callable[[], None]):
         super().__init__()
@@ -137,6 +147,7 @@ class FlashPage(QtWidgets.QScrollArea):
         for key, t in flash.TARGETS.items():
             row = FlashRow(t, folders.get(key, ""), self._folder_changed)
             row.start.connect(self.start)
+            row.load.connect(self._download)
             root.addWidget(row)
             self.rows[key] = row
         self.status = QtWidgets.QLabel("")
@@ -158,9 +169,51 @@ class FlashPage(QtWidgets.QScrollArea):
         self.log.setMinimumHeight(180)
         root.addWidget(self.log, 1)
         self.bg = _Bg()
+        self.remote: Dict[str, update.Entry] = {}
+        self.update_base = update.FIRMWARE_URL
+        self.download_dir = os.path.join(os.path.expanduser("~"), "PyST", "firmware_updates")
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._refresh)
         self.timer.start(2000)
+
+    def check_updates(self, version: str):
+        """Beim Programmstart: im Hintergrund nach Neuem suchen, ohne Netz oder Branch bleibt alles still."""
+        self.bg.submit("pyst", update.latest_pyst, lambda v, e: self._pyst_seen(v, version))
+        self.bg.submit("manifest", lambda: update.fetch_manifest(base=self.update_base), self._manifest)
+
+    def _pyst_seen(self, remote, local: str):
+        if remote and update.is_newer(remote, local):
+            self.pyst_update.emit(remote)
+
+    def _manifest(self, entries, err):
+        self.remote = entries or {}
+        self._show_remote()
+
+    def _show_remote(self):
+        for key, row in self.rows.items():
+            e = self.remote.get(key)
+            neu = e is not None and (not row.current or update.is_newer(e.version, row.current))
+            row.remote.setVisible(e is not None)
+            row.remote.setText(f"Online: {e.version}" + (" (Update verfügbar)" if neu else "") if e else "")
+            row.b_load.setVisible(e is not None and row.is_file and key != flash.BASIS_STLINK)
+
+    def _download(self, key: str):
+        e = self.remote.get(key)
+        if e is None or self.busy:
+            return
+        self._status(f"Lade {e.file} …", "#ef6c00")
+        self.bg.submit("laden", lambda: update.download(e, self.download_dir, self.update_base),
+                       lambda path, err: self._downloaded(key, path, err))
+
+    def _downloaded(self, key: str, path, err):
+        if err is not None:
+            self._status(f"Download fehlgeschlagen: {err}", "#c62828")
+            return
+        row = self.rows[key]
+        row.path.setText(path)
+        self._folder_changed(key, path)
+        row.refresh()
+        self._status(f"{os.path.basename(path)} geladen und geprüft, bereit zum Flashen.", "#2e7d32")
 
     def _folder_changed(self, key: str, folder: str):
         self.settings.setdefault("flash_ordner", {})[key] = folder
@@ -191,6 +244,7 @@ class FlashPage(QtWidgets.QScrollArea):
             if key in found:
                 row.current, row.stale = found[key], False
             row.refresh()
+        self._show_remote()
 
     def _set_busy(self, busy: bool):
         for row in self.rows.values():

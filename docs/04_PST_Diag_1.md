@@ -169,7 +169,13 @@ mit fester Verzögerung aus (Einstellung `ign_delay_ms`), Rolle und Zündung lie
 PyST nutzt bei einer Basis mit Zange auch für Leistungsläufe Modus D (Kanal „Zündstärke“).
 
 **Ereigniszeilen** (unaufgefordert, beginnen mit `E;`, `master_ms` = Gerätezeit in ms wie `t_ms`):
-`E;<master_ms>;MARK;<quelle>;<text>` · `E;…;ZANGE;verbunden|verloren` · `E;…;DOSE;<nr>;<zustand>`.
+`E;<master_ms>;MARK;<quelle>;<text>` · `E;…;ZANGE;verbunden|verloren|neustart` · `E;…;DOSE;<nr>;<zustand>` ·
+`E;…;LAMBDA;<zustand>;…` (scharf, heizt, aus, abgelehnt; kein Marker) · `E;…;ZTASTE;lauf|uebersetzung;<zange>` (Basis ab 0.2.3: Taste der
+Zange fordert Neuer Lauf bzw. Übersetzung an; kein Marker, PyST antwortet mit `#ZANGE LED`).
+
+Lambda-Heizung (Basis ab 0.2.2): `#LAMBDA` → `#OK;LAMBDA;<0|1>;heat=<0|1>;wb=<z>;lambda_st=aus|scharf|heizt;lambda_grund=<g>;lambda_rest=<s>;lambda_motor=<0|1>;lambda_uv=<0|1>`,
+dieselben Felder in `#STAT`. `#LAMBDA 1` schaltet scharf, `#LAMBDA 0` aus, `#ERR;LAMBDA;swd|update` lehnt ab. Die Abschaltzeit
+`lambda_off_min` läuft in der Basis.
 
 **Befehle** (Antworten beginnen mit `#`; Fehler `#ERR;<befehl>;<grund>`). Wo nur der Befehl festgelegt ist, erwartet
 PyST die angegebene Antwortform als Schlüssel=Wert-Felder in beliebiger Reihenfolge (*erwartet*):
@@ -179,6 +185,8 @@ PyST die angegebene Antwortform als Schlüssel=Wert-Felder in beliebiger Reihenf
 | `#ZANGE` | `#ZANGE;id=1;mac=..;akku_mv=..;akku_pct=..;vbus=0/1;rssi=..;funken=..;log=..;blitz=0/1/2;phi=<°KW>;fw=..;sync_us=..` (*erwartet zusätzlich* `verbunden=0/1`); je gekoppelter Zange eine Zeile, Abschluss `#OK;ZANGE;n=<Anzahl>`; ohne Zange `#ERR;ZANGE;…` |
 | `#ZANGE SET <key> <wert>` / `#ZANGE GET <key>` | nach Quittung der Zange; *erwartet* `#OK;ZANGE;SET;<key>=<wert>` bzw. `#OK;ZANGE;GET;<key>=<wert>` (auch `#ZANGE;<key>=<wert>`) |
 | `#ZANGE MARK` · `REC 1` · `REC 0` · `LOG` · `IDENT` · `OFF` | *erwartet* `#OK;ZANGE;<befehl>` |
+| `#ZANGE SET tasten <wert>` (per USB `#SET tasten <wert>`) | Tasten-Setup, Zange ab 0.1.3, Basis ab 0.2.3: je Geste ein Halbbyte, Bit 0–3 = T1 kurz, dann T2 kurz, T3 kurz, T3 lang, T4 kurz, T4 lang; Aktion 0 nichts, 1 Marker, 2 Aufnahme, 3 Neuer Lauf, 4 Übersetzung, 5 Lambda; Standard 5260065 (0x504321). Nur im RAM der Zange. Ältere Firmware: `#ERR;ZANGE;unbekannt` |
+| `#ZANGE LED <n>` | Rückmeldung an der Zange: 0 nichts, 1 läuft, 2 fertig, 3 übernommen, 4 Fehler → `#OK;ZANGE;LED;<n>` |
 | `#PAIR 1` / `#PAIR 0` | Kopplungsfenster (30 s) auf/zu, `#OK;PAIR;1/0`; Ergebnis als Ereignis `ZANGE;verbunden` |
 | `#PAIR LIST` / `#PAIR DEL <id>` | *erwartet* je Gerät `#PAIR;id=..;mac=..;typ=..;sn=..;fw=..;verbunden=0/1`, dann `#OK;PAIR;LIST` |
 | `#NET` | *erwartet* `#NET;mode=AP/STA/OFF;kanal=..;ssid=..;ip=..;clients=..;rssi=..;tcp=0/1;err=0` |

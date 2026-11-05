@@ -55,6 +55,7 @@ MODES = ["Auto", "Normal", "Einzelschuss"]
 
 # Bekannte Geraete-Einstellungen (PST-Diag 1, §6) -> Erklaerung
 SETTING_HELP = {
+    "tasten": "Zange: Tasten-Setup, kommt aus Einstellungen › Tasten, wird nicht gespeichert",
     "edge_ign": "Flanke Zündung: F fallend, R steigend",
     "edge_roll": "Flanke Rolle: F fallend, R steigend",
     "timeout_ign_ms": "Zündung: so lange ohne Flanke -> 0 und Flag Timeout [ms]",
@@ -639,9 +640,10 @@ class OsziPage(QtWidgets.QWidget):
             return
         t = max(0.0, ev.t_pc - self.t0)
         if ev.is_marker:
+            text = ev.marker_text(len(self.markers) + 1)      # zählt mit F2 zusammen, je Aufzeichnung von vorn
             if self.rec is not None:
-                self.rec.add_marker(ev.text, t)
-            self.markers.append((t, ev.text))
+                self.rec.add_marker(text, t)
+            self.markers.append((t, text))
             self._draw(force=True)
         else:
             kind = "Zange" if ev.kind in ("ZANGE", "PAIR") else "Steckdose" if ev.kind == "DOSE" else dg.EV_DEVICE

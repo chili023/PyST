@@ -1,8 +1,8 @@
 """
 PyST – Oberflaeche (PySide6 + pyqtgraph). Mac, Linux (Raspberry Pi), Windows.
 
-Reiter:  Messen | Fahrzeuge & Setups | Auswertung | Oszi / Dauermessung | Zange · Netz · Steckdosen | Prüfen | Firmware | ECU |
-         Einstellungen
+Reiter:  Messen | Fahrzeuge & Setups | Auswertung | Oszi / Dauermessung | ECU | Einstellungen
+Einstellungen:  Allgemein | Verbindung | Zange · Netz · Steckdosen | Tasten | Prüfen | Firmware
 """
 import json
 import os
@@ -14,7 +14,7 @@ from typing import Dict, Optional
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import __version__, htmlexport, physics, report, storage
+from . import __version__, htmlexport, physics, report, storage, tasten
 from .channels import fault_text, lambda_from_afr, run_channels, run_faults
 from .db import SETUP_SUMMARY_KEYS, VEHICLE_FIELDS, Database, base_dir, field_label
 from .dialogs import FieldForm, SetupForm
@@ -31,12 +31,15 @@ from .plots import EXTRA_PREFIX, LOWER_DEFAULT, MAX_LOWER, MAX_OVERLAYS, DynoPlo
 from .rusefi import COLUMN_PREFIX
 from .runner import ABORTED, DONE, IDLE, RUN, WAIT, RunController
 from .rusefi_page import RusefiPage
+from .tasten_page import TastenBand, TastenPage
 from .viewer import LogViewer
 from .widgets import Gauge
 
 SETTINGS_FILE = os.path.join(base_dir(), "einstellungen.json")
 LIVE_KEY = "live"
 FILTER_S_DEFAULT = (1.75, 0.75)       # = LabVIEW 35/15 bei 20 Hz
+# Reiterstand gespeicherter Fenster von vor den Unterreitern: alter Index -> (Reiter, Unterreiter)
+REITER_ALT = {0: (0, 0), 1: (1, 0), 2: (2, 0), 3: (3, 0), 4: (5, 2), 5: (5, 4), 6: (5, 5), 7: (4, 0), 8: (5, 0)}
 
 # (Feld, Beschriftung, Min, Max, Nachkommastellen)
 PARAM_FIELDS = {
@@ -119,7 +122,7 @@ class SettingsPage(QtWidgets.QScrollArea):
         self.setWidget(inner)
         grid = QtWidgets.QGridLayout(inner)
 
-        g = QtWidgets.QGroupBox("Verbindung")
+        g = QtWidgets.QGroupBox("Verbindung")      # eigener Unterreiter, gehört aber zu den Einstellungen dieser Seite
         gl = QtWidgets.QGridLayout(g)
         self.port_combo = QtWidgets.QComboBox()
         self.port_combo.setEditable(True)
@@ -142,7 +145,14 @@ class SettingsPage(QtWidgets.QScrollArea):
         self.auto_connect.setChecked(settings.get("auto_connect", True))
         gl.addWidget(self.auto_connect, 4, 1, 1, 2)
         gl.addWidget(self.fw_label, 5, 0, 1, 3)
-        grid.addWidget(g, 0, 0)
+        gl.setColumnStretch(1, 1)
+        self.conn_page = QtWidgets.QScrollArea()
+        self.conn_page.setWidgetResizable(True)
+        conn = QtWidgets.QWidget()
+        cl = QtWidgets.QVBoxLayout(conn)
+        cl.addWidget(g)
+        cl.addStretch(1)
+        self.conn_page.setWidget(conn)
 
         self.fields: Dict[str, QtWidgets.QDoubleSpinBox] = {}
         defaults = physics.DynoParams(**{k: v for k, v in settings.get("params", {}).items()
@@ -152,7 +162,7 @@ class SettingsPage(QtWidgets.QScrollArea):
             defaults.ma_s = settings.get("ma_s", FILTER_S_DEFAULT[0])
         if defaults.dq_s <= 0:
             defaults.dq_s = settings.get("dq_s", FILTER_S_DEFAULT[1])
-        pos = [(0, 1), (1, 0), (1, 1), (2, 0)]
+        pos = [(0, 0), (0, 1), (1, 0), (1, 1)]
         for (group, fields), (r, c) in zip(PARAM_FIELDS.items(), pos):
             box = QtWidgets.QGroupBox(group)
             fl = QtWidgets.QFormLayout(box)
@@ -207,7 +217,7 @@ class SettingsPage(QtWidgets.QScrollArea):
         self.data_label = QtWidgets.QLabel()
         self.data_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         fl.addRow("Datenbank", self.data_label)
-        grid.addWidget(box, 2, 1)
+        grid.addWidget(box, 2, 0)
         grid.setRowStretch(3, 1)
 
         for k in ("temp_c", "p_mbar"):
@@ -449,7 +459,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self._live_vals: Dict[str, str] = {}
 
         self.tabs = QtWidgets.QTabWidget()
-        self.setCentralWidget(self.tabs)
+        self.settings_tabs = QtWidgets.QTabWidget()
+        self.band = TastenBand()
+        central = QtWidgets.QWidget()
+        cl = QtWidgets.QVBoxLayout(central)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(0)
+        cl.addWidget(self.band)
+        cl.addWidget(self.tabs, 1)
+        self.setCentralWidget(central)
+        self.ratio_mess = tasten.UebersetzungMessung()
         self.page_settings = SettingsPage(self.settings)
         self.page_db = DatabasePage(self.db)
         self.viewer = LogViewer(self.db, self._viewer_channels)
@@ -463,15 +482,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.addTab(self.page_oszi, "Oszi / Dauermessung")
         self.page_hw = HardwarePage(self.settings, lambda: save_settings(self.settings), lambda: self.link,
                                     lambda: self.page_settings.params(), self.db.runs_dir)
-        self.tabs.addTab(self.page_hw, "Zange · Netz · Steckdosen")
+        self.page_tasten = TastenPage(self.settings, lambda: save_settings(self.settings), lambda: self.link)
         self.page_pruef = PruefPage(lambda: self.link, self.page_hw.pair,
                                     lambda: bool(self.ctrl and self.ctrl.state in (WAIT, RUN)) or self.page_oszi.rec is not None)
-        self.tabs.addTab(self.page_pruef, "Prüfen")
         self.page_flash = FlashPage(self.settings, lambda: save_settings(self.settings), lambda: self.link,
                                     self.on_connect)
-        self.tabs.addTab(self.page_flash, "Firmware")
+        for page, text in ((self.page_settings, "Allgemein"), (self.page_settings.conn_page, "Verbindung"),
+                           (self.page_hw, "Zange · Netz · Steckdosen"), (self.page_tasten, "Tasten"),
+                           (self.page_pruef, "Prüfen"), (self.page_flash, "Firmware")):
+            self.settings_tabs.addTab(page, text)
         self.tabs.addTab(self.page_rusefi, "ECU")
-        self.tabs.addTab(self.page_settings, "Einstellungen")
+        self.tabs.addTab(self.settings_tabs, "Einstellungen")
         self.page_settings.data_label.setText(self.db.path)
         self._build_menu()
         self._wire()
@@ -494,6 +515,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_buttons()
         QtGui.QShortcut(QtGui.QKeySequence("F1"), self, activated=self.on_start)
         QtGui.QShortcut(QtGui.QKeySequence("Escape"), self, activated=self.on_abort)
+        # am Hauptfenster: Ein Shortcut wirkt nur, solange sein Widget sichtbar ist
+        QtGui.QShortcut(QtGui.QKeySequence("F3"), self, activated=self.page_hw.mark,
+                        context=QtCore.Qt.ApplicationShortcut)
         self.setAcceptDrops(True)                  # .pyst, Laeufe, Mitschnitte per Drag & Drop oeffnen
         self.page_oszi.saved.connect(self._dauer_saved)
         self.page_hw.log_saved.connect(lambda folder: self._dauer_saved(folder, "Zange-Log"))
@@ -504,6 +528,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.zange_led = QtWidgets.QLabel("")
         self.statusBar().addPermanentWidget(self.zange_led)
         self.page_hw.zange_state.connect(self._show_zange_led)
+        self.page_hw.zange_state.connect(self.page_tasten.zange_zustand)
+        self.lambda_status = QtWidgets.QLabel("")
+        self.statusBar().addPermanentWidget(self.lambda_status)
+        self.page_hw.lambda_text.connect(self._show_lambda_status)
         self._warn_box = None
         self._fault_todo = [r.id for r in self.db.runs() if r.fehler is None]
         self.fault_timer = QtCore.QTimer(self)     # Fehleranteile alter Laeufe nach und nach berechnen
@@ -1492,7 +1520,7 @@ class MainWindow(QtWidgets.QMainWindow):
         s.fw_label.setText(f"{port}: {kind} – {first}")
         s.fw_label.setToolTip(self.firmware)
         if self.link.bootloader:
-            s.fw_label.setText(f"{port}: Basis im Bootloader, Firmware über den Reiter „Firmware“ aufspielen")
+            s.fw_label.setText(f"{port}: Basis im Bootloader, Firmware unter Einstellungen › Firmware aufspielen")
             s.fw_label.setToolTip(self.link.bootloader)
         self.ctrl = RunController(self.link, s.params(), auto_climate=s.climate_auto.isChecked(),
                                   ecu=self.page_rusefi.active_link())
@@ -1547,7 +1575,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.link is None:
             zp = zange_usb_ports()
             if zp:                                         # Zange per USB nie automatisch (galvanische Verbindung)
-                self.statusBar().showMessage(f"Zange per USB an {zp[0]}? Zum Auslesen in den Einstellungen "
+                self.statusBar().showMessage(f"Zange per USB an {zp[0]}? Zum Auslesen unter Einstellungen › Verbindung "
                                              f"diesen Port wählen und verbinden.", 6000)
 
     def on_replay(self, path: str = ""):
@@ -1963,14 +1991,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self._show_ecu_live()
         if self.link is not None:
             for ev in self.link.drain_events():            # Ereignisse der Basis: Marker, Zange, Steckdosen
+                if ev.kind == "ZTASTE":                    # Bedienung, gehört nicht in Lauf oder Aufzeichnung
+                    self._ztaste(ev)
+                    continue
                 self.page_oszi.basis_event(ev)
                 if self.ctrl:
                     self.ctrl.add_event(ev)
                 self.page_hw.on_event(ev)
-                self.statusBar().showMessage(ev.text, 4000)
+                self.page_tasten.on_event(ev)
+                self.statusBar().showMessage(self._event_text(ev), 4000)
         self.page_oszi.poll()
         lauf = bool(self.ctrl and self.ctrl.state in (WAIT, RUN))
         self.page_hw.automatic(lauf, self.page_oszi.rec is not None)
+        self._ratio_tick()
         if not self.ctrl:
             return
         new = self.ctrl.poll()
@@ -1978,6 +2011,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if new:
             f = new[-1]
             ecu_rpm = self.page_rusefi.live("RPMValue")
+            self.ratio_mess.probe(lv.n_meas, lv.n_roll, ecu_rpm)
             self._live_vals = self._gauge_texts(
                 lv.n_calc, lv.n_meas, lv.v_kmh, f.egt1, f.egt2, f.afr, lv.rate,
                 lv.n_meas / lv.n_roll if lv.n_roll > 1 else None,
@@ -2017,7 +2051,110 @@ class MainWindow(QtWidgets.QMainWindow):
             self.last_keepalive = time.time()
             self.link.start()
 
+    # ------------------------------------------------------------------ Tasten der Zange
+    def _event_text(self, ev) -> str:
+        """Marker in der Statusleiste so, wie er im Lauf bzw. in der Aufzeichnung heißt."""
+        if not ev.is_marker:
+            return ev.text
+        if self.ctrl and self.ctrl.state in (WAIT, RUN):
+            nr = sum(e.is_marker for e in self.ctrl.basis_events)
+        else:
+            nr = len(self.page_oszi.markers)
+        return ev.marker_text(nr) if nr else ev.text
+
+    def _taste_sperre(self) -> str:
+        return tasten.sperre(self.ctrl is not None, bool(self.ctrl and self.ctrl.state in (WAIT, RUN)),
+                             self.page_oszi.rec is not None, self.page_flash.busy,
+                             QtWidgets.QApplication.activeModalWidget() is not None, bool(self.page_pruef.bg.pending))
+
+    def _taste_abgelehnt(self, was: str, grund: str):
+        self.band.zeige(f"{was}: {grund}", "#c62828", 6.0)
+        self.statusBar().showMessage(f"Zange: {was} abgelehnt: {grund}", 6000)
+        self.page_tasten.led(tasten.LED_FEHLER)
+
+    def _ztaste(self, ev):
+        """E;…;ZTASTE;lauf|uebersetzung: Die Zange wartet auf Antwort, jeder Weg hier führt zu einer LED."""
+        art = ev.args[0] if ev.args else ""
+        if art == "lauf":
+            self._taste_lauf()
+        elif art == "uebersetzung":
+            self._taste_ratio()
+
+    def _taste_lauf(self):
+        """Wie der Start-Knopf, nur wenn ein Lauf möglich ist. Abbrechen geht nur am PC."""
+        grund = self._taste_sperre() or ("Übersetzung wird gerade gemessen" if self.ratio_mess.aktiv else "") \
+            or physics.check_params(self.page_settings.params())
+        if grund:
+            self._taste_abgelehnt("Neuer Lauf", grund)
+            return
+        self.page_tasten.led(tasten.LED_OK)                # vor dem Start: Klima lesen hält die Antwort sonst auf
+        self.band.zeige("Neuer Lauf gestartet", "#2e7d32", 3.0)
+        self.on_start()
+
+    def _taste_ratio(self):
+        grund = self._taste_sperre()
+        if grund:
+            self._taste_abgelehnt("Übersetzung", grund)
+            return
+        now = time.time()
+        bisher = self.page_settings.fields["ratio"].value()
+        was, wert = self.ratio_mess.taste(now, bisher)
+        if was == "laeuft":
+            self.page_tasten.led(tasten.LED_LAEUFT)
+        elif was == "start":
+            self.ctrl.params = self.page_settings.params()
+            if not self.link.streaming():
+                self.link.start()
+            self.page_tasten.led(tasten.LED_LAEUFT)
+            self._ratio_band(now)
+        else:
+            self.page_settings.fields["ratio"].setValue(wert)
+            self._persist()
+            self._set_status(f"Übersetzung = {wert:.3f}", "#b8e6b8")
+            self.band.zeige(f"Übersetzung {wert:.3f} übernommen (bisher {self.ratio_mess.bisher:.3f})", "#2e7d32", 6.0)
+            self.page_tasten.led(tasten.LED_OK)
+
+    def _ratio_band(self, now: float):
+        m = self.ratio_mess
+        if m.zustand == m.MISST:
+            self.band.zeige(f"Übersetzung wird gemessen, Drehzahl halten … {m.rest_s(now)} s", "#ef6c00")
+        elif m.zustand == m.WARTET:
+            geste = tasten.geste_von(self.page_tasten.setup, "uebersetzung")
+            self.band.zeige(f"Übersetzung neu {m.wert:.3f}   bisher {m.bisher:.3f}\n"
+                            f"Übernehmen: {geste} noch einmal drücken ({m.rest_s(now)} s)", "#1f5fbf")
+
+    def _ratio_tick(self):
+        """Messung weiterführen; was ihr den Boden entzieht, verwirft sie."""
+        m = self.ratio_mess
+        if not m.aktiv:
+            return
+        now = time.time()
+        grund = self._taste_sperre()
+        if grund:
+            m.abbrechen()
+            self._taste_abgelehnt("Übersetzung verworfen", grund)
+            return
+        ereignis = m.tick(now)
+        if ereignis is None:
+            self._ratio_band(now)
+        elif ereignis.art == "fertig":
+            self.page_tasten.led(tasten.LED_FERTIG)
+            self._ratio_band(now)
+        else:
+            self.band.zeige(f"Übersetzung nicht übernommen: {ereignis.text}", "#c62828", 8.0)
+            self.statusBar().showMessage(f"Übersetzung nicht übernommen: {ereignis.text}", 8000)
+            self.page_tasten.led(tasten.LED_FEHLER)
+
     # ------------------------------------------------------------------ Fenster-Layout
+    def show_page(self, page: QtWidgets.QWidget):
+        """Seite zeigen, auch wenn sie ein Unterreiter von Einstellungen ist."""
+        i = self.settings_tabs.indexOf(page)
+        if i >= 0:
+            self.settings_tabs.setCurrentIndex(i)
+            self.tabs.setCurrentWidget(self.settings_tabs)
+        else:
+            self.tabs.setCurrentWidget(page)
+
     def save_window_layout(self):
         """Fenster, Aufteilungen, Spaltenbreiten und Reiter (beim Beenden)."""
         b64 = lambda ba: bytes(ba.toBase64()).decode("ascii")
@@ -2026,7 +2163,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "messen_teilung": b64(self.measure_split.saveState()),
             "auswertung_teilung": b64(self.viewer.split.saveState()),
             "laufliste_spalten": [self.run_tree.columnWidth(c) for c in range(self.run_tree.columnCount())],
-            "reiter": self.tabs.currentIndex(),
+            "reiter_neu": [self.tabs.currentIndex(), self.settings_tabs.currentIndex()],
         }
 
     def restore_window_layout(self) -> bool:
@@ -2041,8 +2178,11 @@ class MainWindow(QtWidgets.QMainWindow):
             for c, wd in enumerate(f.get("laufliste_spalten", [])[:self.run_tree.columnCount()]):
                 if wd > 0:
                     self.run_tree.setColumnWidth(c, wd)
-            if 0 <= f.get("reiter", -1) < self.tabs.count():
-                self.tabs.setCurrentIndex(f["reiter"])
+            haupt, unter = f.get("reiter_neu") or REITER_ALT.get(f.get("reiter"), (0, 0))
+            if 0 <= unter < self.settings_tabs.count():
+                self.settings_tabs.setCurrentIndex(unter)
+            if 0 <= haupt < self.tabs.count():
+                self.tabs.setCurrentIndex(haupt)
             return bool(f.get("geometrie")) and self.restoreGeometry(ba(f["geometrie"]))
         except (TypeError, ValueError, AttributeError):
             return False
@@ -2053,6 +2193,11 @@ class MainWindow(QtWidgets.QMainWindow):
                        "usb": ("Zange per USB", "#ef6c00")}.get(state, ("", ""))
         self.zange_led.setText(f"● {text}" if text else "")
         self.zange_led.setStyleSheet(f"color: {farbe}; font-weight: 700;" if text else "")
+
+    def _show_lambda_status(self, text: str, farbe: str):
+        """Statusleiste neben der Zange: Lambda-Heizung mit Restzeit, rot bei zu niedriger 12-V-Spannung."""
+        self.lambda_status.setText(text)
+        self.lambda_status.setStyleSheet(f"color: {farbe}; font-weight: 700;" if text else "")
 
     def closeEvent(self, ev):
         self.save_window_layout()
@@ -2122,6 +2267,8 @@ def main():
         win.page_settings.port_combo.setEditText(SIM_PORT if "--synth" in sys.argv else DEFAULT_SIM_PORT)
         win.on_connect()
     _fit_window(win, app)
+    win.page_flash.pyst_update.connect(lambda v: win.band.zeige(f"Neue PyST-Version {v} verfügbar", "#1f5fbf", 8.0))
+    win.page_flash.check_updates(__version__)
     if files:                                   # pyst datei.pyst: gleich in der Auswertung zeigen
         QtCore.QTimer.singleShot(0, lambda: win.open_files(files))
     sys.exit(app.exec())

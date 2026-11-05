@@ -22,7 +22,7 @@ from . import __version__, physics
 from .basis import LOG_BOOT, LOG_MARK, LOG_SPARK, LOG_STATUS, LOG_SYNC, LogEntry
 from .storage import DIAG_HEADER, ROH_HEADER, ZANGE_HEADER
 
-MARK_TEXT = {1: "Taste T1", 2: "Taste T2", 3: "Taste T3", 4: "Taste T4", 10: "Marker (fern)"}
+MARK_TEXT = {1: "Taste T1", 2: "Taste T2", 3: "Taste T3", 4: "Taste T4", 5: "Trigger", 10: "fern"}
 SFLAG_REJECTED = 1
 GAP_S = 2.0                     # laengere Pausen ohne Funken werden uebersprungen
 SESSION_GAP_S = GAP_S + 1.0     # Abstand zweier Sitzungen auf der Zeitachse (> GAP_S: wird uebersprungen)
@@ -116,7 +116,8 @@ def log_to_rows(entries: List[LogEntry], params: physics.DynoParams, rate_hz: fl
     markers = []
     for e in entries:
         if e.art == LOG_MARK:
-            markers.append((t_of[id(e)], MARK_TEXT.get(int(e.num(0, 0)), f"Marker {e.rest[:1]}")))
+            art = int(e.num(0, 0))
+            markers.append((t_of[id(e)], f"Marker {len(markers) + 1} ({MARK_TEXT.get(art, f'Art {art}')})"))
     return {"header": header, "rows": rows, "markers": markers, "sparks": len(good), "rejected": len(rej),
             "dauer_s": t_end}
 

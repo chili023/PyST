@@ -671,9 +671,13 @@ class SimSerial:
 
 
 # ================================================================================================ PyST-Basis
+TASTEN_STANDARD = 0x504321                              # wie ZT_STANDARD (ztasten.h)
+TASTEN_GESTEN = ("t1_kurz", "t2_kurz", "t3_kurz", "t3_lang", "t4_kurz", "t4_lang")
 # Stoerungen der Funkstrecke fuer 'SIM:basis:stoerung': Paketverlust [%], Zange weg [je Minute]
 BASIS_FAULTS = {"sim_funkverlust": 8.0, "sim_zange_weg": 1.0}
-BASIS_SIM_KEYS = {"sim_funkverlust": "0", "sim_zange_weg": "0", "sim_zange_mark": "1"}
+BASIS_SIM_KEYS = {"sim_funkverlust": "0", "sim_zange_weg": "0", "sim_zange_mark": "1", "sim_u12": "13.8", "sim_motor": "1",
+                  "lambda_heat": "0", "lambda_umin": "110", "lambda_off_min": "3"}
+LAMBDA_MOTOR_HOLD_S = 3.0                               # wie WBM_HOLD_MS der Basis
 PLUG_LOAD_W = {"SHELLY2": 180.0, "SHELLY1": 650.0, "TASMOTA": 2000.0, "ESPHOME": 40.0}
 
 
@@ -695,6 +699,8 @@ class BasisSimSerial(SimSerial):
         self.z_log_head = 52000
         self.z_rec = False
         self.z_settings = {k: d for k, (_t, d) in ZANGE_KEYS.items()}
+        self.z_tasten = TASTEN_STANDARD                 # nur im RAM der Zange, siehe sim_zange_neustart
+        self.z_led: List[int] = []                      # Rueckmeldungen an der Zange, Tests lesen sie
         self.z_peak = 0.0
         self.z_stale = False
         self.z_last_ign = 0.0
@@ -710,6 +716,15 @@ class BasisSimSerial(SimSerial):
         self.fw_version = "0.1.0"
         self.on_update = None                           # BootSimDevice: '#UPDATE' startet den Bootloader
         self.on_wbf = None                              # LambdaSimDevice: '#WBF …', F042-Update ueber CAN
+        # Lambda-Heizung wie wb_bedien.c der Basis
+        self.lam_st = "aus"
+        self.lam_grund = "-"
+        self.lam_t_ref = 0.0                            # scharf geschaltet bzw. Motor zuletzt gesehen
+        self.lam_motor_t = 0.0
+        self.lam_rep = "aus"                            # zuletzt als Ereignis gemeldet
+        self.lam_block = False                          # Automatik wartet auf Motor-Stillstand
+        self.lam_watchdog = False                       # Sperre nach Watchdog-Reset, Test setzt sie
+        self.lam_swd_until = 0.0
         super().__init__(engine=SimEngine(rate=60.0), mega=False, diag=True, faults=None, seed=seed, **kw)
         self.tick_ns = 6.25
         self.tick_offset = (1 << 32) - int(2.0e9 / self.tick_ns)
@@ -748,6 +763,133 @@ class BasisSimSerial(SimSerial):
             self.z_rssi = -60.0
             self._event("ZANGE", "verbunden")
 
+    # --- Lambda-Heizung (wb_bedien.c)
+    def _lam_on(self) -> bool:
+        return self.lam_st != "aus"
+
+    def _lam_u_ok(self) -> bool:
+        return self._setf("sim_u12") >= self._setf("lambda_umin") / 10.0
+
+    def _lam_motor(self, now: float) -> bool:
+        return now - self.lam_motor_t < LAMBDA_MOTOR_HOLD_S
+
+    def _lam_scharf(self, quelle: str, now: float):
+        self.lam_st, self.lam_grund, self.lam_t_ref = "scharf", "-", now
+        self.lam_rep = "scharf"
+        self._event("LAMBDA", "scharf", quelle, int(self._setf("lambda_off_min") * 60))
+
+    def _lam_aus(self, grund: str):
+        self.lam_st, self.lam_grund, self.lam_block = "aus", grund, True
+        self.lam_rep = "aus"
+        self._event("LAMBDA", "aus", grund)
+
+    def _lam_sperre(self, now: float, pc: bool) -> str:
+        if now < self.lam_swd_until:
+            return "swd"
+        return "gesperrt_watchdog" if self.lam_watchdog and not pc else ""
+
+    def _lam_step(self, now: float):
+        motor = self._lam_motor(now)
+        if not motor:
+            self.lam_block = False
+        if not self._lam_on():
+            if self._setf("lambda_heat") and motor and not self.lam_block and not self._lam_sperre(now, False):
+                self._lam_scharf("auto", now)
+            return
+        if now < self.lam_swd_until:
+            self._lam_aus("swd")
+            return
+        if motor:
+            self.lam_t_ref = now
+        elif now - self.lam_t_ref >= self._setf("lambda_off_min") * 60.0:
+            self._lam_aus("zeit")
+            return
+        self.lam_st = "heizt" if motor and self._lam_u_ok() else "scharf"
+        if self.lam_st != self.lam_rep:
+            self.lam_rep = self.lam_st
+            if self.lam_st == "heizt":
+                self._event("LAMBDA", "heizt", "motor")
+            else:
+                self._event("LAMBDA", "scharf", "motor_weg" if not motor else "unterspannung", self._lam_rest(now))
+
+    def _lam_rest(self, now: float) -> int:
+        return max(0, int(math.ceil(self._setf("lambda_off_min") * 60.0 - (now - self.lam_t_ref)))) if self._lam_on() else 0
+
+    def _lam_fields(self, now: float) -> str:
+        grund = self.lam_grund
+        if self._lam_on():
+            grund = "-" if self._lam_u_ok() else "unterspannung"
+        elif self.lam_watchdog:
+            grund = "gesperrt_watchdog"
+        return (f"lambda_st={self.lam_st};lambda_grund={grund};lambda_rest={self._lam_rest(now)};"
+                f"lambda_motor={1 if self._lam_motor(now) else 0};lambda_uv={0 if self._lam_u_ok() else 1}")
+
+    def sim_t4(self):
+        """T4 lang an der Zange (Marker PF_MARK_LAMBDA_*), Soll-Zustand wie zlambda.c."""
+        now = time.time()
+        if self._lam_on():
+            self._lam_aus("t4")
+            return
+        sperre = self._lam_sperre(now, False)
+        if sperre:
+            self._event("LAMBDA", "abgelehnt", sperre)
+        else:
+            self._lam_scharf("t4", now)
+
+    def sim_taste(self, geste: str):
+        """Geste an der Zange nach ztasten.c: 't1_kurz' … 't4_lang', 't2_lang' schaltet den Blitzmodus."""
+        blitz = self.z_settings.get("blitz_mode", "0") != "0"
+        if geste == "t2_lang":
+            self.z_settings["blitz_mode"] = "0" if blitz else "1"
+            return
+        taste = "T" + geste[1]
+        if blitz:                                             # Blitzmodus sticht das Setup
+            if geste == "t1_kurz":
+                self._event("MARK", "zange", taste)
+            elif geste == "t2_kurz":
+                self.z_rec = not self.z_rec
+            elif geste[:2] in ("t3", "t4") and geste.endswith("kurz"):
+                phi = int(self.z_settings["blitz_phi_x10"]) + (-5 if geste[1] == "3" else 5)
+                self.z_settings["blitz_phi_x10"] = str(phi)
+            return
+        aktion = (self.z_tasten >> (4 * TASTEN_GESTEN.index(geste))) & 0xF
+        if aktion == 1:
+            self._event("MARK", "zange", taste)
+        elif aktion == 2:
+            self.z_rec = not self.z_rec
+        elif aktion in (3, 4):
+            self._event("ZTASTE", "lauf" if aktion == 3 else "uebersetzung", 1)
+        elif aktion == 5:
+            self.sim_t4()
+
+    def sim_zange_neustart(self):
+        """Zange startet schneller neu, als die Basis sie als verloren meldet: Setup weg, nur das Ereignis bleibt."""
+        self.z_tasten = TASTEN_STANDARD
+        self._event("ZANGE", "neustart", 1)
+
+    def _lambda_command(self, a: List[str], now: float):
+        v = a[0].upper() if a else ""
+        if v == "SWD":
+            self.lam_swd_until = now + 120.0
+            self._out("#OK;LAMBDA;SWD;120\r\n")
+            return
+        if v not in ("", "0", "1"):
+            self._out("#ERR;LAMBDA;0, 1 oder SWD\r\n")
+            return
+        if v == "1" and self._lam_sperre(now, True):
+            self._out("#ERR;LAMBDA;swd\r\n")
+            return
+        if v == "1":
+            self.lam_watchdog = False
+            if not self._lam_on():
+                self._lam_scharf("pc", now)
+        elif v == "0":
+            self.lam_block = True
+            if self._lam_on():
+                self._lam_aus("pc")
+        self._out(f"#OK;LAMBDA;{1 if self._lam_on() else 0};heat={1 if self.lam_st == 'heizt' else 0};"
+                  f"wb={'reset' if not self._lam_on() else 'wartet'};{self._lam_fields(now)}\r\n")
+
     # --- Hintergrund: Uhren, Funk, Steckdosen
     def _background(self):
         now = time.time()
@@ -776,9 +918,12 @@ class BasisSimSerial(SimSerial):
         for p in self.plugs.values():
             if p["on"] and p["sek"] and p["until"] - now < p["sek"] / 3.0:
                 p["until"] = now + p["sek"]                    # Totmann: die Basis erneuert, solange sie lebt
+        self._lam_step(now)
 
     def _frame_hook(self, f_ign: float, f_roll: float, dt: float):
         self.z_stale = False
+        if (f_ign > 0 or f_roll > 0) and self._setf("sim_motor"):
+            self.lam_motor_t = time.time()
         if not (self.z_paired and self.z_conn):
             self.z_peak = 0.0
             return 0.0, f_roll
@@ -835,8 +980,9 @@ class BasisSimSerial(SimSerial):
                       "#STAT;clk=HSE;reset=einschalten/bor;sync_ofs=0;usb=1\r\n"
                       "#STAT;egt1=nan;egt1_st=offen;egt2=nan;egt2_st=offen;cj=24.00;ads=ok;bme=BMP280@0x76;klima=ok\r\n"
                       "#STAT;wb=reset;lambda=nan;afr=nan;wb_temp=-1;wb_status=-;heat_cmd=0;heat=0;can_rx=0;can_err=0;"
-                      "wb_reset=1;wb_guard=aus\r\n"
-                      "#STAT;u12=12.17;u5s=4.961;ai1=0.010V;ai2=0.010V;vref=2.497;t_mcu=29.7\r\n")
+                      f"wb_reset={0 if self._lam_on() else 1};wb_guard={'laeuft' if self._lam_on() else 'aus'}\r\n"
+                      f"#STAT;{self._lam_fields(now)}\r\n"
+                      f"#STAT;u12={self._setf('sim_u12'):.2f};u5s=4.961;ai1=0.010V;ai2=0.010V;vref=2.497;t_mcu=29.7\r\n")
         elif cmd == "ZANGE":
             sub = a[0].upper() if a else ""
             if not self.z_paired:
@@ -846,6 +992,19 @@ class BasisSimSerial(SimSerial):
                 self._out("#OK;ZANGE;n=1\r\n")
             elif not self.z_conn:
                 self._out("#ERR;ZANGE;nicht erreichbar\r\n")
+            elif sub == "SET" and a[1:2] == ["tasten"] and len(a) >= 3:
+                v = int(a[2])
+                if not 0 <= v < 1 << 24 or any((v >> (4 * i)) & 0xF > 5 for i in range(6)):
+                    self._out("#ERR;ZANGE;bereich\r\n")
+                else:
+                    self.z_tasten = v
+                    self._out(f"#OK;ZANGE;SET;tasten={v}\r\n")
+            elif sub == "LED" and len(a) >= 2:
+                if a[1] not in ("0", "1", "2", "3", "4"):
+                    self._out("#ERR;ZANGE;bereich\r\n")
+                else:
+                    self.z_led.append(int(a[1]))
+                    self._out(f"#OK;ZANGE;LED;{a[1]}\r\n")
             elif sub in ("SET", "GET") and len(a) >= 2:
                 k = a[1]
                 if k not in ZANGE_KEYS:
@@ -917,6 +1076,8 @@ class BasisSimSerial(SimSerial):
                 self._out("#ERR;NET;parameter\r\n")
         elif cmd == "DOSE":
             self._dose_command(a, now, PLUG_TYPES)
+        elif cmd == "LAMBDA":
+            self._lambda_command(a, now)
         elif cmd == "WBF" and self.on_wbf:
             self.on_wbf(self, a)
         elif cmd == "UPDATE" and self.on_update:
@@ -973,7 +1134,7 @@ class BasisSimSerial(SimSerial):
 
 
 # ================================================================================================ Zange per USB
-ZANGE_GET_KEYS = ("edge_ign", "timeout_ign_ms", "imp_per_rev_x10", "deadtime_us", "plaus_lo_pct", "plaus_hi_pct",
+ZANGE_GET_KEYS = ("tasten", "edge_ign", "timeout_ign_ms", "imp_per_rev_x10", "deadtime_us", "plaus_lo_pct", "plaus_hi_pct",
                   "agc_mode", "probe_enable", "probe_edge", "blitz_mode", "blitz_phi_x10", "blitz_pulse_us",
                   "status_rate_hz", "tx_power")
 
@@ -1042,6 +1203,7 @@ class ZangeUsbSimSerial(SimSerial):
         self.tick_ns = 1000.0
         self.tick_offset = (1 << 32) - int(2.0e9 / self.tick_ns)
         self.defaults.update({k: d for k, (_t, d) in ZANGE_KEYS.items()})
+        self.defaults["tasten"] = str(TASTEN_STANDARD)
         self.settings = dict(self.defaults)
 
     def burst_max(self) -> int:

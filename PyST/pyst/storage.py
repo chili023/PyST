@@ -67,8 +67,8 @@ def write_side_events(folder: str, t0: float, events) -> Tuple[int, int]:
         with open(os.path.join(folder, "marker.csv"), "w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh, delimiter=";")
             w.writerow(["zeit_s", "text"])
-            for e in marks:
-                w.writerow([f"{e.t_pc - t0:.3f}", e.text])
+            for nr, e in enumerate(marks, 1):                # je Lauf von vorn
+                w.writerow([f"{e.t_pc - t0:.3f}", e.marker_text(nr)])
     if other:
         with open(os.path.join(folder, "ereignisse.csv"), "w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh, delimiter=";")

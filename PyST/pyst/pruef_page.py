@@ -1,5 +1,5 @@
 """
-Reiter „Prüfen“: Inbetriebnahme von Basis und Zange ohne Terminal. Die Pruefungen selbst stehen in pruef.py;
+Unterreiter „Prüfen“: Inbetriebnahme von Basis und Zange ohne Terminal. Die Pruefungen selbst stehen in pruef.py;
 hier nur Bedienung und Anzeige. Befehle laufen im Hintergrund-Thread, die Oberflaeche bleibt bedienbar.
 """
 import time
@@ -185,7 +185,7 @@ class PruefPage(QtWidgets.QWidget):
         elif link is not None:
             self.device.setText("Das verbundene Gerät ist weder Basis noch Zange.")
         else:
-            self.device.setText("Kein Gerät verbunden. Basis oder Zange in den Einstellungen verbinden.")
+            self.device.setText("Kein Gerät verbunden. Basis oder Zange unter Einstellungen › Verbindung verbinden.")
         self.b_all.setEnabled((basis or usb) and idle)
         self.b_pair.setEnabled(basis and idle)
         self.b_log.setEnabled(usb and idle)
