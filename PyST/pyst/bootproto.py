@@ -3,7 +3,8 @@ Bootloader der PyST-Basis: Rahmen und Update-Datei (*.pystfw). Gegenstück in de
 
 Rahmen wie der ESP-Link: COBS(typ seq daten crc16) 0x00, CRC-16/CCITT-FALSE ueber typ..daten, little-endian.
 Jeder Befehl bekommt eine Antwort BL_RESP mit derselben seq: [befehl u8][status u8][wert u32][text].
-Datei: 256 Byte Kopf + Nutzdaten. Felder fuer Signatur und Verschluesselung sind vorgesehen und in dieser Stufe leer.
+Datei: 256 Byte Kopf + Nutzdaten. Format 1: Abbild im Klartext, unsigniert. Format 2 (Bootloader 2.0.0): Ed25519-signiert,
+Nutzdaten AES-256-CTR, Spezifikation docs/STUFE2.md der Firmware. Hier nur die formale Pruefung, die Signatur prueft fw_keys.py.
 """
 import struct
 import zlib
@@ -33,6 +34,11 @@ IMG_MAGIC = 0x4D495950
 RAM = (0x20000000, 0x20020000)
 UPD_MAGIC = b"PYSTUPD1"
 UPD_LEN = 256
+FORMAT_PLAIN, FORMAT_SIGNED = 1, 2
+FLAGS_SIGNED_ENCRYPTED = 3
+SIG_ED25519, ENC_AES256_CTR = 1, 1
+SIG_OFS, SIG_END = 100, 164                             # signature[64]
+RESERVED_OFS = 196                                      # reserved[32..87], in Format 2 Null
 TARGET = "basis-g473"
 BOARD = "rev31"
 
@@ -124,6 +130,15 @@ def _text(b: bytes) -> str:
     return b.split(b"\0", 1)[0].decode("ascii", "replace")
 
 
+def _check_format2(h: bytes, flags: int):
+    if flags != FLAGS_SIGNED_ENCRYPTED:
+        raise ValueError("Update-Datei ungültig: Format 2 muss signiert und verschlüsselt sein.")
+    if h[76] != SIG_ED25519 or h[77] != ENC_AES256_CTR:
+        raise ValueError("Update-Datei ist zu neu: Dieses PyST kennt das Signatur- oder Verschlüsselungsverfahren nicht.")
+    if any(h[RESERVED_OFS:252]):
+        raise ValueError("Update-Datei beschädigt (Kopf).")
+
+
 @dataclass
 class UpdateFile:
     header: bytes
@@ -133,10 +148,29 @@ class UpdateFile:
     version: str
     image_len: int
     image_crc: int
+    format: int = FORMAT_PLAIN
+    key_id: int = 0
+    rollback: int = 0
+
+    @property
+    def signature(self) -> bytes:
+        return self.header[SIG_OFS:SIG_END]
+
+    @property
+    def signed_data(self) -> bytes:
+        """Was die Signatur deckt: alles ausser ihr selbst und hdr_crc."""
+        return b"PyST-FW-2\0" + self.header[:SIG_OFS] + self.header[SIG_END:252]
+
+    @property
+    def format_text(self) -> str:
+        if self.format == FORMAT_PLAIN:
+            return "Format 1, unsigniert"
+        return f"Format {self.format}, Schlüssel {self.key_id}, Rollback {self.rollback}"
 
     @classmethod
     def parse(cls, data: bytes) -> "UpdateFile":
-        """Vollstaendige Pruefung; ValueError mit Klartext."""
+        """Vollstaendige Pruefung; ValueError mit Klartext. Format 2 ist verschluesselt: Vektortabelle und Abbild-Kopf
+        sieht erst der Bootloader."""
         if data[:1] == b"\xe9":
             raise ValueError("Falsche Firmware: Das ist ein ESP-Abbild, kein STM32.")
         if data[:8] != UPD_MAGIC or len(data) < UPD_LEN:
@@ -145,7 +179,9 @@ class UpdateFile:
         fmt, size, flags = struct.unpack_from("<HHI", h, 8)
         if zlib.crc32(h[:252]) != struct.unpack_from("<I", h, 252)[0] or size != UPD_LEN:
             raise ValueError("Update-Datei beschädigt (Kopf).")
-        if fmt != 1 or flags:
+        if fmt == FORMAT_SIGNED:
+            _check_format2(h, flags)
+        elif fmt != FORMAT_PLAIN or flags:
             raise ValueError("Update-Datei ist zu neu: Dieses PyST kennt das Format nicht.")
         target, board, version = _text(h[16:32]), _text(h[32:40]), _text(h[40:56])
         if target != TARGET or board != BOARD:
@@ -156,6 +192,8 @@ class UpdateFile:
             raise ValueError("Update-Datei beschädigt (Längen).")
         if zlib.crc32(payload) != pcrc:
             raise ValueError("Update-Datei beschädigt (Prüfsumme).")
+        if fmt == FORMAT_SIGNED:
+            return cls(h, payload, target, board, version, ilen, icrc, fmt, h[78], struct.unpack_from("<I", h, 80)[0])
         sp, pc = struct.unpack_from("<II", payload)
         if not (RAM[0] < sp <= RAM[1] and pc & 1 and APP_BASE <= pc < APP_BASE + ilen):
             raise ValueError("Falsche Firmware: Die Vektortabelle passt nicht zur Basis-Anwendung.")

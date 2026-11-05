@@ -113,8 +113,9 @@ class Image:
             sha = hashlib.sha256(fh.read()).hexdigest()[:12]
         stamp = time.strftime("%d.%m.%Y %H:%M", time.localtime(os.path.getmtime(self.main)))
         name = " ".join(x for x in (self.project, self.version) if x)
+        fmt = f", {self.update.format_text}" if self.update else ""
         return f"{name + ', ' if name else ''}{os.path.getsize(self.main):,} Byte".replace(",", ".") + \
-               f", {stamp}, SHA {sha}"
+               f", {stamp}, SHA {sha}{fmt}"
 
 
 def _esp_build_dir(folder: str) -> str:
