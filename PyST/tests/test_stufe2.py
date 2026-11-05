@@ -3,13 +3,15 @@ import os
 import struct
 import sys
 import tempfile
+import threading
+import time
 import unittest
-import zlib
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 from pyst import bootproto as bp, flash, fw_keys  # noqa: E402
+from pyst.sim import BootSimDevice  # noqa: E402
 import fw2_testdatei as fw2  # noqa: E402
 
 
@@ -34,20 +36,10 @@ class Format2Lesen(unittest.TestCase):
         self.assertEqual(u.format, 2)
 
     def test_format1_bleibt_wie_es_war(self):
-        h = bytearray(bp.UPD_LEN)
-        h[0:8] = bp.UPD_MAGIC
-        struct.pack_into("<HHI", h, 8, 1, bp.UPD_LEN, 0)
-        h[16:26] = b"basis-g473"
-        h[32:37] = b"rev31"
-        h[40:45] = b"0.3.0"
-        img = fw2.image("0.3.0", size=4096)
-        struct.pack_into("<IIIII", h, 56, bp.APP_BASE, 4096, 1, 4096, zlib.crc32(img))
-        u = bp.UpdateFile.parse(fw2.fix_crc(h) + img)
+        u = bp.UpdateFile.parse(fw2.format1())
         self.assertEqual((u.format, u.format_text), (1, "Format 1, unsigniert"))
-        bad = fw2.image("0.3.0", size=4096, reset=0x08000301)
-        struct.pack_into("<I", h, 72, zlib.crc32(bad))
         with self.assertRaisesRegex(ValueError, "Vektortabelle"):
-            bp.UpdateFile.parse(fw2.fix_crc(h) + bad)
+            bp.UpdateFile.parse(fw2.format1(reset=0x08000301))
 
     def test_fehler_im_kopf(self):
         good = fw2.format2(size=4096)
@@ -186,6 +178,117 @@ class Signatur(unittest.TestCase):
             self.assertIn("nicht bekannt", row.info.text())
             self.assertIn(farben.WARNUNG, row.info.styleSheet())
         app.processEvents()
+
+
+class Ablauf(unittest.TestCase):
+    def flasher(self, dev, data, **kw):
+        self.logs = []
+        f = flash.UsbFlasher(bp.UpdateFile.parse(data), ports=dev.ports, opener=dev.open, log=self.logs.append, **kw)
+        f.WAIT_BOOT_S, f.WAIT_APP_S, f.START_S, f.REPLY_S = 3.0, 3.0, 3.0, 0.1
+        return f
+
+    def wieder_in_der_anwendung(self, dev, version="0.1.0"):
+        end = time.time() + 3
+        while time.time() < end and not (dev.ports() and dev.mode == "app"):
+            time.sleep(0.01)
+        self.assertEqual((dev.mode, dev.version), ("app", version))
+
+
+class Protokoll(Ablauf):
+    """Bootloader 1 und 2 erkennen, nur die passende Datei uebertragen."""
+
+    def test_wartezeit(self):
+        self.assertEqual(flash.UsbFlasher.START_S, 30.0)
+
+    def test_passend(self):
+        dev = BootSimDevice("0.1.0", proto=2)
+        self.assertEqual(self.flasher(dev, fw2.format2("0.4.0")).run(), "0.4.0")
+        self.assertTrue(any("Bootloader 2.0.0, Schlüssel 0" in t for t in self.logs))
+        dev = BootSimDevice("0.1.0")
+        self.assertEqual(self.flasher(dev, fw2.format1("0.3.0")).run(), "0.3.0")
+
+    def test_fehlkombination_vor_jeder_uebertragung(self):
+        for proto, data, text in ((1, fw2.format2(), "nimmt nur Format 1"), (2, fw2.format1(), "nur signierte")):
+            with self.subTest(proto=proto):
+                dev = BootSimDevice("0.1.0", proto=proto)
+                with self.assertRaisesRegex(flash.FlashError, text) as ctx:
+                    self.flasher(dev, data).run()
+                self.assertIn("Bootloader 2.0.0 kommt", str(ctx.exception))
+                self.assertIn("ST-Link", str(ctx.exception))
+                self.assertEqual(dev.starts, 0)
+                self.wieder_in_der_anwendung(dev)
+
+    def test_wer_schon_im_bootloader_war_bleibt_dort(self):
+        dev = BootSimDevice("0.1.0", mode="boot")
+        with self.assertRaisesRegex(flash.FlashError, "ST-Link"):
+            self.flasher(dev, fw2.format2()).run()
+        self.assertEqual((dev.mode, dev.starts), ("boot", 0))
+
+    def test_unbekanntes_protokoll(self):
+        dev = BootSimDevice("0.1.0", proto=3)
+        with self.assertRaisesRegex(flash.FlashError, "Protokoll 3"):
+            self.flasher(dev, fw2.format2()).run()
+        self.assertEqual(dev.starts, 0)
+
+    def test_anderer_schluessel_im_bootloader(self):
+        dev = BootSimDevice("0.1.0", proto=2, key_id=1)
+        with self.assertRaisesRegex(flash.FlashError, "Schlüssel 3 signiert.*Schlüssel 1"):
+            self.flasher(dev, fw2.format2(key_id=3)).run()
+        self.assertEqual(dev.starts, 0)
+        self.wieder_in_der_anwendung(dev)
+
+    def test_alte_zeile_ohne_key(self):
+        self.assertEqual(flash.fit_problem(2, bp.UpdateFile.parse(fw2.format2(key_id=3)), {}), "")
+
+
+class StartGeduldig(Ablauf):
+    def test_langsame_pruefung(self):
+        dev = BootSimDevice("0.1.0", proto=2, start_s=0.5)
+        self.assertEqual(self.flasher(dev, fw2.format2("0.4.0")).run(), "0.4.0")
+        self.assertTrue(any("Signatur im Gerät" in t for t in self.logs))
+
+    def test_wiederholung_holt_verlorene_schlussantwort(self):
+        dev = BootSimDevice("0.1.0", proto=2, start_s=0.1, drop={3})      # 1 PING, 2 BUSY, 3 OK
+        f = self.flasher(dev, fw2.format2("0.4.0"))
+        f.START_RESEND_S = 0.3
+        self.assertEqual(f.run(), "0.4.0")
+        self.assertEqual(dev.starts, 2)
+
+    def test_wiederholung_waehrend_der_pruefung_antwortet_busy(self):
+        dev = BootSimDevice("0.1.0", proto=2, start_s=0.6)
+        f = self.flasher(dev, fw2.format2("0.4.0"))
+        f.START_RESEND_S = 0.2
+        self.assertEqual(f.run(), "0.4.0")
+        self.assertGreater(dev.starts, 1)
+
+    def test_wird_nicht_fertig(self):
+        dev = BootSimDevice("0.1.0", proto=2, start_s=2.0)
+        f = self.flasher(dev, fw2.format2())
+        f.START_S = 0.3
+        with self.assertRaisesRegex(flash.FlashError, "nicht fertig"):
+            f.run()
+
+    def test_abbruch_in_der_pruefung(self):
+        dev = BootSimDevice("0.1.0", proto=2, start_s=0.5)
+        stop = threading.Event()
+        f = self.flasher(dev, fw2.format2(), cancelled=stop.is_set)
+        f.log = lambda t: stop.set() if "Signatur" in t else None
+        with self.assertRaises(flash.FlashCancelled):
+            f.run()
+        self.wieder_in_der_anwendung(dev)
+
+    def test_ablehnung_laesst_die_firmware_stehen(self):
+        for status, text in ((bp.BL_E_SIGNATURE, "Signatur ungültig"), (bp.BL_E_ROLLBACK, "Rückfall gesperrt")):
+            with self.subTest(status):
+                dev = BootSimDevice("0.1.0", proto=2, start_status=status)
+                with self.assertRaisesRegex(flash.FlashError, f"Start abgelehnt: {text}"):
+                    self.flasher(dev, fw2.format2()).run()
+                self.wieder_in_der_anwendung(dev)
+
+    def test_versionspruefung_bleibt(self):
+        dev = BootSimDevice("0.1.0", proto=2, wrong_version="0.3.9")
+        with self.assertRaisesRegex(flash.FlashError, "Falsche Version"):
+            self.flasher(dev, fw2.format2("0.4.0")).run()
 
 
 if __name__ == "__main__":

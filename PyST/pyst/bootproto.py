@@ -15,12 +15,14 @@ from .felder import parse_kv
 
 BL_PING, BL_START, BL_DATA, BL_END, BL_ABORT, BL_BOOT, BL_RESP = 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x80
 (BL_OK, BL_BUSY, BL_E_STATE, BL_E_OFFSET, BL_E_HEADER, BL_E_TARGET, BL_E_UNSUPPORTED, BL_E_LENGTH, BL_E_FLASH,
- BL_E_VERIFY, BL_E_CMD) = range(11)
+ BL_E_VERIFY, BL_E_CMD, BL_E_SIGNATURE, BL_E_ROLLBACK) = range(13)
 STATUS_TEXT = {
     BL_E_STATE: "Ablauf gestört", BL_E_OFFSET: "Lücke in den Daten", BL_E_HEADER: "Dateikopf ungültig",
     BL_E_TARGET: "Datei passt nicht zu dieser Basis", BL_E_UNSUPPORTED: "Dateiformat zu neu für diesen Bootloader",
     BL_E_LENGTH: "Länge ungültig", BL_E_FLASH: "Flash-Fehler im Gerät", BL_E_VERIFY: "Prüfung im Gerät fehlgeschlagen",
     BL_E_CMD: "Befehl unbekannt",
+    BL_E_SIGNATURE: "Signatur ungültig, die Datei stammt nicht von uns oder passt nicht zum Schlüssel dieses Bootloaders",
+    BL_E_ROLLBACK: "Rückfall gesperrt, die Datei ist älter als die Firmware auf der Basis zulässt",
 }
 
 BLOCK = 512

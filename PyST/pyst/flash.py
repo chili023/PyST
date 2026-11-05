@@ -441,13 +441,37 @@ def esp_bridge_on(port: Optional[str], timeout: float = 2.0):
     raise FlashError("Die Basis antwortet nicht auf das Einschalten der ESP-Brücke.")
 
 
+PROTO_FORMAT = {1: bp.FORMAT_PLAIN, 2: bp.FORMAT_SIGNED}      # Bootloader-Protokoll -> Dateiformat, das er annimmt
+# Abgelehnt, bevor etwas geloescht wurde: Die Anwendung ist unberuehrt
+START_REFUSED = (bp.BL_E_HEADER, bp.BL_E_TARGET, bp.BL_E_UNSUPPORTED, bp.BL_E_LENGTH, bp.BL_E_SIGNATURE, bp.BL_E_ROLLBACK)
+
+
+def fit_problem(proto: int, update: bp.UpdateFile, info: dict) -> str:
+    """Passt die Datei zum Bootloader? -> leer oder Klartext; Pruefung vor jeder Uebertragung."""
+    bl = info.get("bl", "?")
+    if proto not in PROTO_FORMAT:
+        return f"Bootloader spricht Protokoll {proto}, dieses PyST 1 und 2."
+    if update.format != PROTO_FORMAT[proto] and proto == 1:
+        return (f"Die Datei ist signiert (Format {update.format}), Bootloader {bl} der Basis nimmt nur Format 1. "
+                "Bootloader 2.0.0 kommt einmalig per ST-Link: Gesamtdatei an J10 flashen, danach geht es per USB weiter.")
+    if update.format != PROTO_FORMAT[proto]:
+        return (f"Die Datei ist unsigniert (Format {update.format}), Bootloader {bl} der Basis nimmt nur signierte "
+                "Dateien (Format 2). Bootloader 2.0.0 kommt per ST-Link und ist hier schon drauf: Eine Datei im Format 2 "
+                "wählen.")
+    key = info.get("key", "")
+    if proto == 2 and key.isdigit() and int(key) != update.key_id:
+        return f"Die Datei ist mit Schlüssel {update.key_id} signiert, der Bootloader der Basis hat Schlüssel {key}."
+    return ""
+
+
 class UsbFlasher:
     """Update der Basis ueber den Bootloader. run() blockiert (eigener Thread) und liefert die neue Version.
     Der Port wird immer neu gesucht: Sein Name kann sich beim Wechsel Anwendung/Bootloader aendern. Alle
     Ein-/Ausgaben laufen ueber `ports` und `opener`, damit Tests den Simulator einsetzen koennen."""
     WAIT_BOOT_S = 15.0        # Abmelden, Reset, Anmelden
-    WAIT_APP_S = 60.0         # Reset, Kopieren (224 KB: etwa 8 s), Start
-    START_S = 20.0            # Loeschen des Zwischenspeichers, im Geraet hoechstens 4,5 s
+    WAIT_APP_S = 60.0         # Reset, Pruefen, Kopieren (224 KB: etwa 8 s), Start
+    START_S = 30.0            # Signaturpruefung (mehrere Sekunden) und Loeschen (hoechstens 4,5 s) im Geraet
+    START_RESEND_S = 5.0      # Geht die Schlussantwort verloren, holt die wiederholte Anfrage sie nach
     END_S = 10.0
     REPLY_S = 1.0
     RETRIES = 5
@@ -467,6 +491,7 @@ class UsbFlasher:
         self.rx = deque()
         self.seq = 0
         self.leaving_app = False          # nach #UPDATE: Abbrechen erst im Bootloader, sonst bliebe die Basis dort
+        self.from_app = False             # PyST hat die Basis in den Bootloader geschickt
 
     # --- Ablauf
     def run(self) -> str:
@@ -479,7 +504,7 @@ class UsbFlasher:
             kind, info = self._identify(ports[0])
             if kind == "app":
                 self.log(f"Anwendung läuft ({info}), fordere den Bootloader an.")
-                self.leaving_app = True
+                self.leaving_app = self.from_app = True
                 self._request_update()
                 kind, info = self._wait_for("boot", self.WAIT_BOOT_S)
             elif kind == "boot":
@@ -593,37 +618,60 @@ class UsbFlasher:
             raise FlashError(f"{what}: {bp.STATUS_TEXT.get(status, status)}.")
 
     def _start(self):
-        """Loeschen dauert Sekunden: Das Geraet antwortet erst BUSY, dann OK auf dieselbe seq."""
-        status, _value, _text = self._ask(bp.BL_START, self.update.header)
+        """Pruefen und Loeschen dauern Sekunden: Das Geraet antwortet erst BUSY, dann das Ergebnis auf dieselbe seq.
+        Waehrend der Signaturpruefung kann es schweigen, darum auch die erste Antwort geduldig abwarten."""
+        status, _value, _text = self._ask(bp.BL_START, self.update.header, timeout=self.REPLY_S,
+                                          retries=int(self.START_S / self.REPLY_S))
+        frame = bp.encode_frame(bp.BL_START, self.seq, self.update.header)
         end = time.time() + self.START_S
+        resend = time.time() + self.START_RESEND_S
         while status == bp.BL_BUSY and time.time() < end:
             self._check_cancel()
             try:
+                if time.time() >= resend:
+                    resend += self.START_RESEND_S
+                    self.ser.write(frame)
                 r = self._resp()
             except OSError as exc:
                 raise FlashError(f"Verbindung verloren: {exc}.")
             if r is not None and r[0] == bp.BL_START:
                 status = r[1]
         if status == bp.BL_BUSY:
-            raise FlashError("Bootloader wird mit dem Löschen nicht fertig.")
+            raise FlashError("Bootloader wird mit Prüfen und Löschen nicht fertig.")
+        if status in START_REFUSED:
+            self._back_to_app()
         self._ok(status, "Start abgelehnt")
+
+    def _back_to_app(self):
+        """Nichts wurde geloescht: Hat PyST die Basis in den Bootloader geschickt, die alte Anwendung wieder starten."""
+        if not self.from_app:
+            return
+        try:
+            self._ask(bp.BL_BOOT, retries=1)
+            self.log("Die vorhandene Firmware bleibt, die Basis startet sie wieder.")
+        except FlashError:
+            pass                                     # der Fehler, der hierher fuehrte, zaehlt
 
     def _transfer(self, info: dict):
         u = self.update
         if info.get("target", u.target) != u.target or info.get("board", u.board) != u.board:
             raise FlashError(f"Falsche Firmware: Die Basis ist {info.get('target')} {info.get('board')}.")
-        self.log(f"Bootloader {info.get('bl', '?')}, Anwendung {info.get('app', '?')}, Grund {info.get('grund', '?')}.")
+        key = f", Schlüssel {info['key']}" if "key" in info else ""
+        self.log(f"Bootloader {info.get('bl', '?')}{key}, Anwendung {info.get('app', '?')}, Grund {info.get('grund', '?')}.")
         self.ser.reset_input_buffer()
         self.ser.write(b"\0")                        # Text von vorher abschliessen
         self.dec = bp.FrameDecoder()
         self.rx.clear()
         status, value, _text = self._ask(bp.BL_PING)
-        if status != bp.BL_OK or value != 1:
-            raise FlashError(f"Bootloader spricht Protokoll {value}, dieses PyST 1.")
+        problem = "Bootloader antwortet nicht auf PING." if status != bp.BL_OK else fit_problem(value, u, info)
+        if problem:
+            self._back_to_app()
+            raise FlashError(problem)
         self.leaving_app = False
         try:
             self._check_cancel()
-            self.log("Lösche Zwischenspeicher …")
+            self.log("Prüfe die Signatur im Gerät, das dauert einige Sekunden …" if u.format == bp.FORMAT_SIGNED
+                     else "Lösche Zwischenspeicher …")
             self._start()
             self.log(f"Übertrage {u.image_len} Byte …")
             off = 0
@@ -640,7 +688,7 @@ class UsbFlasher:
             self.log("Prüfe im Gerät …")
             self._ok(self._ask(bp.BL_END, timeout=self.END_S, retries=1)[0], "Prüfung")
         except FlashCancelled:
-            self._ask(bp.BL_ABORT)
+            self._ask(bp.BL_ABORT, retries=int(self.START_S))   # steckt das Geraet in der Signaturpruefung, schweigt es
             self._ask(bp.BL_BOOT)                    # alte Anwendung wieder starten
             raise
         self.log("Geprüft, Basis kopiert und startet neu …")

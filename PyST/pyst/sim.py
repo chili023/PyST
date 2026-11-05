@@ -1471,7 +1471,11 @@ class BootSimDevice:
       streaming Anwendung gibt schon Telegramme aus
       no_update Anwendung kennt '#UPDATE' nicht
       rewind    bei diesem Offset 1024 Byte zurueckfordern (einmalig)
-      wrong_version Anwendung meldet nach dem Update eine andere Version"""
+      wrong_version Anwendung meldet nach dem Update eine andere Version
+      proto     Protokoll des Bootloaders, Vorgabe 1; 2 meldet zusaetzlich key=
+      key_id    Schluessel, den ein Bootloader mit proto 2 meldet
+      start_s   Sekunden zwischen BUSY und dem Ergebnis von START
+      start_status  Ergebnis von START statt OK"""
     RESET_S = 0.05
 
     def __init__(self, version: str = "0.2.3", app: bool = True, mode: Optional[str] = None, **faults):
@@ -1489,6 +1493,8 @@ class BootSimDevice:
         self.resp_count = 0
         self.settings = {"rate_hz": "60"}               # Einstellungen des Kunden: muessen bleiben
         self.boots = 0
+        self.starts = 0                                 # START-Anfragen, die das Geraet erreicht haben
+        self.pending: Optional[bytes] = None            # Kopf in Pruefung, zwischen BUSY und Ergebnis
         self.app_port: Optional[BasisSimSerial] = None
 
     # --- USB
@@ -1558,9 +1564,14 @@ class BootSimDevice:
         else:
             self.mode = "app"
 
+    @property
+    def proto(self) -> int:
+        return self.faults.get("proto", 1)
+
     def info(self) -> str:
-        return (f"#BOOTLOADER;proto=1;bl=1.0.0;board={bootproto.BOARD};target={bootproto.TARGET};uid=SIM;"
-                f"app={self.version or 'keine'};grund={self.why};opt=FFEFF8AA")
+        key = f";key={self.faults.get('key_id', 0)}" if self.proto == 2 else ""
+        return (f"#BOOTLOADER;proto={self.proto};bl={self.proto}.0.0;board={bootproto.BOARD};target={bootproto.TARGET};"
+                f"uid=SIM;app={self.version or 'keine'};grund={self.why};opt=FFEFF8AA{key}")
 
     # --- Protokoll
     def _reply(self, port: BootSimPort, seq: int, cmd: int, status: int, value: int = 0, text: str = ""):
@@ -1572,25 +1583,63 @@ class BootSimDevice:
             data = bytes((data[2] ^ 0x40,)).join((data[:2], data[3:]))
         port._put(data)
 
+    def _head_status(self, body: bytes) -> int:
+        """Schnelle Kopfpruefung nach boot_update_hdr_check(): Ergebnis sofort, ohne BUSY."""
+        b = bootproto
+        if struct.unpack_from("<H", body, 8)[0] != self.proto:
+            return b.BL_E_UNSUPPORTED
+        try:
+            self.head = b.UpdateFile.parse(body + bytes(struct.unpack_from("<I", body, 68)[0]))
+        except ValueError as exc:                    # Nutzdaten fehlen hier noch: nur Kopffehler zaehlen
+            if "Prüfsumme" not in str(exc) and "Vektortabelle" not in str(exc):
+                return b.BL_E_HEADER
+            self.head = b.UpdateFile(body, b"", b.TARGET, b.BOARD, body[40:56].split(b"\0")[0].decode(),
+                                     struct.unpack_from("<I", body, 60)[0], struct.unpack_from("<I", body, 64)[0])
+        return b.BL_OK
+
+    def _check_status(self, body: bytes) -> int:
+        """Langsame Pruefung zwischen BUSY und Ergebnis."""
+        return self.faults.get("start_status", bootproto.BL_OK)
+
+    def _start(self, port: BootSimPort, seq: int, body: bytes):
+        b = bootproto
+        self.starts += 1
+        if body == self.pending:                     # Wiederholung, Pruefung laeuft weiter
+            self._reply(port, seq, b.BL_START, b.BL_BUSY)
+            return
+        if self.state == "rx" and self.next_off == 0 and self.stage_hdr and self.stage_hdr.header == body:
+            self._reply(port, seq, b.BL_START, b.BL_OK)                 # Antwort ging verloren
+            return
+        status = self._head_status(body)
+        if status != b.BL_OK:
+            self._reply(port, seq, b.BL_START, status)
+            return
+        self.pending = body
+        self._reply(port, seq, b.BL_START, b.BL_BUSY)
+        wait = self.faults.get("start_s", 0)
+        if wait:
+            threading.Timer(wait, self._start_done, (port, seq, body)).start()
+        else:
+            self._start_done(port, seq, body)
+
+    def _start_done(self, port: BootSimPort, seq: int, body: bytes):
+        if self.pending != body:                     # inzwischen abgebrochen
+            return
+        self.pending = None
+        status = self._check_status(body)
+        if status == bootproto.BL_OK:                # erst jetzt Beleg und Zwischenspeicher loeschen
+            self.commit = None
+            self.stage_hdr = self.head
+            self.stage = bytearray(b"\xff" * self.stage_hdr.image_len)
+            self.state, self.next_off = "rx", 0
+        self._reply(port, seq, bootproto.BL_START, status)
+
     def frame(self, port: BootSimPort, kind: int, seq: int, body: bytes):
         b = bootproto
         if kind == b.BL_PING:
-            self._reply(port, seq, kind, b.BL_OK, 1, self.info())
+            self._reply(port, seq, kind, b.BL_OK, self.proto, self.info())
         elif kind == b.BL_START:
-            self.commit = None
-            try:
-                self.stage_hdr = b.UpdateFile.parse(body + bytes(struct.unpack_from("<I", body, 68)[0]))
-            except ValueError as exc:                # Nutzdaten fehlen hier noch: nur Kopffehler zaehlen
-                if "Prüfsumme" not in str(exc) and "Vektortabelle" not in str(exc):
-                    self._reply(port, seq, kind, b.BL_E_HEADER)
-                    return
-                self.stage_hdr = b.UpdateFile(body, b"", b.TARGET, b.BOARD, body[40:56].split(b"\0")[0].decode(),
-                                              struct.unpack_from("<I", body, 60)[0],
-                                              struct.unpack_from("<I", body, 64)[0])
-            self.stage = bytearray(b"\xff" * self.stage_hdr.image_len)
-            self.state, self.next_off = "rx", 0
-            self._reply(port, seq, kind, b.BL_BUSY)
-            self._reply(port, seq, kind, b.BL_OK)
+            self._start(port, seq, body)
         elif kind == b.BL_DATA:
             time.sleep(self.faults.get("slow", 0))
             off = struct.unpack_from("<I", body)[0]
@@ -1632,6 +1681,7 @@ class BootSimDevice:
                 self._reply(port, seq, kind, b.BL_OK, self.next_off)
         elif kind == b.BL_ABORT:
             self.commit = None
+            self.pending = None
             self.state = "idle"
             self._reply(port, seq, kind, b.BL_OK)
         elif kind == b.BL_BOOT:

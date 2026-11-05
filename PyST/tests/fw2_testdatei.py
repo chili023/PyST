@@ -42,6 +42,19 @@ def image(version: str = "0.4.0", size: int = 20480, rollback: int = 1, reset: i
     return bytes(img)
 
 
+def format1(version: str = "0.3.0", size: int = 4096, reset: int = bp.APP_BASE + 0x301) -> bytes:
+    img = image(version, size, reset=reset)
+    h = bytearray(bp.UPD_LEN)
+    h[0:8] = bp.UPD_MAGIC
+    struct.pack_into("<HHI", h, 8, bp.FORMAT_PLAIN, bp.UPD_LEN, 0)
+    h[16:16 + len(bp.TARGET)] = bp.TARGET.encode()
+    h[32:32 + len(bp.BOARD)] = bp.BOARD.encode()
+    h[40:40 + len(version)] = version.encode()
+    image_crc = struct.unpack_from("<I", img, bp.IMG_HDR_OFS + 16)[0]
+    struct.pack_into("<IIIII", h, 56, bp.APP_BASE, size, image_crc, size, zlib.crc32(img))
+    return fix_crc(h) + img
+
+
 def encrypt(plain: bytes, nonce: bytes, aes: bytes = TESTSCHLUESSEL_AES) -> bytes:
     enc = Cipher(algorithms.AES(aes), modes.CTR(nonce)).encryptor()
     return enc.update(plain) + enc.finalize()
