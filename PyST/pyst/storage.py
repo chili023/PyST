@@ -379,13 +379,20 @@ def load_pyst(path: str) -> List[Dict[str, Any]]:
                 except KeyError:
                     return None
 
-            def xml_path(n: str, sub=sub) -> str:
+            temps: List[str] = []
+
+            def xml_path(n: str, sub=sub, temps=temps) -> str:
                 tmp = tempfile.NamedTemporaryFile(suffix=".xml", delete=False)
                 tmp.write(z.read(sub + n))
                 tmp.close()
+                temps.append(tmp.name)
                 return tmp.name
 
-            r = _load_pyst_files(read, names, entry.get("name") or sub.rstrip("/"), xml_path)
+            try:
+                r = _load_pyst_files(read, names, entry.get("name") or sub.rstrip("/"), xml_path)
+            finally:
+                for t in temps:
+                    os.unlink(t)
             if entry.get("parameter"):
                 r["params"] = physics.DynoParams(**{k: v for k, v in entry["parameter"].items()
                                                     if k in physics.DynoParams.__dataclass_fields__})

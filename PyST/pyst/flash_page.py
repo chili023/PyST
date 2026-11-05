@@ -79,6 +79,8 @@ class FlashRow(QtWidgets.QGroupBox):
         lay.addWidget(self.b_load, 2, 2)
         lay.addWidget(self.info, 3, 0, 1, 3)
         lay.addWidget(hint, 4, 0, 1, 3)
+        self._seen = None
+        self._info = ("", "", "")
         b_pick.clicked.connect(self.pick)
         self.path.editingFinished.connect(self._edited)
         self.b_go.clicked.connect(lambda: self.start.emit(target.key))
@@ -100,14 +102,32 @@ class FlashRow(QtWidgets.QGroupBox):
         self.changed(self.target.key, self.path.text().strip())
         self.refresh()
 
-    def refresh(self):
-        new = ""
+    def _stamp(self):
+        """Merkmal der Datei bzw. des Ordners: nur wenn es sich aendert, lohnt erneutes Lesen samt SHA-256."""
+        path = self.path.text().strip()
+        try:
+            st = os.stat(path)
+            files = sorted((e.name, e.stat().st_mtime_ns, e.stat().st_size) for e in os.scandir(path)) \
+                if os.path.isdir(path) else []
+        except OSError:
+            return None
+        return path, st.st_mtime_ns, st.st_size, files
+
+    def _image_info(self):
+        """-> (Beschreibung, Version, Farbe)"""
+        stamp = self._stamp()
+        if stamp is not None and stamp == self._seen:
+            return self._info
         try:
             image = flash.load_image(self.target.key, self.path.text().strip())
-            text, new = image.summary(), flash.image_version(image)
-            color = "#2e7d32"
+            info = image.summary(), flash.image_version(image), "#2e7d32"
         except (FlashError, OSError, ValueError) as exc:
-            text, color = str(exc), "#c62828"
+            info = str(exc), "", "#c62828"
+        self._seen, self._info = stamp, info
+        return info
+
+    def refresh(self):
+        text, new, color = self._image_info()
         if self.target.key == flash.LAMBDA_F042:
             self.versions.setText("Version: der F042 meldet nur das Protokoll, geprüft wird nach dem Update (0xA0)")
         else:
@@ -124,6 +144,7 @@ class FlashRow(QtWidgets.QGroupBox):
 
 class FlashPage(QtWidgets.QScrollArea):
     pyst_update = QtCore.Signal(str)         # neue PyST-Version in main
+    flash_done = QtCore.Signal()             # Port ist wieder frei: automatisches Verbinden darf wieder
 
     def __init__(self, settings: dict, save_settings: Callable[[], None], get_link: Callable[[], object],
                  disconnect: Callable[[], None]):
@@ -298,6 +319,7 @@ class FlashPage(QtWidgets.QScrollArea):
     def _usb_done(self, key: str, state: str, text: str):
         self.worker.wait()
         self.worker = None
+        self.flash_done.emit()
         self.bar.hide()
         self.b_cancel.hide()
         self._set_busy(False)
@@ -338,6 +360,7 @@ class FlashPage(QtWidgets.QScrollArea):
         self._read()
         self.proc = None
         self._set_busy(False)
+        self.flash_done.emit()
         t = flash.TARGETS[key]
         if code == 0:
             nach = " 12 V einmal aus und ein." if key == flash.BASIS_STLINK else ""
@@ -349,4 +372,5 @@ class FlashPage(QtWidgets.QScrollArea):
         if self.proc is not None and self.proc.error() == QtCore.QProcess.FailedToStart:
             self.proc = None
             self._set_busy(False)
+            self.flash_done.emit()
             self._status(f"{flash.TARGETS[key].name}: Werkzeug ließ sich nicht starten.", "#c62828")

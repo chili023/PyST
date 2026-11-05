@@ -129,6 +129,11 @@ _VERSION = re.compile(r"\d+\.\d+\.\d+")
 _IMAGE_VERSION = {ZANGE: rb"fw=PyST-Zange (\d+\.\d+\.\d+)", BASIS_ESP: rb"basis-esp (\d+\.\d+\.\d+)"}
 
 
+def version_matches(version: str, text: str) -> bool:
+    """Steht genau diese Version im Text? Zusaetze wie '0.2.3-rc1' oder 'h12' stoeren nicht, '0.2.31' passt nicht auf '0.2.3'."""
+    return re.search(rf"(?<![\d.]){re.escape(version)}(?![\d.])", text) is not None
+
+
 def image_version(image: Image) -> str:
     """Firmware-Version der gewählten Datei; leer, wenn sie sich nicht auslesen lässt (Gesamtdatei, Lambda)."""
     if image.target == BASIS_STM:
@@ -614,7 +619,7 @@ class UsbFlasher:
                                      "ST-Link nötig.")
                 if kind == "app":
                     self._close()
-                    if self.update.version not in str(info).split():
+                    if not version_matches(self.update.version, str(info)):
                         raise FlashError(f"Falsche Version: Erwartet {self.update.version}, gemeldet „{info}“.")
                     self.log(f"Anwendung läuft: {info}.")
                     return self.update.version

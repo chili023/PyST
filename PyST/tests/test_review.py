@@ -14,7 +14,7 @@ from unittest import mock
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from pyst import channels, link, physics, runcache, storage  # noqa: E402
+from pyst import channels, flash, link, physics, runcache, storage  # noqa: E402
 from pyst.recorder import Recorder  # noqa: E402
 from pyst.runcache import RunCache  # noqa: E402
 
@@ -242,6 +242,50 @@ class RecorderBytes(unittest.TestCase):
                 rec._sync_side_files()
                 sync.assert_called_once()
             rec.close()
+
+
+class Warteschlangen(unittest.TestCase):
+    def test_aeltestes_faellt_weg(self):
+        q = queue.Queue(2)
+        self.assertTrue(link._put(q, 1))
+        self.assertTrue(link._put(q, 2))
+        self.assertFalse(link._put(q, 3))
+        self.assertEqual([q.get_nowait(), q.get_nowait()], [2, 3])
+
+    def test_alle_gedeckelt(self):
+        lk = link.DynoLink(link.SIM_PORT)
+        try:
+            for q in (lk.frames, lk.text_lines, lk.replies, lk.bursts, lk.events, lk.log_lines, lk.add_tap()):
+                self.assertGreater(q.maxsize, 0)
+        finally:
+            lk.close()
+
+
+class Niedrig(unittest.TestCase):
+    def test_version_im_text(self):
+        self.assertTrue(flash.version_matches("0.2.3", "PyST-Basis 0.2.3 rev31"))
+        self.assertTrue(flash.version_matches("0.2.3", "fw=0.2.3-rc1"))
+        self.assertTrue(flash.version_matches("0.2.3-rc1", "PyST-Basis 0.2.3-rc1"))
+        self.assertTrue(flash.version_matches("0.2.0", "basis-esp 0.2.0 h12"))
+        self.assertFalse(flash.version_matches("0.2.3", "PyST-Basis 0.2.31"))
+        self.assertFalse(flash.version_matches("0.2.3", "PyST-Basis 10.2.3"))
+        self.assertFalse(flash.version_matches("0.2.3", "PyST-Basis 0.2.4"))
+
+    def test_keine_temp_datei_bleibt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            xml = os.path.join(os.path.dirname(__file__), "data", "260526_161802_ 32,0_9972.xml")
+            path = os.path.join(tmp, "x.pyst")
+            with zipfile.ZipFile(path, "w") as z:
+                z.write(xml, "01_x/lauf.xml")
+                z.writestr("inhalt.json", json.dumps({"format": "pyst", "laeufe": [{"ordner": "01_x", "name": "x"}]}))
+            old = tempfile.tempdir
+            tempfile.tempdir = tmp
+            try:
+                runs = storage.load_pyst(path)
+            finally:
+                tempfile.tempdir = old
+            self.assertEqual(len(runs), 1)
+            self.assertEqual(sorted(os.listdir(tmp)), ["x.pyst"])
 
 
 if __name__ == "__main__":

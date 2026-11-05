@@ -476,6 +476,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._shown_rate = 0.0
         self._cursor_n = 0.0
         self._cursor_inside = False
+        self._cursor_names: Optional[Dict[str, tuple]] = None   # Laufnamen der Cursor-Tabelle, _reload_runs leert sie
         self._live_vals: Dict[str, str] = {}
 
         self.tabs = QtWidgets.QTabWidget()
@@ -542,6 +543,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.page_oszi.saved.connect(self._dauer_saved)
         self.page_hw.log_saved.connect(lambda folder: self._dauer_saved(folder, "Zange-Log"))
         self.page_hw.connect_port.connect(self._connect_port)
+        self.page_flash.flash_done.connect(lambda: setattr(self, "_manual_off", False))
         self.zange_status = QtWidgets.QLabel("")
         self.statusBar().addPermanentWidget(self.zange_status)
         self.page_hw.zange_text.connect(self.zange_status.setText)
@@ -1317,6 +1319,7 @@ class MainWindow(QtWidgets.QMainWindow):
                          + 2 * t.frameWidth() + 1)
 
     def _reload_runs(self):
+        self._cursor_names = None
         f = self.run_filter.currentIndex()
         vid = self.vehicle_combo.currentData() if f == 1 else None
         sid = self.setup_combo.currentData() if f == 2 else None
@@ -1451,8 +1454,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._cursor_n = n_rpm
         self._cursor_inside = self.plot._cursor_inside if hasattr(self.plot, "_cursor_inside") else False
         self._update_max_display()
-        names = {str(r.id): (self._run_label(r), self._run_color(r)) for r in self.db.runs() if r.sichtbar}
-        names[LIVE_KEY] = ("laufende Messung", "#000000")
+        if self._cursor_names is None:                     # nicht je Mausbewegung in die Datenbank
+            self._cursor_names = {str(r.id): (self._run_label(r), self._run_color(r)) for r in self.db.runs() if r.sichtbar}
+            self._cursor_names[LIVE_KEY] = ("laufende Messung", "#000000")
+        names = self._cursor_names
         lam_mode = self.page_settings.lambda_radio.isChecked()
         # Spalten: n, PS, Nm, dann die gewaehlten (Menue "Spalten …" an der Cursor-Tabelle)
         known = {k for k, _l, _u in self._lower_candidates()}

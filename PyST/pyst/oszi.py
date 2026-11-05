@@ -13,6 +13,7 @@ Reiter „Oszi / Dauermessung“: die Messelektronik als Messwerkzeug (Zündung 
 """
 import os
 import time
+from collections import deque
 from typing import Callable, Dict, List, Optional
 
 import numpy as np
@@ -51,6 +52,7 @@ DIAG_LIVE = {"Flanken Zündung": "ign_n", "Flanken Rolle": "roll_n", "Zündung k
              "Geräte-Flags": "flags", "Zündstärke": "ign_peak_mv"}
 DEFAULT_LIVE = ["Drehzahl Zündung", "Rolle × Übersetzung", "Übersetzung"]
 WINDOWS = [("10 s", 10.0), ("30 s", 30.0), ("1 min", 60.0), ("5 min", 300.0), ("30 min", 1800.0), ("alles", 0.0)]
+MAX_EVENTS = 20_000                  # Liste der Ereignisse fuer Anzeige und Auswertung, das Aelteste faellt weg
 KEEP_S = 1800.0                     # so viel bleibt fuer die Anzeige im Speicher (alles steht auf der Platte)
 MODES = ["Auto", "Normal", "Einzelschuss"]
 
@@ -214,7 +216,7 @@ class OsziPage(QtWidgets.QWidget):
         self.store = Store(LIVE_CHANNELS)
         self.t0: Optional[float] = None
         self.detector = dg.EventDetector(self._trigger_config())
-        self.events: List[dg.Event] = []
+        self.events: "deque[dg.Event]" = deque(maxlen=MAX_EVENTS)
         self.markers: List[tuple] = []
         self.bursts: List[dg.Burst] = []
         self.follow = True
@@ -676,6 +678,7 @@ class OsziPage(QtWidgets.QWidget):
             self.ev_table.insertRow(r)
             for c, text in enumerate((f"{ev.t:.2f}", ev.kind, ev.text)):
                 self.ev_table.setItem(r, c, QtWidgets.QTableWidgetItem(text))
+            self.ev_table.item(r, 0).setData(QtCore.Qt.UserRole, ev.t)
         self.ev_count.setText(f"{len(self.events)} Ereignisse")
         mode = self.trig_mode.currentText()
         cb = self.trig_checks.get(ev.kind)
@@ -684,13 +687,14 @@ class OsziPage(QtWidgets.QWidget):
             self._show_trig_state()
 
     def clear_events(self):
-        self.events = []
+        self.events.clear()
         self.ev_table.setRowCount(0)
         self.ev_count.setText("")
 
     def _event_clicked(self, row: int, _col: int):
-        if 0 <= row < len(self.events):
-            self.show_at(self.events[row].t)
+        item = self.ev_table.item(row, 0)
+        if item is not None:
+            self.show_at(item.data(QtCore.Qt.UserRole))
 
     def show_at(self, t: float):
         self.view_range = (t - self.pre_s.value(), t + self.post_s.value())
@@ -729,7 +733,7 @@ class OsziPage(QtWidgets.QWidget):
         if self.rec is not None and link is not None and not link.streaming() \
                 and time.time() - self._last_keepalive > 2.0:
             self._last_keepalive = time.time()            # Ausgabe am Laufen halten (Autostopp der Firmware)
-            link.start()
+            link.keepalive()
         if not frames:
             if self.rec is not None:
                 self._show_rec_state()

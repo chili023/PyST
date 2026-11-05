@@ -354,8 +354,29 @@ def parse_caps(line: str) -> Dict[str, str]:
     return parse_kv(line)
 
 
+# Deckel der Warteschlangen: hoechstens so viel haelt PyST vor, wenn niemand abholt. Das Aelteste faellt weg.
+QUEUE_FRAMES = 100_000                                   # 100 s bei 1 kHz
+QUEUE_TEXT = 1000
+QUEUE_EVENTS = 10_000
+QUEUE_LOG = 200_000                                      # ein '#LOG GET'-Block ist viel kleiner
+QUEUE_BURSTS = 64
 _EOL = re.compile(rb"\r\n|\r|\n")
 LOG_BAD_LINES = 20                                       # so viele verworfene Zeilen ausfuehrlich ins Log
+
+
+def _put(q: "queue.Queue", item) -> bool:
+    """Einreihen; ist die Schlange voll, faellt der aelteste Eintrag weg (False). Der Lesethread wartet nie."""
+    dropped = False
+    while True:
+        try:
+            q.put_nowait(item)
+            return not dropped
+        except queue.Full:
+            dropped = True
+            try:
+                q.get_nowait()
+            except queue.Empty:
+                pass
 
 
 class DynoLink(BasisCommands):
@@ -392,13 +413,13 @@ class DynoLink(BasisCommands):
             if serial is None:
                 raise RuntimeError("pyserial fehlt: pip install pyserial")
             self.ser = serial.Serial(port, baud, timeout=0.05)
-        self.frames: "queue.Queue[Frame]" = queue.Queue()
-        self.text_lines: "queue.Queue[str]" = queue.Queue()
-        self.replies: "queue.Queue[str]" = queue.Queue()      # '#'-Antworten (ohne #BURST;BEGIN/END)
-        self.bursts: "queue.Queue[Burst]" = queue.Queue()     # fertige Flankenaufnahmen
+        self.frames: "queue.Queue[Frame]" = queue.Queue(QUEUE_FRAMES)
+        self.text_lines: "queue.Queue[str]" = queue.Queue(QUEUE_TEXT)
+        self.replies: "queue.Queue[str]" = queue.Queue(QUEUE_TEXT)     # '#'-Antworten (ohne #BURST;BEGIN/END)
+        self.bursts: "queue.Queue[Burst]" = queue.Queue(QUEUE_BURSTS)  # fertige Flankenaufnahmen
         self.taps: List["queue.Queue[Frame]"] = []            # weitere Empfaenger aller Telegramme (Oszi)
-        self.events: "queue.Queue" = queue.Queue()            # Ereigniszeilen der Basis (basis.BasisEvent)
-        self.log_lines: "queue.Queue" = queue.Queue()         # Logzeilen der USB-Zange (basis.LogEntry)
+        self.events: "queue.Queue" = queue.Queue(QUEUE_EVENTS)  # Ereigniszeilen der Basis (basis.BasisEvent)
+        self.log_lines: "queue.Queue" = queue.Queue(QUEUE_LOG)  # Logzeilen der USB-Zange (basis.LogEntry)
         self.zange = None                                     # letzter Zangenstatus (basis.ZangeStatus)
         self._ms_offset: Optional[float] = None               # PC-Zeit - Geraetezeit (aus D-Telegrammen)
         self._ms_last = 0.0                                   # Geraetezeit des letzten D-Telegramms [ms]
@@ -457,7 +478,7 @@ class DynoLink(BasisCommands):
         return t
 
     def add_tap(self) -> "queue.Queue[Frame]":
-        q: "queue.Queue[Frame]" = queue.Queue()
+        q: "queue.Queue[Frame]" = queue.Queue(QUEUE_FRAMES)
         self.taps.append(q)
         return q
 
@@ -531,18 +552,18 @@ class DynoLink(BasisCommands):
                 else:
                     self._ms_offset += (off - self._ms_offset) * 0.001   # langsame Drift nachfuehren
                 self._ms_last = obj.diag["t_ms"]
-            self.frames.put(obj)
+            _put(self.frames, obj)
             for q in list(self.taps):
-                q.put(obj)
+                _put(q, obj)
         elif kind == "B":
             if self._burst is not None:
                 self._burst.edges.append(obj)
                 self._burst_t = time.time()
         elif kind == "E":
             obj.t_pc = self.event_pc_time(obj.master_ms)
-            self.events.put(obj)
+            _put(self.events, obj)
         elif kind == "L":
-            self.log_lines.put(obj)
+            _put(self.log_lines, obj)
         elif kind == "#":
             if obj.startswith("#ZANGE;"):
                 st = parse_zange(obj)
@@ -563,12 +584,12 @@ class DynoLink(BasisCommands):
                     self._burst.lost = _i(kv.get("lost"), 0)
                     self._burst.complete = True
                     self._burst.edges.sort(key=lambda e: e[0])
-                    self.bursts.put(self._burst)
+                    _put(self.bursts, self._burst)
                 self._burst = None
             else:
-                self.replies.put(obj)
+                _put(self.replies, obj)
         else:
-            self.text_lines.put(obj)
+            _put(self.text_lines, obj)
 
     def _tick_ns(self, text: Optional[str]) -> float:
         """Taktdauer aus dem Burst-Kopf, sonst aus '#CAP', sonst 62,5 ns (Mega)."""
@@ -583,7 +604,7 @@ class DynoLink(BasisCommands):
             b, self._burst = self._burst, None
             b.complete = False
             b.edges.sort(key=lambda e: e[0])
-            self.bursts.put(b)
+            _put(self.bursts, b)
 
     def check_burst_timeout(self, seconds: float = 3.0):
         """Kommt laenger keine B-Zeile mehr, gilt die Ausgabe als abgebrochen."""

@@ -333,7 +333,8 @@ class TerminalImport(unittest.TestCase):
 
     def test_cr_only_without_timestamps_and_params(self):
         import re
-        text = open(LOG, encoding="latin-1").read()
+        with open(LOG, encoding="latin-1") as fh:
+            text = fh.read()
         text = re.sub(r"\[[^\]]*\] ", "", text).replace("\r\n", "\r")
         with tempfile.TemporaryDirectory() as d:
             f = os.path.join(d, "mitschnitt.txt")
@@ -466,7 +467,8 @@ class DauerAndShare(unittest.TestCase):
                                                       fehler=r.fehler))
             out = os.path.join(d, "ansicht.html")
             size = htmlexport.export_html(out, payload, "Aprilia SR2 </script>")
-            text = open(out, encoding="utf-8").read()
+            with open(out, encoding="utf-8") as fh:
+                text = fh.read()
             self.assertEqual(size, os.path.getsize(out))
             self.assertLess(size, 2_000_000)
             self.assertIn("uPlot", text)
