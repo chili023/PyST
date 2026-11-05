@@ -31,6 +31,7 @@ from .auth import AuthError
 from .bg import Bg, wait_in_thread, waiting
 from .plots import EXTRA_PREFIX, LOWER_DEFAULT, MAX_LOWER, MAX_OVERLAYS, DynoPlot, fmt_value, run_color
 from .rusefi import COLUMN_PREFIX
+from .runcache import RunCache
 from .runner import ABORTED, DONE, IDLE, RUN, WAIT, RunController
 from .rusefi_page import RusefiPage
 from .tasten_page import TastenBand, TastenPage
@@ -451,7 +452,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.link: Optional[DynoLink] = None
         self.ctrl: Optional[RunController] = None
         self.firmware = ""
-        self.cache: Dict[int, tuple] = {}          # run_id -> (run, result, channels, params)
+        self.cache = RunCache()                    # run_id -> (run, result, channels, params)
         self.last_keepalive = 0.0
         self._done_handled = True
         self._plot_due = 0.0
@@ -1238,7 +1239,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # ------------------------------------------------------------------ Laufdaten
     def _entry(self, rid: int):
         if rid in self.cache:
-            return self.cache[rid]
+            return self.cache.get(rid)
         row = self.db.run(rid)
         if row is None:
             return None
@@ -1257,10 +1258,13 @@ class MainWindow(QtWidgets.QMainWindow):
             return res, run_channels(run, res, p), run_faults(run)[1] if row.fehler is None else None
 
         res, ch, fehler = wait_in_thread(rechnen)
-        self.cache[rid] = (run, res, ch, p)
+        # Rohspalten braucht danach nur noch die ECU-Anzeige (_ecu_extra_run)
+        run["columns"] = {k: v for k, v in run.get("columns", {}).items() if k.startswith(COLUMN_PREFIX)}
+        entry = (run, res, ch, p)
+        self.cache.put(rid, entry)
         if fehler is not None:
             self.db.update_run(rid, fehler=fehler)
-        return self.cache[rid]
+        return entry
 
     def _viewer_channels(self, rid):
         """(Kanaele, Kurvenbereich) fuer den Auswerter"""

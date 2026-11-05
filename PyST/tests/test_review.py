@@ -14,7 +14,8 @@ from unittest import mock
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from pyst import channels, link, physics, storage  # noqa: E402
+from pyst import channels, link, physics, runcache, storage  # noqa: E402
+from pyst.runcache import RunCache  # noqa: E402
 
 
 def median_alt(x, half):
@@ -99,6 +100,46 @@ class CsvLaden(unittest.TestCase):
                      "a;b\n1;2;3\n", "a;a\n1;2\n", "a;b\n\n1;2\n\n3;4\n", "a;b\n1.5e3;-inf\n", 'a;b\n"1";2\n'):
             with self.subTest(text=text):
                 self.assert_gleich(text)
+
+
+class Cache(unittest.TestCase):
+    def test_lru_anzahl(self):
+        c = RunCache(max_entries=3)
+        for i in range(3):
+            c.put(i, ({"x": np.zeros(10)},))
+        c.get(0)                                                  # 0 wurde benutzt, 1 ist jetzt der aelteste
+        c.put(3, ({"x": np.zeros(10)},))
+        self.assertNotIn(1, c)
+        self.assertIn(0, c)
+        self.assertEqual(len(c), 3)
+
+    def test_lru_groesse(self):
+        c = RunCache(max_bytes=20_000)
+        c.put(1, {"x": np.zeros(1000)})
+        c.put(2, {"x": np.zeros(1000)})
+        self.assertEqual(len(c), 2)
+        self.assertEqual(c.total, 16_000)
+        c.put(3, {"x": np.zeros(1000)})
+        self.assertNotIn(1, c)
+        c.put(4, {"x": np.zeros(100_000)})                        # zu gross, bleibt aber als einziger Eintrag
+        self.assertEqual(list(c.items), [4])
+
+    def test_pop_und_groesse(self):
+        c = RunCache()
+        c.put(1, {"x": np.zeros(10)})
+        self.assertIsNotNone(c.pop(1))
+        self.assertIsNone(c.pop(1))
+        self.assertIsNone(c.get(1))
+        self.assertEqual(c.total, 0)
+
+    def test_nbytes_zaehlt_gemeinsames_einmal(self):
+        a = np.zeros(10)
+        self.assertEqual(runcache.nbytes({"a": a, "b": [a, a], "c": (1, "x", None)}), 80)
+
+        class Res:
+            def __init__(self):
+                self.v = np.zeros(5)
+        self.assertEqual(runcache.nbytes((Res(),)), 40)
 
 
 if __name__ == "__main__":
