@@ -5,7 +5,7 @@ Ordner  messungen/YYMMDD_HHMMSS_Dauermessung/
   dauer.json        Kopfdaten (waehrend der Messung regelmaessig neu geschrieben)
   teil_0001.csv …   Telegramme in Abschnitten (je ABSCHNITT_S Sekunden eine Datei), alle FLUSH_S Sekunden
                     auf die Platte geschrieben (fsync) -> ein Absturz verliert hoechstens wenige Sekunden
-  marker.csv        Marker mit Text ("Kabel bewegt"), sofort geschrieben
+  marker.csv        Marker mit Text ("Kabel bewegt"), sofort geschrieben, fsync im FLUSH_S-Takt
   ereignisse.csv    erkannte Ereignisse (Software-Trigger)
   bursts/burst_NNN.csv  Flankenaufnahmen (PST-Diag 1)
 Beim Beenden: Abschnitte -> roh.csv, dauer.json -> lauf.json (art = "dauermessung"). Nach einem Absturz
@@ -26,6 +26,17 @@ ABSCHNITT_S = 60.0
 FLUSH_S = 2.0
 
 
+class _Counted:
+    """Schreibt in eine Datei und zaehlt die Bytes im Recorder mit."""
+
+    def __init__(self, fh, rec: "Recorder"):
+        self.fh, self.rec = fh, rec
+
+    def write(self, text: str) -> int:
+        self.rec._bytes += len(text.encode("utf-8"))
+        return self.fh.write(text)
+
+
 class Recorder:
     def __init__(self, base_dir: str, params: physics.DynoParams, port: str = "", firmware: str = "",
                  diag: bool = False, vehicle: str = "", zange: bool = False):
@@ -42,6 +53,8 @@ class Recorder:
         self._fh = None
         self._w = None
         self._last_flush = 0.0
+        self._bytes = 0
+        self._side_dirty = set()                 # marker.csv, ereignisse.csv seit dem letzten fsync
         self.markers: List[Tuple[float, str]] = []
         self.events = 0
         self.bursts = 0
@@ -66,7 +79,7 @@ class Recorder:
         self.part += 1
         self.part_start = t
         self._fh = open(os.path.join(self.folder, f"teil_{self.part:04d}.csv"), "w", newline="")
-        self._w = csv.writer(self._fh, delimiter=";")
+        self._w = csv.writer(_Counted(self._fh, self), delimiter=";")
         self._w.writerow(self._header())
 
     def _header(self) -> List[str]:
@@ -96,6 +109,7 @@ class Recorder:
             self._last_flush = now
             self._fh.flush()
             os.fsync(self._fh.fileno())
+            self._sync_side_files()
             self.meta["telegramme"] = self.n
             self._write_meta("dauer.json")
 
@@ -103,12 +117,17 @@ class Recorder:
         path = os.path.join(self.folder, name)
         new = not os.path.exists(path)
         with open(path, "a", newline="", encoding="utf-8") as fh:
-            w = csv.writer(fh, delimiter=";")
+            w = csv.writer(_Counted(fh, self), delimiter=";")
             if new:
                 w.writerow(header)
             w.writerow(row)
-            fh.flush()
-            os.fsync(fh.fileno())
+        self._side_dirty.add(path)                 # fsync im FLUSH_S-Takt, nicht je Marker im GUI-Thread
+
+    def _sync_side_files(self):
+        for path in self._side_dirty:
+            with open(path, "a", encoding="utf-8") as fh:
+                os.fsync(fh.fileno())
+        self._side_dirty.clear()
 
     def rel_time(self, t_pc: Optional[float] = None) -> float:
         t_pc = time.time() if t_pc is None else t_pc
@@ -130,18 +149,12 @@ class Recorder:
         path = os.path.join(self.folder, "bursts", f"burst_{self.bursts:03d}.csv")
         burst.request.setdefault("zeit_s", f"{self.rel_time(burst.t_pc):.3f}")
         with open(path, "w", encoding="utf-8", newline="") as fh:
-            fh.write(burst_to_csv(burst))
+            _Counted(fh, self).write(burst_to_csv(burst))
         return path
 
     def size_bytes(self) -> int:
-        total = 0
-        for root, _d, files in os.walk(self.folder):
-            for f in files:
-                try:
-                    total += os.path.getsize(os.path.join(root, f))
-                except OSError:
-                    pass
-        return total
+        """Bisher geschriebene Bytes, mitgezaehlt: die Anzeige fragt 20-mal je Sekunde."""
+        return self._bytes
 
     # ------------------------------------------------------------------ Beenden
     def close(self) -> str:
@@ -150,6 +163,7 @@ class Recorder:
             return self.folder
         self.closed = True
         self._close_part()
+        self._sync_side_files()
         parts = sorted(f for f in os.listdir(self.folder) if f.startswith("teil_") and f.endswith(".csv"))
         roh = os.path.join(self.folder, "roh.csv")
         with open(roh + ".tmp", "w", newline="") as out:

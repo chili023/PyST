@@ -214,5 +214,35 @@ class PystEntpacken(unittest.TestCase):
         self.assertEqual(os.listdir(draussen), [])
 
 
+class RecorderBytes(unittest.TestCase):
+    def test_mitgezaehlt_wie_auf_der_platte(self):
+        fr = [link.parse_frame(f"{i};60;50;700", 100.0 + i / 60) for i in range(1, 200)]
+        with tempfile.TemporaryDirectory() as tmp:
+            rec = Recorder(tmp, physics.DynoParams())
+            rec.add_frames(fr)
+            rec.add_marker("Kabel bewegt, Größe")
+            rec._fh.flush()
+
+            def platte():
+                return sum(os.path.getsize(os.path.join(r, f)) for r, _d, fs in os.walk(rec.folder) for f in fs
+                           if f.startswith("teil_") or f == "marker.csv")
+            self.assertEqual(rec.size_bytes(), platte())
+            rec.close()
+
+    def test_kein_walk_und_kein_fsync_je_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rec = Recorder(tmp, physics.DynoParams())
+            rec.add_frames([link.parse_frame("1;60;50;700", 100.0)])
+            with mock.patch("os.walk", side_effect=AssertionError), mock.patch("os.fsync") as sync:
+                rec.size_bytes()
+                rec.add_marker("x")
+                sync.assert_not_called()
+            self.assertEqual(len(rec._side_dirty), 1)
+            with mock.patch("os.fsync") as sync:
+                rec._sync_side_files()
+                sync.assert_called_once()
+            rec.close()
+
+
 if __name__ == "__main__":
     unittest.main()
