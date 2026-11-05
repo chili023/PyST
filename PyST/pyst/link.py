@@ -14,6 +14,8 @@ PyST-Basis (docs/04_PST_Diag_1.md §10, basis.py): '#CAP' mit 'ign=zange|none' u
 Ports: seriell (USB), Simulator ('SIM…') oder TCP zur Basis per WLAN ('tcp://192.168.4.1:2323',
 'tcp://pyst-basis.local').
 """
+import logging
+import math
 import os
 import queue
 import re
@@ -30,10 +32,12 @@ except ImportError:  # nur Simulator moeglich
     serial = None
     list_ports = None
 
-from .basis import (BASIS_AP_IP, BASIS_MDNS_NAME, BASIS_TCP_PORT, ZANGE_USB_ID, BasisCommands, parse_event,
+from .basis import (BASIS_AP_IP, BASIS_MDNS_NAME, BASIS_TCP_PORT, ZANGE_USB_ID, BasisCommands, _f, _i, parse_event,
                     parse_log_line, parse_zange)
 from .diag import DIAG_FIELDS, Burst, parse_kv
 from .sim import BASIS_FAULTS, FAULT_PRESET, BasisSimSerial, ReplaySource, SimEngine, SimSerial, ZangeUsbSimSerial
+
+log = logging.getLogger("pyst.link")
 
 SIM_PORT = "SIM"
 # Mitgelieferte echte Laeufe fuer den Simulator: Portname -> (Datei, Beschreibung)
@@ -233,6 +237,8 @@ def parse_frame(line: str, t: float) -> Optional[Frame]:
         vals = [float(x) for x in f[:7]]
     except ValueError:
         return None
+    if not all(math.isfinite(v) for v in vals[:4]):       # 'nan'/'inf' sind nur in den Sensorfeldern erlaubt
+        return None
     while len(vals) < 7:
         vals.append(0.0)
     return Frame(t, int(vals[0]), vals[1], vals[2], vals[3], vals[4], vals[5], vals[6])
@@ -256,6 +262,8 @@ def parse_diag(line: str, t: float) -> Optional[Frame]:
         cycle = int(f[1])
         t_ms, rate, ign, roll = float(f[2]), float(f[3]), float(f[4]), float(f[5])
     except ValueError:
+        return None
+    if not all(math.isfinite(v) for v in (rate, ign, roll)):
         return None
     rest = [_num(x) for x in f[6:9]]
     rest += [0.0] * (3 - len(rest))
@@ -321,6 +329,7 @@ def parse_caps(line: str) -> Dict[str, str]:
 
 
 _EOL = re.compile(rb"\r\n|\r|\n")
+LOG_BAD_LINES = 20                                       # so viele verworfene Zeilen ausfuehrlich ins Log
 
 
 class DynoLink(BasisCommands):
@@ -373,6 +382,7 @@ class DynoLink(BasisCommands):
         self._burst_t = 0.0
         self.lost = 0
         self.received = 0
+        self.bad_lines = 0                                    # Zeilen, an denen _line() gescheitert ist
         self.last_frame_t = 0.0
         self.is_stm = True      # nach info(): False = Arduino-Mega-Sketch ('m' schaltet um, kein 's')
         self._last_cycle: Optional[int] = None
@@ -451,9 +461,18 @@ class DynoLink(BasisCommands):
                 if m is None:
                     break
                 raw, buf = buf[:m.start()], buf[m.end():]
-                self._line(raw.decode("latin-1"))
+                self._safe_line(raw.decode("latin-1"))
             if len(buf) > 4096:                     # Muell ohne Zeilenende
                 buf = b""
+
+    def _safe_line(self, line: str):
+        """Eine kaputte Zeile darf den Lesethread nie beenden: verwerfen, zaehlen, weiterlesen."""
+        try:
+            self._line(line)
+        except Exception as exc:
+            self.bad_lines += 1
+            if self.bad_lines <= LOG_BAD_LINES or self.bad_lines % 1000 == 0:
+                log.warning("Zeile verworfen (%d.): %s: %r", self.bad_lines, type(exc).__name__, str(line)[:80])
 
     def _line(self, line: str):
         if line.startswith("#BOOTLOADER"):
@@ -466,7 +485,7 @@ class DynoLink(BasisCommands):
         if kind in ("F", "D"):
             self._count(obj.cycle)
             self.last_frame_t = obj.t
-            if kind == "D" and obj.diag and obj.diag.get("t_ms") == obj.diag.get("t_ms"):
+            if kind == "D" and obj.diag and math.isfinite(obj.diag.get("t_ms", math.nan)):
                 off = obj.t - obj.diag["t_ms"] / 1000.0           # kleinster Versatz = geringste Laufzeit
                 if self._ms_offset is None or off < self._ms_offset or off - self._ms_offset > 1.0:
                     self._ms_offset = off
@@ -496,14 +515,13 @@ class DynoLink(BasisCommands):
                 kv = parse_kv(obj)
                 req = dict(self._pending_request)
                 self._burst_t = time.time()
-                self._burst = Burst(n=int(kv.get("n", 0) or 0), tick_ns=float(kv.get("tick_ns", 0) or 0)
-                                    or float(self.caps.get("tick_ns", 62.5) or 62.5),
-                                    trig_idx=int(kv.get("trig_idx", -1) or -1), ch=kv.get("ch", "A"),
+                self._burst = Burst(n=_i(kv.get("n"), 0), tick_ns=self._tick_ns(kv.get("tick_ns")),
+                                    trig_idx=_i(kv.get("trig_idx"), -1), ch=kv.get("ch", "A"),
                                     request=req, t_pc=time.time())
             elif obj.startswith("#BURST;END"):
                 if self._burst is not None:
                     kv = parse_kv(obj)
-                    self._burst.lost = int(kv.get("lost", 0) or 0)
+                    self._burst.lost = _i(kv.get("lost"), 0)
                     self._burst.complete = True
                     self._burst.edges.sort(key=lambda e: e[0])
                     self.bursts.put(self._burst)
@@ -512,6 +530,13 @@ class DynoLink(BasisCommands):
                 self.replies.put(obj)
         else:
             self.text_lines.put(obj)
+
+    def _tick_ns(self, text: Optional[str]) -> float:
+        """Taktdauer aus dem Burst-Kopf, sonst aus '#CAP', sonst 62,5 ns (Mega)."""
+        for v in (_f(text), _f(self.caps.get("tick_ns"))):
+            if math.isfinite(v) and v > 0:
+                return v
+        return 62.5
 
     def _abort_burst(self):
         """Burst-Ausgabe ohne #BURST;END (z.B. '#BURST STOP' waehrend der Ausgabe): als unvollstaendig melden."""

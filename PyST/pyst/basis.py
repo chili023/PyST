@@ -13,6 +13,7 @@ Wo die Spezifikation nur den Befehl, nicht aber das genaue Antwortformat festleg
 Schluessel in beliebiger Reihenfolge, deutsche und englische Namen, fehlende Felder = unbekannt, eine Antwort
 endet mit '#OK…'/'#ERR…' oder (bei Abfragen) mit der eigenen Statuszeile.
 """
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
@@ -63,7 +64,7 @@ def _f(v, default=float("nan")) -> float:
 def _i(v, default=0) -> int:
     try:
         return int(float(v))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):       # 'inf' laesst sich nicht wandeln
         return default
 
 
@@ -214,7 +215,7 @@ def parse_event(line: str, t_pc: float = 0.0) -> Optional[BasisEvent]:
     if len(f) < 3 or f[0] != "E":
         return None
     ms = _f(f[1])
-    if ms != ms:
+    if not math.isfinite(ms):
         return None
     return BasisEvent(ms, f[2].strip().upper(), [x.strip() for x in f[3:]], t_pc)
 
@@ -467,7 +468,7 @@ def parse_log_line(line: str) -> Optional[LogEntry]:
     try:
         idx = int(f[1])
         local = int(float(f[3]))
-    except ValueError:
+    except (ValueError, OverflowError):
         return None
     art = f[2].strip().upper()
     return LogEntry(idx, _LOG_ART.get(art, art), local, [x.strip() for x in f[4:]])
