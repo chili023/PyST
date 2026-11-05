@@ -72,11 +72,22 @@ def filter_dt(dt: np.ndarray, dq: int) -> np.ndarray:
 
 
 def median_centered(x: np.ndarray, half: int) -> np.ndarray:
-    if half <= 0 or len(x) == 0:
+    """Zentrierter gleitender Median, am Rand mit verkuerztem Fenster. Ein nan im Fenster ergibt nan: anders als
+    channels.rolling_median, das nan ueberspringt. Die Messwerte haengen daran, der Vergleichstest prueft beides.
+    Die volle Fensterbreite rechnet np.median zeilenweise in Bloecken, das ergibt dieselben Bits wie je Sample."""
+    n = len(x)
+    if half <= 0 or n == 0:
         return x.copy()
-    out = np.empty(len(x))
-    for j in range(len(x)):
+    out = np.empty(n)
+    width = 2 * half + 1
+    for j in list(range(min(half, n))) + list(range(max(half, n - half), n)):
         out[j] = np.median(x[max(0, j - half): j + half + 1])
+    if n >= width:
+        win = np.lib.stride_tricks.sliding_window_view(x, width)
+        step = max(1, 2_000_000 // width)
+        for a in range(0, len(win), step):
+            blk = win[a:a + step]
+            out[half + a: half + a + len(blk)] = np.median(blk, axis=1)
     return out
 
 

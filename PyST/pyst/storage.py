@@ -157,14 +157,30 @@ def _float(v: str) -> float:
         return float("nan")
 
 
-def _read_csv_cols(text: str) -> Dict[str, list]:
+def _read_csv_slow(text: str) -> Dict[str, np.ndarray]:
+    """Jede Zelle einzeln: vertraegt Text, leere Zellen und zu kurze Zeilen (= nan)."""
     cols: Dict[str, list] = {}
     rd = csv.DictReader(io.StringIO(text), delimiter=";")
     for row in rd:
         for k, v in row.items():
             if k is not None:
                 cols.setdefault(k, []).append(_float(v))
-    return cols
+    return {k: np.array(v) for k, v in cols.items()}
+
+
+def _read_csv_cols(text: str) -> Dict[str, np.ndarray]:
+    """CSV mit Kopfzeile -> Spalten. Regelfall nur Zahlen: numpy liest das 5-10-mal schneller und ohne Python-Listen."""
+    head, _, body = text.partition("\n")
+    names = next(csv.reader([head.rstrip("\r")], delimiter=";"), [])
+    if not body.strip() or len(set(names)) != len(names) or "" in names:
+        return _read_csv_slow(text)
+    try:
+        data = np.loadtxt(io.StringIO(body), delimiter=";", comments=None, dtype=float, ndmin=2)
+    except ValueError:
+        return _read_csv_slow(text)
+    if data.shape[1] != len(names):
+        return _read_csv_slow(text)
+    return {k: np.ascontiguousarray(data[:, i]) for i, k in enumerate(names)}
 
 
 def _read_side_files(read: Callable[[str], Optional[str]], names: List[str]) -> Dict[str, Any]:
@@ -232,20 +248,21 @@ def _load_pyst_files(read: Callable[[str], Optional[str]], names: List[str], nam
     if roh is not None:
         cols = _read_csv_cols(roh)
     else:                                                     # Dauermessung nach Absturz: Abschnitte
-        cols = {}
+        parts: Dict[str, list] = {}
         for n in sorted(x for x in names if re.match(r"teil_\d+\.csv$", x)):
             for k, v in _read_csv_cols(read(n) or "").items():
-                cols.setdefault(k, []).extend(v)
-        if not cols:
+                parts.setdefault(k, []).append(v)
+        if not parts:
             raise ValueError(f"{name}: keine Messdaten (roh.csv/teil_*.csv)")
+        cols = {k: np.concatenate(v) for k, v in parts.items()}
     p = physics.DynoParams(**{k: v for k, v in meta["parameter"].items()
                               if k in physics.DynoParams.__dataclass_fields__})
     r = {
         "params": p, "vehicle": meta.get("fahrzeug", ""), "title": "", "date": meta.get("datum", ""),
-        "n_roll": np.array(cols["n_rolle_1_min"]), "dt": np.array(cols["dt_s"]),
-        "n_meas": np.array(cols["n_zuendung_1_min"]), "afr": np.array(cols["afr"]),
-        "egt": np.array(cols["egt1_c"]), "source": "PyST", "name": name,
-        "meta": meta, "columns": {k: np.array(v) for k, v in cols.items()},
+        "n_roll": cols["n_rolle_1_min"], "dt": cols["dt_s"],
+        "n_meas": cols["n_zuendung_1_min"], "afr": cols["afr"],
+        "egt": cols["egt1_c"], "source": "PyST", "name": name,
+        "meta": meta, "columns": cols,
         "kind": meta.get("art", "lauf"),
     }
     r.update(_read_side_files(read, names))

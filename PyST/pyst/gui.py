@@ -28,7 +28,7 @@ from .oszi import OsziPage
 from .ratio_dialog import RatioDialog
 from .share_ui import FORMAT_FOLDER, FORMAT_HTML, ExportDialog, ImportParamsDialog
 from .auth import AuthError
-from .bg import wait_in_thread, waiting
+from .bg import Bg, wait_in_thread, waiting
 from .plots import EXTRA_PREFIX, LOWER_DEFAULT, MAX_LOWER, MAX_OVERLAYS, DynoPlot, fmt_value, run_color
 from .rusefi import COLUMN_PREFIX
 from .runner import ABORTED, DONE, IDLE, RUN, WAIT, RunController
@@ -536,6 +536,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.page_hw.lambda_text.connect(self._show_lambda_status)
         self._warn_box = None
         self._fault_todo = [r.id for r in self.db.runs() if r.fehler is None]
+        self.fault_bg = Bg()
         self.fault_timer = QtCore.QTimer(self)     # Fehleranteile alter Laeufe nach und nach berechnen
         self.fault_timer.timeout.connect(self._fault_backfill)
         self.fault_timer.start(80)
@@ -1242,19 +1243,23 @@ class MainWindow(QtWidgets.QMainWindow):
         if row is None:
             return None
         try:
-            run = storage.load_any(row.path)
+            run = wait_in_thread(lambda: storage.load_any(row.path))
         except Exception as exc:
             QtWidgets.QMessageBox.warning(self, "Lauf laden", f"{row.path}:\n{exc}")
             return None
         p = physics.DynoParams(**row.params) if row.params else run["params"]
-        res = None
-        if run.get("kind") != "dauermessung" and len(run["dt"]):
-            res = physics.evaluate(run["n_roll"], run["dt"], p, run["n_meas"], run["afr"], run["egt"],
-                                   require_end=False)
-        ch = run_channels(run, res, p)
+
+        def rechnen():
+            res = None
+            if run.get("kind") != "dauermessung" and len(run["dt"]):
+                res = physics.evaluate(run["n_roll"], run["dt"], p, run["n_meas"], run["afr"], run["egt"],
+                                       require_end=False)
+            return res, run_channels(run, res, p), run_faults(run)[1] if row.fehler is None else None
+
+        res, ch, fehler = wait_in_thread(rechnen)
         self.cache[rid] = (run, res, ch, p)
-        if row.fehler is None:
-            self.db.update_run(rid, fehler=run_faults(run)[1])
+        if fehler is not None:
+            self.db.update_run(rid, fehler=fehler)
         return self.cache[rid]
 
     def _viewer_channels(self, rid):
@@ -1900,6 +1905,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _fault_backfill(self):
         """Fehleranteile fuer Laeufe ohne Eintrag (aeltere PyST-Versionen) im Hintergrund nachtragen."""
+        self.fault_bg.poll()
+        if self.fault_bg.pending:
+            return
         if not self._fault_todo:
             self.fault_timer.stop()
             return
@@ -1907,10 +1915,11 @@ class MainWindow(QtWidgets.QMainWindow):
         row = self.db.run(rid)
         if row is None or row.fehler is not None:
             return
-        try:
-            self.db.update_run(rid, fehler=run_faults(storage.load_any(row.path))[1])
-        except Exception:
-            self.db.update_run(rid, fehler={})
+        self.fault_bg.submit("fehler", lambda: run_faults(storage.load_any(row.path))[1],
+                             lambda res, err: self._fault_done(rid, res, err))
+
+    def _fault_done(self, rid: int, fehler, err):
+        self.db.update_run(rid, fehler={} if err is not None else fehler)
         if not self._fault_todo:
             self._reload_runs()
 
