@@ -1,4 +1,4 @@
-# PyST 1.3
+# PyST 1.4
 
 Einfaches Prüfstandsprogramm zum Testen der neuen PST-STM32-Firmware – ohne Windows und ohne LabVIEW.
 Läuft auf **Mac**, **Linux/Raspberry Pi** (und Windows).
@@ -44,7 +44,10 @@ Testablauf für den Vergleich alt/neu: siehe [TESTPLAN.md](TESTPLAN.md).
   Rechtsklick auf einen Lauf: Notiz, Farbe, Fahrzeug/Setup zuordnen, mit aktuellen Einstellungen neu rechnen, CSV, löschen.
 - **Import** von LabVIEW-XML und PyST-Läufen, **Export** als PDF-Bericht (sichtbare Läufe + Setup-Daten) und CSV (Excel deutsch oder international).
 - **Verbinden** direkt im Messen-Reiter (neben START). Das Messboard wird alle 5 s gesucht und automatisch
-  verbunden (abschaltbar in den Einstellungen); Abziehen wird erkannt. Nach „Trennen“ von Hand bleibt es getrennt.
+  verbunden (abschaltbar in den Einstellungen); Abziehen wird erkannt. Nach „Trennen“ von Hand bleibt es getrennt,
+  nach dem Flashen wird wieder gesucht. Die Basis per USB wird nicht gesucht, sie verbindest du von Hand. Reißt die
+  WLAN-Verbindung zur Basis ab (auch bei jedem Neustart der Basis), verbindet PyST neu und meldet sich neu an; eine
+  abgelehnte Anmeldung wiederholt es nicht, jeder Fehlversuch verlängert die Sperre der Basis (1 bis 60 s).
 - **Anzeigen und Diagramme** frei belegbar über vier Menüs: „Anzeigen …“ (oben), „Kurven ▾“ im Leistungs-
   und im unteren Diagramm (links/rechts, ausblendbar), „Spalten …“ an der Cursor-Tabelle (zuklappbar).
   Achsgrenzen direkt an den Achsenden (fett = fest, grau = automatisch).
@@ -310,7 +313,8 @@ Details und Quellenhinweise stehen in `pyst/physics.py`.
 ## Tests
 
 ```bash
-./.venv/bin/python -m unittest discover -s tests -v      # oder: python -m pytest tests
+./.venv/bin/pip install -r requirements-dev.txt          # pytest
+./.venv/bin/python -m pytest tests                       # oder: python -m unittest discover -s tests -v
 PYST_KUNDEN_LOGS=/pfad/zu/den/mitschnitten python -m pytest tests -k kunden   # echte Mitschnitte, nur lokal
 ```
 
@@ -318,7 +322,13 @@ PYST_KUNDEN_LOGS=/pfad/zu/den/mitschnitten python -m pytest tests -k kunden   # 
 
 ```
 pyst/physics.py   Auswertung (LabVIEW-identisch)
-pyst/link.py      serielle Verbindung (STM32-Firmware, Arduino-Mega-Sketch, PST-Diag 1)
+pyst/link.py      Verbindung (seriell, TCP): Lesethread, Antwortzuordnung, Basis, Zange, STM32-Firmware, Mega-Sketch
+pyst/auth.py      Anmeldung am TCP-Port der Basis, Schlüssel, Fehlertexte der Basis
+pyst/felder.py    Schlüssel=Wert-Felder und tolerante Zahlen
+pyst/bg.py        Gerätebefehle im Hintergrund (Bg, wait_in_thread)
+pyst/kv_dialog.py gemeinsamer Dialog für Geräte-Einstellungen
+pyst/farben.py    Zustandsfarben der Oberfläche
+pyst/runcache.py  begrenzter Speicher geöffneter Läufe
 pyst/diag.py      PST-Diag 1: Bursts (Flanken), Software-Trigger/Ereigniserkennung
 pyst/oszi.py      Reiter „Oszi / Dauermessung“, Dialog Geräte-Einstellungen
 pyst/recorder.py  Dauermessung (fortlaufend in Abschnitten gesichert)
@@ -328,13 +338,13 @@ pyst/runner.py    Ablauf eines Laufs
 pyst/storage.py   Speichern/Laden (CSV, JSON, LabVIEW-XML, .pyst, Terminal-Mitschnitte)
 pyst/lvxml.py     LabVIEW-Datenspeicher lesen/schreiben
 pyst/sim.py       Simulator (Firmware + Motor + Rolle, PyST-Basis mit Zange, Zange per USB)
-pyst/basis.py     PyST-Basis: Parser und Befehle (#ZANGE, #NET, #DOSE, #PAIR, #LOG, E;…, L;…)
+pyst/basis.py     PyST-Basis: Parser und Befehle (#ZANGE, #NET, #DOSE, #PAIR, #LOG, #LAMBDA, E;…, L;…)
 pyst/plugs.py     WLAN-Steckdosen (Shelly/Tasmota/ESPHome per HTTP, Automatik, Simulator)
 pyst/zange.py     Log der Zange -> Dauermessung
 pyst/mdns.py      einfaches mDNS (Basis und Steckdosen im Netz finden)
 pyst/hw_page.py   Unterreiter „Zange · Netz · Steckdosen“
 pyst/tasten.py    Tasten-Setup der Zange, Neuer Lauf und Übersetzung (ohne Oberfläche); tasten_page.py Unterreiter „Tasten“
-pyst/pruef.py     Prüfungen für die Inbetriebnahme (ohne Oberfläche); pruef_page.py Unterreiter „Prüfen“
+pyst/pruef.py     Prüfungen für die Inbetriebnahme mit #STAT (ohne Oberfläche); pruef_page.py Unterreiter „Prüfen“
 pyst/flash.py     Firmware flashen: Prüfung, Befehlszeilen, USB-Update, F042 per CAN; flash_page.py Unterreiter „Firmware“
 pyst/bootproto.py Bootloader der Basis: Rahmen, Update-Datei (Simulator: sim.py BootSimDevice)
 pyst/gui.py       Oberfläche (PySide6 + pyqtgraph)
