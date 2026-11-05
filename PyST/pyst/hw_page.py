@@ -11,8 +11,6 @@ Unterreiter „Zange · Netz · Steckdosen“ (PyST-Basis, Funk-Zange, Zange per
 Netzwerk- und Funkzugriffe laufen im Hintergrund, damit die Oberfläche nicht hängt.
 """
 import os
-import queue
-import threading
 import time
 from typing import Callable, Dict, List, Optional
 
@@ -20,114 +18,34 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import storage
 from .auth import wlan_password
+from .bg import Bg, wait_in_thread
 from .basis import (LAMBDA_GRUND, MAX_PLUGS, PLUG_TYPE_TEXT, PLUG_TYPES, ZANGE_KEYS, ZANGE_USB_WARNUNG, LambdaStatus,
                     NetState, ZangeStatus, main_zange, net_commands)
+from .kv_dialog import KvDialog
 from .plugs import NO_FALLBACK, PlugConfig, PlugManager, start_demo_plugs
 
 RED_BANNER = "background: #c62828; color: white; font-weight: 700; padding: 6px; border-radius: 4px;"
 
 
-class _Bg:
-    """Ein Hintergrund-Thread für Befehle an die Basis; Ergebnisse holt poll() im GUI-Takt ab."""
-
-    def __init__(self):
-        self.jobs: "queue.Queue" = queue.Queue()
-        self.done: "queue.Queue" = queue.Queue()
-        self.pending = set()
-        threading.Thread(target=self._run, daemon=True).start()
-
-    def _run(self):
-        while True:
-            key, fn, cb = self.jobs.get()
-            try:
-                res, err = fn(), None
-            except Exception as exc:
-                res, err = None, exc
-            self.done.put((key, cb, res, err))
-
-    def submit(self, key: str, fn: Callable, cb: Callable):
-        if key in self.pending:
-            return
-        self.pending.add(key)
-        self.jobs.put((key, fn, cb))
-
-    def poll(self):
-        while True:
-            try:
-                key, cb, res, err = self.done.get_nowait()
-            except queue.Empty:
-                return
-            self.pending.discard(key)
-            cb(res, err)
-
-
-class ZangeSettingsDialog(QtWidgets.QDialog):
+class ZangeSettingsDialog(KvDialog):
     """Einstellungen der Zange über die Basis (#ZANGE GET/SET)."""
 
     def __init__(self, link, parent=None):
-        super().__init__(parent)
-        self.link = link
-        self.setWindowTitle("Zange – Einstellungen")
+        super().__init__(link, "Zange – Einstellungen",
+                         "Werte werden per Funk an die Zange übertragen (Antwort nach Quittung).", parent)
         self.resize(640, 460)
-        lay = QtWidgets.QVBoxLayout(self)
-        lay.addWidget(QtWidgets.QLabel("Werte werden per Funk an die Zange übertragen (Antwort nach Quittung)."))
-        self.table = QtWidgets.QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Einstellung", "Wert", "Bedeutung"])
-        self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
-        lay.addWidget(self.table, 1)
-        self.msg = QtWidgets.QLabel("")
-        self.msg.setWordWrap(True)
-        lay.addWidget(self.msg)
-        bb = QtWidgets.QHBoxLayout()
-        self.b_reload = QtWidgets.QPushButton("Neu lesen")
-        self.b_apply = QtWidgets.QPushButton("Übernehmen")
-        close = QtWidgets.QPushButton("Schließen")
-        bb.addWidget(self.b_reload)
-        bb.addWidget(self.b_apply)
-        bb.addStretch(1)
-        bb.addWidget(close)
-        lay.addLayout(bb)
-        self.b_reload.clicked.connect(self.reload)
-        self.b_apply.clicked.connect(self.apply)
-        close.clicked.connect(self.accept)
-        self.values: Dict[str, str] = {}
+        self.layout_buttons()
         self.reload()
 
     def reload(self):
-        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
-        try:
-            items = self.link.zange_get_all()
-        finally:
-            QtWidgets.QApplication.restoreOverrideCursor()
+        items = self.wait(self.link.zange_get_all)
         self.values = dict(items)
-        self.table.setRowCount(len(ZANGE_KEYS))
-        for r, (k, (help_, _d)) in enumerate(ZANGE_KEYS.items()):
-            a = QtWidgets.QTableWidgetItem(k)
-            a.setFlags(a.flags() & ~QtCore.Qt.ItemIsEditable)
-            c = QtWidgets.QTableWidgetItem(help_)
-            c.setFlags(c.flags() & ~QtCore.Qt.ItemIsEditable)
-            self.table.setItem(r, 0, a)
-            self.table.setItem(r, 1, QtWidgets.QTableWidgetItem(self.values.get(k, "")))
-            self.table.setItem(r, 2, c)
-        self.table.resizeColumnToContents(0)
+        self.fill([(k, self.values.get(k, ""), help_) for k, (help_, _d) in ZANGE_KEYS.items()])
         self.msg.setText(f"{len(items)} von {len(ZANGE_KEYS)} Einstellungen gelesen." if items
                          else "Keine Antwort der Zange (nicht gekoppelt oder außer Reichweite?).")
 
     def apply(self) -> bool:
-        errors, n = [], 0
-        for r in range(self.table.rowCount()):
-            k = self.table.item(r, 0).text()
-            v = self.table.item(r, 1).text().strip()
-            if v and v != self.values.get(k):
-                lines = self.link.zange_set(k, v)
-                if self.link.ok(lines):
-                    self.values[k] = v
-                    n += 1
-                else:
-                    errors.append(f"{k}: {lines[-1] if lines else 'keine Antwort'}")
-        self.msg.setText(f"{n} Einstellung(en) übertragen." + ("\nFehler: " + "; ".join(errors) if errors else ""))
-        return not errors
+        return self.send(self.changes(skip_empty=True), self.link.zange_set, "übertragen")
 
 
 class PlugDialog(QtWidgets.QDialog):
@@ -226,7 +144,7 @@ class HardwarePage(QtWidgets.QScrollArea):
         self.get_params = get_params
         self.runs_dir = runs_dir
         self.link = None
-        self.bg = _Bg()
+        self.bg = Bg()
         self.zst: Optional[ZangeStatus] = None
         self.demo = []                         # simulierte Steckdosen (Demo)
         self._last_zange = 0.0
@@ -603,8 +521,8 @@ class HardwarePage(QtWidgets.QScrollArea):
     def on_event(self, ev):
         """Ereignis der Basis (aus dem Hauptfenster)."""
         if ev.kind in ("ZANGE", "PAIR") and self.link is not None:
-            self.link.probe_caps()                         # ign=zange|none kann sich geändert haben
-            self._link_changed()
+            # ign=zange|none kann sich geändert haben
+            self.bg.submit("caps", self.link.probe_caps, lambda _r, _e: self._link_changed())
             self.z_msg.setText(ev.text)
         elif ev.kind == "DOSE":
             self.plugs.refresh()
@@ -625,12 +543,13 @@ class HardwarePage(QtWidgets.QScrollArea):
         dlg.setMinimumDuration(0)
         dlg.setWindowModality(QtCore.Qt.WindowModal)
 
-        def progress(done, total):
-            dlg.setValue(int(100 * done / max(1, total)))
-            QtWidgets.QApplication.processEvents()
+        stand = {"done": 0, "total": 1}
+
+        def work():
+            return link.log_read_all(progress=lambda done, total: stand.update(done=done, total=total)), \
+                dict(link.get_settings())
         try:
-            entries = link.log_read_all(progress=progress)
-            settings = dict(link.get_settings())
+            entries, settings = wait_in_thread(work, lambda: dlg.setValue(int(100 * stand["done"] / max(1, stand["total"]))))
         except Exception as exc:
             dlg.close()
             self.z_msg.setText(f"Log lesen fehlgeschlagen: {exc}")
@@ -715,7 +634,7 @@ class HardwarePage(QtWidgets.QScrollArea):
                 self, "Netzwerk", "PyST ist per WLAN mit der Basis verbunden – die Verbindung reißt beim Umstellen "
                                   "ab. Trotzdem übernehmen?") != QtWidgets.QMessageBox.Yes:
             return False
-        lines = link.command(cmd, timeout=3.0)
+        lines = wait_in_thread(lambda: link.command(cmd, timeout=3.0))
         ok = link.ok(lines)
         self.net_msg.setText("Übernommen." if ok else "Abgelehnt: " + (lines[-1] if lines else "keine Antwort"))
         self._refresh_net(force=True)

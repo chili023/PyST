@@ -19,6 +19,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from pyst import channels, diag, link, physics, storage  # noqa: E402
+from conftest import close_window  # noqa: E402
 from pyst.recorder import Recorder  # noqa: E402
 from pyst.sim import FAULT_PRESET, SimEngine, SimSerial  # noqa: E402
 
@@ -520,7 +521,7 @@ class GuiOszi(unittest.TestCase):
                 self.assertTrue(os.path.exists(path))
                 html = w.on_share(path=os.path.join(home, "x.html"), scope="tag", day=rows[0].datum[:10], fmt=2)
                 self.assertTrue(os.path.getsize(html) > 50000)
-                w.close()
+                close_window(w, app)
                 app.processEvents()
             finally:
                 for k, v in old.items():

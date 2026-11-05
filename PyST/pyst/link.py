@@ -655,10 +655,10 @@ class DynoLink(BasisCommands):
     def probe_caps(self, timeout: float = 0.3) -> Dict[str, str]:
         """'#?' senden; antwortet das Geraet nicht binnen `timeout` mit '#CAP', ist es ein altes Geraet."""
         with self._cmd_lock:
-            self.caps = {}
             while not self.replies.empty():
                 self.replies.get_nowait()
             self.send("#?")
+            caps: Dict[str, str] = {}
             end = time.time() + timeout
             while time.time() < end:
                 try:
@@ -666,9 +666,11 @@ class DynoLink(BasisCommands):
                 except queue.Empty:
                     continue
                 if line.startswith("#CAP"):
-                    self.caps = parse_caps(line)
-                    self.caps.setdefault("fw", "")
+                    caps = parse_caps(line)
+                    caps.setdefault("fw", "")
                     break
+            if caps or not self.caps:                     # verpasste Antwort macht aus der Basis kein altes Geraet
+                self.caps = caps                          # erst jetzt: andere Threads pruefen has_diag
             # alte F446-Firmware antwortet auf das '?' mit der Versionsinfo – nicht als Text liegen lassen
             time.sleep(0.05)
             while not self.text_lines.empty():

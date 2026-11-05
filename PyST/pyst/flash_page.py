@@ -6,7 +6,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import flash, update
 from .flash import FlashCancelled, FlashError
-from .hw_page import _Bg
+from .bg import Bg
 
 
 class UsbWorker(QtCore.QThread):
@@ -168,7 +168,7 @@ class FlashPage(QtWidgets.QScrollArea):
         self.log.setFont(QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont))
         self.log.setMinimumHeight(180)
         root.addWidget(self.log, 1)
-        self.bg = _Bg()
+        self.bg = Bg()
         self.remote: Dict[str, update.Entry] = {}
         self.update_base = update.FIRMWARE_URL
         self.download_dir = os.path.join(os.path.expanduser("~"), "PyST", "firmware_updates")

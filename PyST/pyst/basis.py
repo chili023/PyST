@@ -561,11 +561,18 @@ class BasisCommands:
         return None
 
     def zange_get_all(self) -> List[Tuple[str, str]]:
+        """Alle Schluessel. Antwortet die Zange zweimal nacheinander nicht, ist sie weg: sonst 12 x 2,5 s Wartezeit."""
         out = []
+        schweigt = 0
         for k in ZANGE_KEYS:
             v = self.zange_get(k)
             if v is not None:
                 out.append((k, v))
+                schweigt = 0
+            else:
+                schweigt += 1
+                if schweigt == 2:
+                    break
         return out
 
     def zange_cmd(self, sub: str) -> List[str]:

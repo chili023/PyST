@@ -8,7 +8,7 @@ from typing import Callable, Dict
 from PySide6 import QtCore, QtWidgets
 
 from . import tasten
-from .hw_page import _Bg
+from .bg import Bg
 
 
 class TastenBand(QtWidgets.QLabel):
@@ -46,7 +46,7 @@ class TastenPage(QtWidgets.QScrollArea):
         self.get_link = get_link
         self.setup = tasten.laden(settings.get("zange_tasten"))
         self.sync = tasten.TastenSync(tasten.packen(self.setup))
-        self.bg = _Bg()
+        self.bg = Bg()
         self._nr = 0
         self.setWidgetResizable(True)
         inner = QtWidgets.QWidget()
@@ -132,7 +132,7 @@ class TastenPage(QtWidgets.QScrollArea):
             self._zeige()
 
     def led(self, muster: int):
-        """Rückmeldung an der Zange. _Bg verwirft gleiche Schlüssel, jede Antwort muss aber hinaus."""
+        """Rückmeldung an der Zange. Bg verwirft gleiche Schlüssel, jede Antwort muss aber hinaus."""
         link = self.get_link()
         if link is None or not link.is_basis:
             return

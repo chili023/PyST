@@ -11,6 +11,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from pyst import link, lvxml, physics, runner, rusefi, storage  # noqa: E402
+from conftest import close_window  # noqa: E402
 from pyst.channels import run_channels  # noqa: E402
 from pyst.sim import SimEngine, SimSerial  # noqa: E402
 
@@ -298,7 +299,7 @@ class GuiSmoke(unittest.TestCase):
                 w.page_settings.port_combo.setEditText("SIM")
                 self.assertTrue(w.on_connect())
                 self.assertTrue(gui.is_pst_firmware(w.firmware))
-                w.close()
+                close_window(w, app)
                 app.processEvents()
             finally:
                 for k, v in old.items():

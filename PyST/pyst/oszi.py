@@ -20,6 +20,7 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import diag as dg
+from .kv_dialog import KvDialog
 from .physics import DynoParams
 from .recorder import Recorder
 
@@ -144,84 +145,44 @@ def live_values(f, p: DynoParams) -> Dict[str, float]:
     return v
 
 
-class DeviceSettingsDialog(QtWidgets.QDialog):
+class DeviceSettingsDialog(KvDialog):
     """Einstellungen der Messelektronik lesen/aendern (#GET/#SET/#SAVE/#DEFAULTS), ohne Neu-Flashen."""
 
     def __init__(self, link, parent=None):
-        super().__init__(parent)
-        self.link = link
-        self.setWindowTitle("Geräte-Einstellungen (PST-Diag 1)")
-        self.resize(640, 520)
-        lay = QtWidgets.QVBoxLayout(self)
         fw = link.caps.get("fw", "") if link else ""
-        lay.addWidget(QtWidgets.QLabel(f"<b>{fw}</b> – Änderungen wirken sofort (flüchtig). "
-                                       "„Im Gerät speichern“ legt sie dauerhaft ab."))
-        self.table = QtWidgets.QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["Einstellung", "Wert", "Bedeutung"])
-        self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(2, QtWidgets.QHeaderView.Stretch)
-        lay.addWidget(self.table, 1)
-        self.msg = QtWidgets.QLabel("")
-        self.msg.setWordWrap(True)
-        lay.addWidget(self.msg)
-        bb = QtWidgets.QHBoxLayout()
-        self.b_reload = QtWidgets.QPushButton("Neu lesen")
-        self.b_apply = QtWidgets.QPushButton("Übernehmen")
+        super().__init__(link, "Geräte-Einstellungen (PST-Diag 1)",
+                         f"<b>{fw}</b> – Änderungen wirken sofort (flüchtig). „Im Gerät speichern“ legt sie dauerhaft ab.",
+                         parent)
+        self.resize(640, 520)
         self.b_save = QtWidgets.QPushButton("Im Gerät speichern")
         self.b_def = QtWidgets.QPushButton("Standardwerte")
-        self.b_close = QtWidgets.QPushButton("Schließen")
-        for b in (self.b_reload, self.b_apply, self.b_save, self.b_def):
-            bb.addWidget(b)
-        bb.addStretch(1)
-        bb.addWidget(self.b_close)
-        lay.addLayout(bb)
-        self.b_reload.clicked.connect(self.reload)
-        self.b_apply.clicked.connect(self.apply)
+        self.layout_buttons(self.b_save, self.b_def)
         self.b_save.clicked.connect(self.save)
         self.b_def.clicked.connect(self.defaults)
-        self.b_close.clicked.connect(self.accept)
-        self.values: Dict[str, str] = {}
         self.reload()
 
     def reload(self):
-        items = self.link.get_settings() if self.link else []
+        items = self.wait(self.link.get_settings) if self.link else []
         self.values = dict(items)
-        self.table.setRowCount(len(items))
-        for r, (k, v) in enumerate(items):
-            a = QtWidgets.QTableWidgetItem(k)
-            a.setFlags(a.flags() & ~QtCore.Qt.ItemIsEditable)
-            c = QtWidgets.QTableWidgetItem(SETTING_HELP.get(k, ""))
-            c.setFlags(c.flags() & ~QtCore.Qt.ItemIsEditable)
-            self.table.setItem(r, 0, a)
-            self.table.setItem(r, 1, QtWidgets.QTableWidgetItem(v))
-            self.table.setItem(r, 2, c)
-        self.table.resizeColumnToContents(0)
+        self.fill([(k, v, SETTING_HELP.get(k, "")) for k, v in items])
         self.msg.setText(f"{len(items)} Einstellungen gelesen." if items else "Keine Antwort auf #GET.")
 
     def apply(self) -> bool:
-        errors, n = [], 0
-        for r in range(self.table.rowCount()):
-            k = self.table.item(r, 0).text()
-            v = self.table.item(r, 1).text().strip()
-            if v != self.values.get(k):
-                lines = self.link.set_setting(k, v)
-                if self.link.ok(lines):
-                    self.values[k] = v
-                    n += 1
-                else:
-                    errors.append(f"{k}: {lines[-1] if lines else 'keine Antwort'}")
-        self.msg.setText(f"{n} Einstellung(en) übernommen." + ("\nFehler: " + "; ".join(errors) if errors else ""))
-        return not errors
+        return self.send(self.changes(skip_empty=False), self.link.set_setting, "übernommen")
+
+    def _save_cmd(self) -> List[str]:
+        # F446: #SAVE nur bei angehaltener Ausgabe (sonst "#ERR;SAVE;messung laeuft")
+        was = self.link.streaming()
+        if was:
+            self.link.ensure_stopped()
+        lines = self.link.command("#SAVE", timeout=3.0)
+        if was:
+            self.link.start()
+        return lines
 
     def save(self):
         if self.apply():
-            # F446: #SAVE nur bei angehaltener Ausgabe (sonst "#ERR;SAVE;messung laeuft")
-            was = self.link.streaming()
-            if was:
-                self.link.ensure_stopped()
-            lines = self.link.command("#SAVE", timeout=3.0)
-            if was:
-                self.link.start()
+            lines = self.wait(self._save_cmd)
             ok = self.link.ok(lines)
             self.msg.setText("Im Gerät gespeichert." if ok else
                              "Speichern fehlgeschlagen: " + (lines[-1] if lines else "keine Antwort"))
@@ -230,7 +191,7 @@ class DeviceSettingsDialog(QtWidgets.QDialog):
         if QtWidgets.QMessageBox.question(self, "Standardwerte", "Alle Einstellungen auf Standardwerte setzen?\n"
                                           "(flüchtig bis „Im Gerät speichern“)") != QtWidgets.QMessageBox.Yes:
             return
-        ok = self.link.ok(self.link.command("#DEFAULTS"))
+        ok = self.link.ok(self.wait(lambda: self.link.command("#DEFAULTS")))
         self.reload()
         self.msg.setText("Standardwerte gesetzt (noch nicht gespeichert)." if ok else "Keine Bestätigung vom Gerät.")
 

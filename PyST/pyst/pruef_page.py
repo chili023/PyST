@@ -8,7 +8,8 @@ from typing import Callable, List
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import pruef
-from .hw_page import RED_BANNER, _Bg
+from .bg import Bg
+from .hw_page import RED_BANNER
 from .pruef import Check
 
 FARBE = {pruef.OK: "#2e7d32", pruef.WARN: "#ef6c00", pruef.FEHLER: "#c62828", pruef.INFO: "#666666"}
@@ -24,7 +25,7 @@ class PruefPage(QtWidgets.QWidget):
         self.aufnahme = aufnahme
         self.open_pairing = open_pairing
         self.link = None
-        self.bg = _Bg()
+        self.bg = Bg()
         self.checks: List[Check] = []
         self._busy_since = 0.0
         root = QtWidgets.QVBoxLayout(self)

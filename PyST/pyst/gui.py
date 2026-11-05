@@ -28,6 +28,7 @@ from .oszi import OsziPage
 from .ratio_dialog import RatioDialog
 from .share_ui import FORMAT_FOLDER, FORMAT_HTML, ExportDialog, ImportParamsDialog
 from .auth import AuthError
+from .bg import wait_in_thread, waiting
 from .plots import EXTRA_PREFIX, LOWER_DEFAULT, MAX_LOWER, MAX_OVERLAYS, DynoPlot, fmt_value, run_color
 from .rusefi import COLUMN_PREFIX
 from .runner import ABORTED, DONE, IDLE, RUN, WAIT, RunController
@@ -1496,15 +1497,8 @@ class MainWindow(QtWidgets.QMainWindow):
             s.port_combo.setEditText(port)
         try:
             QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
-            self.link = DynoLink(port)
-            self.firmware = self.link.info()
+            self.link, self.firmware = wait_in_thread(lambda: self._open_link(port))
         except Exception as exc:
-            if self.link:
-                try:
-                    self.link.close()
-                except Exception:
-                    pass
-            self.link = None
             if isinstance(exc, AuthError):
                 self._set_status("Anmeldung an der Basis gescheitert", "#f4b6b6")
                 s.fw_label.setText(f"{port}: nicht angemeldet")
@@ -1550,6 +1544,19 @@ class MainWindow(QtWidgets.QMainWindow):
         s.update_filter_label(self._current_rate())
         return True
 
+    @staticmethod
+    def _open_link(port: str):
+        """Im Thread: mDNS, TCP und 'v' dauern Sekunden. -> (Verbindung, Antwort auf 'v')"""
+        link = DynoLink(port)
+        try:
+            return link, link.info()
+        except Exception:
+            try:
+                link.close()
+            except Exception:
+                pass
+            raise
+
     def _basis_key(self):
         """Per USB ist das Koppeln: Schlüssel für die Anmeldung per WLAN holen. Per TCP den Zustand anzeigen."""
         if self.link.auth_state == "alt":
@@ -1565,9 +1572,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage("Schlüssel der Basis gespeichert: Anmeldung per WLAN möglich.", 6000)
 
     def _auto_connect(self):
-        if self.page_flash.busy:                           # Port gehoert gerade dem Flashen
-            return
         """Alle 5 s: abgezogenes Messboard erkennen, angestecktes automatisch verbinden."""
+        if self.page_flash.busy or waiting():              # Port gehoert gerade dem Flashen oder einer Abfrage
+            return
         if self.link is not None:
             if self.link.is_tcp:
                 if not self.link.alive:                    # WLAN-Verbindung zur Basis abgerissen
@@ -1614,7 +1621,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_climate(self):
         if not self.link:
             return
-        c = self.link.climate()
+        c = wait_in_thread(self.link.climate)
         if c:
             self.page_settings.fields["temp_c"].setValue(c[0])
             self.page_settings.fields["p_mbar"].setValue(c[1])
@@ -1664,7 +1671,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plot.remove(LIVE_KEY)
         self.plot.freeze(True)                     # Skalierung wie beim vorherigen Lauf
         self.result_label.setText("")
-        self.ctrl.start()
+        wait_in_thread(self.ctrl.start)                    # Klima abfragen dauert
         if self.ctrl.climate:
             s.fields["temp_c"].setValue(self.ctrl.params.temp_c)
             s.fields["p_mbar"].setValue(self.ctrl.params.p_mbar)
@@ -2009,6 +2016,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------ Zyklus
     def _tick(self):
+        if waiting():                                      # Verbindung ist gerade mit einer Abfrage beschaeftigt
+            return
         self._show_ecu_live()
         if self.link is not None:
             for ev in self.link.drain_events():            # Ereignisse der Basis: Marker, Zange, Steckdosen

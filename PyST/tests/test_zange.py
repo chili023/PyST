@@ -20,6 +20,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from pyst import basis, channels, diag, link, mdns, physics, plugs, pruef, storage, zange  # noqa: E402
+from conftest import close_window  # noqa: E402
 from pyst.recorder import Recorder  # noqa: E402
 from pyst.auth import KeyStore  # noqa: E402
 from pyst.sim import AuthSim, BasisSimSerial  # noqa: E402
@@ -993,8 +994,7 @@ class GuiZange(unittest.TestCase):
                 self.assertIn("galvanische", w._warn_box.text())
                 w._warn_box.close()
                 w.show_page(hw)
-                run(0.5)
-                self.assertFalse(hw.banner.isHidden())
+                self.assertTrue(run(3, lambda: not hw.banner.isHidden()))
                 self.assertTrue(hw.b_log.isEnabled())
                 shot("zange_usb.png")
                 folder = hw.read_log(save_pyst=os.path.join(home, "zange.pyst"))
@@ -1004,7 +1004,7 @@ class GuiZange(unittest.TestCase):
                 w._open_in_viewer(rid)
                 run(1.0)
                 shot("zange_log_auswertung.png", w.viewer)
-                w.close()
+                close_window(w, app)
                 app.processEvents()
             finally:
                 for k, v in old.items():
