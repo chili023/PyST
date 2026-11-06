@@ -129,7 +129,8 @@ kopieren“ legt das Ergebnis als Text in die Zwischenablage.
 den Lambda-Controller F042 (über die Basis per CAN) und für die Erstprogrammierung den STM32 per ST-Link an J10. Die Firmware der eigenen Hardware liegt nicht in diesem
 Repository: Man wählt die Datei oder den Ordner des Builds, PyST prüft, ob sie zum Ziel passt.
 
-„Basis STM32“ nimmt eine Update-Datei (`.pystfw`) und braucht weder Treiber noch Zusatzprogramm (reines Python mit pyserial).
+„Basis STM32“ nimmt eine Update-Datei (`.pystfw`, siehe [Firmware-Updates der Basis](#firmware-updates-der-basis)) und braucht
+weder Treiber noch Zusatzprogramm (reines Python mit pyserial).
 PyST trennt die Verbindung, schickt `#UPDATE`, wartet auf den Bootloader, überträgt mit Fortschrittsanzeige, wartet auf die
 neue Anwendung und vergleicht die Version. Steckt die Basis schon im Bootloader, geht es dort weiter. Einstellungen bleiben
 erhalten. Bricht die Übertragung ab, bleibt die alte Firmware unberührt oder die Basis wartet im Bootloader: Nochmals flashen.
@@ -145,6 +146,36 @@ vor dem Löschen lässt die alte Anwendung stehen; danach wartet der F042-Bootlo
 Eine neue Basis: erst per ST-Link die Gesamtdatei `pyst-basis-gesamt.bin` (Bootloader + Anwendung, an 0x08000000), dann den
 ESP. Die ST-Link-Zeile lehnt die Anwendung allein ab, weil sie ab 0x08008000 gelinkt ist. ST-Link braucht `st-flash` (Mac
 `brew install stlink`, Linux `apt install stlink-tools`), `esptool` kommt mit `requirements.txt`.
+
+### Firmware-Updates der Basis
+
+Update-Dateien gibt es in zwei Formaten, jeder Bootloader nimmt genau eines:
+
+| Bootloader | Protokoll | Datei | Inhalt |
+|---|---|---|---|
+| 1.0.0 | 1 | Format 1 | Abbild im Klartext, unsigniert |
+| 2.0.0 | 2 | Format 2 | Ed25519-signiert, Nutzdaten AES-256-CTR verschlüsselt |
+
+PyST fragt den Bootloader und sagt vor jeder Übertragung, wenn Datei und Bootloader nicht zusammenpassen. Bootloader 2.0.0
+kommt einmal per ST-Link auf die Basis (Gesamtdatei an J10), über USB lässt er sich nicht tauschen. Die Anzeige zeigt zu
+jeder Datei Format, Schlüssel und Rollback-Zähler.
+
+Die Signatur prüft PyST vorab, dafür braucht es das Paket `cryptography` aus `requirements.txt`. Bestehende Installationen
+holen es mit `pip install -r requirements.txt` nach oder indem man den Ordner `.venv` löscht. Die bekannten öffentlichen
+Schlüssel stehen in `pyst/fw_keys.py`:
+
+- **Aus dem Netz** geladene Dateien brauchen einen bekannten Schlüssel und eine gültige Signatur, die auch zum Eintrag im
+  Manifest passt. Sonst lehnt PyST sie ab und löscht sie. Geflasht wird nur auf Knopfdruck.
+- **Von Hand** gewählte Dateien: Bei bekanntem Schlüssel muss die Signatur stimmen. Bei unbekanntem Schlüssel geht es mit
+  deutlichem Hinweis weiter, dann entscheidet der Bootloader.
+
+Das letzte Wort hat immer der Bootloader. Er prüft beim Start Signatur und Rollback, das dauert einige Sekunden (PyST wartet
+bis 30 s), und löscht erst danach den Zwischenspeicher. Eine abgelehnte Datei zerstört nichts: Die Basis startet ihre
+vorhandene Firmware wieder. Den Klartext sieht nur der Bootloader, am Ende der Übertragung vergleicht er dessen SHA-256 mit dem
+Kopf. PyST kann den Inhalt nicht nachrechnen, die Signatur am PC belegt nur den Kopf der Datei.
+
+„Rückfall gesperrt“ heißt: Die Datei hat einen kleineren Rollback-Zähler als die Firmware auf der Basis. Zange, Basis-ESP und
+Lambda-Controller sind davon nicht betroffen, ihre Wege bleiben wie oben beschrieben.
 
 **Statusleiste:** „● Zange verbunden“ (grün), „● Zange nicht verbunden“ (rot) oder „● Zange per USB“ (orange).
 
@@ -346,7 +377,8 @@ pyst/hw_page.py   Unterreiter „Zange · Netz · Steckdosen“
 pyst/tasten.py    Tasten-Setup der Zange, Neuer Lauf und Übersetzung (ohne Oberfläche); tasten_page.py Unterreiter „Tasten“
 pyst/pruef.py     Prüfungen für die Inbetriebnahme mit #STAT (ohne Oberfläche); pruef_page.py Unterreiter „Prüfen“
 pyst/flash.py     Firmware flashen: Prüfung, Befehlszeilen, USB-Update, F042 per CAN; flash_page.py Unterreiter „Firmware“
-pyst/bootproto.py Bootloader der Basis: Rahmen, Update-Datei (Simulator: sim.py BootSimDevice)
+pyst/bootproto.py Bootloader der Basis: Rahmen, Update-Datei Format 1 und 2 (Simulator: sim.py BootSimDevice, BootSim2Device)
+pyst/fw_keys.py   Bekannte öffentliche Firmware-Schlüssel, Signaturprüfung am PC
 pyst/gui.py       Oberfläche (PySide6 + pyqtgraph)
 pyst/plots.py     Leistungsdiagramm mit ausgerichteten Achsen und Cursor
 pyst/viewer.py    Auswerter (MegaLogViewer-Stil)
