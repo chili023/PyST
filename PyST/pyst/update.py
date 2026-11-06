@@ -2,11 +2,13 @@
 Nach neuer Software und Firmware suchen, ohne Oberfläche.
 
 PyST: Version aus `main` des öffentlichen Repositorys, nur Meldung, installiert wird nichts.
-Firmware: `manifest.json` im Branch `firmware`: je Ziel Version, Datei, Größe, SHA-256 und Platz für die Signatur.
-Fehlt der Branch oder das Netz, liefern die Abfragen None: PyST bleibt still.
-Heruntergeladene Dateien gelten erst nach Prüfung von Größe und SHA-256; geflasht wird nur auf Knopfdruck.
+Firmware: `manifest.json` im Branch `firmware`: je Ziel Version, Datei, Größe, SHA-256 und Signatur (128 Hex-Zeichen, wie
+im Kopf der Datei). Fehlt der Branch oder das Netz, liefern die Abfragen None: PyST bleibt still.
+Heruntergeladene Dateien gelten erst nach Prüfung von Größe und SHA-256, die der Basis zusätzlich nach Format, Signatur
+und bekanntem Schlüssel (fw_keys.py); geflasht wird nur auf Knopfdruck.
 """
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -17,6 +19,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Tuple
 
+from . import bootproto, fw_keys
+
 RAW = "https://raw.githubusercontent.com/chili023/PyST"
 VERSION_URL = f"{RAW}/main/PyST/pyst/__init__.py"
 FIRMWARE_URL = f"{RAW}/firmware"
@@ -24,6 +28,7 @@ MANIFEST_NAME = "manifest.json"
 MANIFEST_MAX = 64 * 1024
 FILE_MAX = 8 * 1024 * 1024
 TIMEOUT_S = 4.0
+SIGNED_TARGETS = ("basis_stm",)              # Zange, Basis-ESP und Lambda haben keine signierten Dateien
 _FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _VERSION = re.compile(r"^\d+(\.\d+)*$")
 
@@ -39,7 +44,7 @@ class Entry:
     file: str
     size: int
     sha256: str
-    signature: str = ""          # kommt mit Stufe 2, hier noch nicht geprüft
+    signature: str = ""          # Hex, muss der Signatur im Dateikopf gleichen
 
 
 def version_key(version: str) -> Tuple[int, ...]:
@@ -70,7 +75,7 @@ def parse_manifest(text: str) -> Dict[str, Entry]:
     for name, e in targets.items():
         try:
             entry = Entry(name, str(e["version"]), str(e["file"]), int(e["size"]), str(e["sha256"]).lower(),
-                          str(e.get("signature", "")))
+                          str(e.get("signature", "")).lower())
         except (KeyError, TypeError, ValueError, AttributeError):
             continue
         if (_VERSION.match(entry.version) and _FILE_NAME.match(entry.file) and 0 < entry.size <= FILE_MAX
@@ -116,6 +121,21 @@ def fetch_manifest(timeout: float = TIMEOUT_S, base: str = FIRMWARE_URL) -> Opti
         return None
 
 
+def _check_signed(path: str, entry: Entry) -> None:
+    """Datei der Basis: formal gut, Signatur wie im Manifest, bekannter Schlüssel, Signatur gültig."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    try:
+        upd = bootproto.UpdateFile.parse(data)
+        if not entry.signature:
+            raise UpdateError(f"{entry.file}: Manifest ohne Signatur")
+        if entry.signature != upd.signature.hex():
+            raise UpdateError(f"{entry.file}: Signatur im Manifest passt nicht zur Datei")
+        fw_keys.check_download(upd)
+    except ValueError as exc:
+        raise UpdateError(f"{entry.file}: {exc}") from exc
+
+
 def check_file(path: str, entry: Entry) -> None:
     if os.path.getsize(path) != entry.size:
         raise UpdateError(f"{entry.file}: falsche Größe")
@@ -125,6 +145,8 @@ def check_file(path: str, entry: Entry) -> None:
             h.update(block)
     if h.hexdigest() != entry.sha256:
         raise UpdateError(f"{entry.file}: Prüfsumme stimmt nicht")
+    if entry.target in SIGNED_TARGETS:
+        _check_signed(path, entry)
 
 
 def download(entry: Entry, folder: str, base: str = FIRMWARE_URL, timeout: float = 20.0,
@@ -152,7 +174,7 @@ def download(entry: Entry, folder: str, base: str = FIRMWARE_URL, timeout: float
         check_file(tmp, entry)
         os.replace(tmp, dest)
         return dest
-    except OSError as exc:
+    except (OSError, http.client.HTTPException) as exc:
         raise UpdateError(f"Download fehlgeschlagen: {exc}") from exc
     finally:
         if os.path.exists(tmp):

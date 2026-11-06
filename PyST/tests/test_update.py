@@ -7,16 +7,23 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from pyst import update  # noqa: E402
+sys.path.insert(0, os.path.dirname(__file__))
+from pyst import bootproto as bp, fw_keys, update  # noqa: E402
+import fw2_testdatei as fw2  # noqa: E402
 
-DATA = b"PyST-Firmware" * 100
+DATA = fw2.format2("0.2.3", size=4096)
 SHA = hashlib.sha256(DATA).hexdigest()
+SIG = DATA[bp.SIG_OFS:bp.SIG_END].hex()
+FREMD = fw2.format2("0.2.3", size=4096, seed=fw2.FREMDER_TESTSCHLUESSEL_ED25519)
+UNSIGNIERT = fw2.format1("0.2.3")
+MUELL = b"PyST-Firmware" * 100
 
 
 def manifest(**over):
-    e = {"version": "0.2.3", "file": "basis.pystfw", "size": len(DATA), "sha256": SHA, "signature": ""}
+    e = {"version": "0.2.3", "file": "basis.pystfw", "size": len(DATA), "sha256": SHA, "signature": SIG}
     e.update(over)
     return json.dumps({"targets": {"basis_stm": e}})
 
@@ -52,6 +59,9 @@ class Download(unittest.TestCase):
         cls.dir = tempfile.TemporaryDirectory()
         with open(os.path.join(cls.dir.name, "basis.pystfw"), "wb") as fh:
             fh.write(DATA)
+        for name, data in (("fremd.pystfw", FREMD), ("format1.pystfw", UNSIGNIERT), ("muell.pystfw", MUELL)):
+            with open(os.path.join(cls.dir.name, name), "wb") as fh:
+                fh.write(data)
         with open(os.path.join(cls.dir.name, update.MANIFEST_NAME), "w") as fh:
             fh.write(manifest())
         d = cls.dir.name
@@ -59,6 +69,16 @@ class Download(unittest.TestCase):
         class H(http.server.SimpleHTTPRequestHandler):
             def __init__(self, *a, **k):
                 super().__init__(*a, directory=d, **k)
+
+            def do_GET(self):
+                if self.path.endswith("abriss.pystfw"):      # Verbindung reisst mitten in der Datei ab
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(DATA)))
+                    self.end_headers()
+                    self.wfile.write(DATA[:100])
+                    self.close_connection = True
+                    return
+                super().do_GET()
 
             def log_message(self, *a):
                 pass
@@ -73,8 +93,78 @@ class Download(unittest.TestCase):
         cls.srv.server_close()
         cls.dir.cleanup()
 
+    def setUp(self):
+        keys = mock.patch.dict(fw_keys.KNOWN_KEYS, {fw2.TESTSCHLUESSEL_ID: fw2.public_key().hex()})
+        keys.start()
+        self.addCleanup(keys.stop)
+
     def entry(self, **over):
         return update.parse_manifest(manifest(**over))["basis_stm"]
+
+    def abgelehnt(self, text, **over):
+        with tempfile.TemporaryDirectory() as t:
+            with self.assertRaisesRegex(update.UpdateError, text):
+                update.download(self.entry(**over), t, self.base)
+            self.assertEqual(os.listdir(t), [])
+
+    def datei(self, data, name):
+        return {"file": name, "size": len(data), "sha256": hashlib.sha256(data).hexdigest(),
+                "signature": data[bp.SIG_OFS:bp.SIG_END].hex()}
+
+    def test_manifest_signatur_passt_nicht(self):
+        self.abgelehnt("passt nicht zur Datei", signature="00" * 64)
+        self.abgelehnt("passt nicht zur Datei", signature="kaputt")
+
+    def test_manifest_ohne_signatur(self):
+        self.abgelehnt("ohne Signatur", signature="")
+        e = json.loads(manifest())
+        del e["targets"]["basis_stm"]["signature"]
+        with tempfile.TemporaryDirectory() as t:
+            with self.assertRaisesRegex(update.UpdateError, "ohne Signatur"):
+                update.download(update.parse_manifest(json.dumps(e))["basis_stm"], t, self.base)
+            self.assertEqual(os.listdir(t), [])
+
+    def test_signatur_grossgeschrieben(self):
+        with tempfile.TemporaryDirectory() as t:
+            update.download(self.entry(signature=SIG.upper()), t, self.base)
+            self.assertEqual(os.listdir(t), ["basis.pystfw"])
+
+    def test_falsche_signatur(self):
+        self.abgelehnt("Signatur ungültig", **self.datei(FREMD, "fremd.pystfw"))
+
+    def test_unbekannter_schluessel(self):
+        with mock.patch.dict(fw_keys.KNOWN_KEYS, clear=True):
+            self.abgelehnt("Unbekannter Schlüssel")
+
+    def test_unsignierte_datei(self):
+        self.abgelehnt("Unsignierte", **self.datei(UNSIGNIERT, "format1.pystfw"))
+
+    def test_keine_update_datei(self):
+        self.abgelehnt("keine Update-Datei", **{**self.datei(MUELL, "muell.pystfw"), "signature": SIG})
+
+    def test_cryptography_fehlt(self):
+        with mock.patch.dict(sys.modules, {"cryptography.hazmat.primitives.asymmetric.ed25519": None}):
+            self.abgelehnt("cryptography")
+
+    def test_abriss_laesst_nichts_liegen(self):
+        self.abgelehnt("Größe|fehlgeschlagen", file="abriss.pystfw")
+
+    def test_andere_ziele_bleiben_ohne_signatur(self):
+        """Lambda: Weg wie bisher, nur Groesse und SHA-256."""
+        e = update.Entry("lambda_f042", "1.0", "format1.pystfw", len(UNSIGNIERT), hashlib.sha256(UNSIGNIERT).hexdigest())
+        with tempfile.TemporaryDirectory() as t:
+            update.download(e, t, self.base)
+            self.assertEqual(os.listdir(t), ["format1.pystfw"])
+
+    def test_vorhandene_datei_bleibt_bei_fehlschlag(self):
+        """Eine frueher geladene, gepruefte Datei gleichen Namens wird nicht angefasst."""
+        with tempfile.TemporaryDirectory() as t:
+            path = update.download(self.entry(), t, self.base)
+            with self.assertRaises(update.UpdateError):
+                update.download(self.entry(signature="00" * 64), t, self.base)
+            self.assertEqual(os.listdir(t), ["basis.pystfw"])
+            with open(path, "rb") as fh:
+                self.assertEqual(fh.read(), DATA)
 
     def test_manifest_und_datei(self):
         got = update.fetch_manifest(base=self.base)
