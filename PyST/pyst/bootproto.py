@@ -137,7 +137,7 @@ def _check_format2(h: bytes, flags: int):
         raise ValueError("Update-Datei ungültig: Format 2 muss signiert und verschlüsselt sein.")
     if h[76] != SIG_ED25519 or h[77] != ENC_AES256_CTR:
         raise ValueError("Update-Datei ist zu neu: Dieses PyST kennt das Signatur- oder Verschlüsselungsverfahren nicht.")
-    if any(h[RESERVED_OFS:252]):
+    if h[79] or any(h[RESERVED_OFS:252]):               # reserved0 und reserved[32..87]
         raise ValueError("Update-Datei beschädigt (Kopf).")
 
 

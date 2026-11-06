@@ -11,7 +11,7 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.dirname(__file__))
 from pyst import bootproto as bp, flash, fw_keys  # noqa: E402
-from pyst.sim import BootSimDevice  # noqa: E402
+from pyst.sim import BootSim2Device, BootSimDevice, ctr_decrypt  # noqa: E402
 import fw2_testdatei as fw2  # noqa: E402
 
 
@@ -67,6 +67,7 @@ class Format2Lesen(unittest.TestCase):
             "Signaturverfahren": (setzen(76, bytes((2,))), "zu neu"),
             "Verschluesselung": (setzen(77, bytes((2,))), "zu neu"),
             "Reserve": (setzen(240, bytes((1,))), "beschädigt"),
+            "reserved0": (setzen(79, bytes((1,))), "beschädigt"),
             "Ladeadresse": (setzen(56, struct.pack("<I", bp.APP_BASE + 8)), "Längen"),
             "image_len": (setzen(60, struct.pack("<I", 4096)), "Längen"),
             "payload_len": (setzen(68, struct.pack("<I", 4096)), "Längen"),
@@ -289,6 +290,118 @@ class StartGeduldig(Ablauf):
         dev = BootSimDevice("0.1.0", proto=2, wrong_version="0.3.9")
         with self.assertRaisesRegex(flash.FlashError, "Falsche Version"):
             self.flasher(dev, fw2.format2("0.4.0")).run()
+
+
+def basis2(version="0.1.0", **kw):
+    return BootSim2Device(fw2.public_key(), fw2.TESTSCHLUESSEL_AES, version, **kw)
+
+
+class Verschluesselung(unittest.TestCase):
+    def test_schluesselstrom_ab_jedem_8_byte_offset(self):
+        plain = fw2.image(size=4096)
+        for nonce in (bytes(range(16)), b"\xff" * 16, b"\xff" * 15 + b"\xf0", bytes(8) + b"\xff" * 8):
+            cipher = fw2.encrypt(plain, nonce)
+            for off in range(0, 4096, 8 * 67):
+                got = ctr_decrypt(fw2.TESTSCHLUESSEL_AES, nonce, off, cipher[off:off + 40])
+                self.assertEqual(got, plain[off:off + 40], (nonce.hex(), off))
+
+
+class Gegenstelle(Ablauf):
+    """Ende zu Ende gegen den simulierten Bootloader 2.0.0 mit Testschluessel."""
+
+    def test_gutes_update(self):
+        dev = basis2()
+        data = fw2.format2("0.4.0", rollback=2)
+        self.assertEqual(self.flasher(dev, data).run(), "0.4.0")
+        self.assertEqual((dev.mode, dev.version, dev.rollback, dev.commit), ("app", "0.4.0", 2, None))
+        self.assertEqual(bytes(dev.stage), fw2.image("0.4.0", rollback=2))    # Klartext im Zwischenspeicher
+        self.assertEqual(dev.settings, {"rate_hz": "60"})
+
+    def test_mit_bekanntem_schluessel_von_der_platte(self):
+        with tempfile.TemporaryDirectory() as d, bekannt():
+            path = os.path.join(d, "basis.pystfw")
+            with open(path, "wb") as fh:
+                fh.write(fw2.format2("0.4.0"))
+            img = flash.load_image(flash.BASIS_STM, path)
+            self.assertEqual(img.warning, "")
+            dev = basis2()
+            f = flash.UsbFlasher(img.update, ports=dev.ports, opener=dev.open)
+            self.assertEqual(f.run(), "0.4.0")
+
+    def test_falsche_signatur(self):
+        """Unbekannter Schluessel kommt am PC durch, der Bootloader lehnt ab und zerstoert nichts."""
+        dev = basis2(start_s=0.2)
+        dev.stage = bytearray(b"alt")
+        data = fw2.format2("0.4.0", seed=fw2.FREMDER_TESTSCHLUESSEL_ED25519)
+        with self.assertRaisesRegex(flash.FlashError, "Start abgelehnt: Signatur ungültig"):
+            self.flasher(dev, data).run()
+        self.assertEqual(bytes(dev.stage), b"alt")
+        self.wieder_in_der_anwendung(dev)
+
+    def test_gekippter_kopf_am_pc_vorbei(self):
+        """Mit nachgerechneter CRC bleibt die Datei formal gut, der Bootloader sieht die Faelschung."""
+        data = bytearray(fw2.format2("0.4.0"))
+        data[84] ^= 1                                        # nonce
+        h = fw2.fix_crc(data[:bp.UPD_LEN])
+        dev = basis2()
+        with self.assertRaisesRegex(flash.FlashError, "Signatur ungültig"):
+            self.flasher(dev, h + bytes(data[bp.UPD_LEN:])).run()
+        self.wieder_in_der_anwendung(dev)
+
+    def test_rollback(self):
+        dev = basis2(rollback=5)
+        with self.assertRaisesRegex(flash.FlashError, "Start abgelehnt: Rückfall gesperrt"):
+            self.flasher(dev, fw2.format2("0.4.0", rollback=4)).run()
+        self.wieder_in_der_anwendung(dev)
+        self.assertEqual(self.flasher(dev, fw2.format2("0.4.0", rollback=5)).run(), "0.4.0")
+
+    def test_ohne_anwendung_gilt_jede_signierte_datei(self):
+        dev = basis2(app=False, rollback=5)
+        self.assertEqual(self.flasher(dev, fw2.format2("0.4.0", rollback=1)).run(), "0.4.0")
+        self.assertEqual(dev.rollback, 1)
+
+    def test_rollback_im_abbild_muss_passen(self):
+        data = fw2.format2("0.4.0", rollback=3, plain=fw2.image("0.4.0", rollback=2))
+        dev = basis2()
+        with self.assertRaisesRegex(flash.FlashError, "Prüfung"):
+            self.flasher(dev, data).run()
+        self.assertEqual(dev.version, "0.1.0")
+
+    def test_falscher_sha256_faellt_am_ende_auf(self):
+        """Signatur gut, Inhalt passt nicht: Erst der Bootloader kann das sehen, die Anwendung bleibt."""
+        dev = basis2()
+        with self.assertRaisesRegex(flash.FlashError, "Prüfung"):
+            self.flasher(dev, fw2.format2("0.4.0", patch=setzen(164, b"\xaa" * 32))).run()
+        self.assertEqual((dev.version, dev.commit), ("0.1.0", None))
+
+    def test_fehlkombination(self):
+        dev = basis2()
+        with self.assertRaisesRegex(flash.FlashError, "nur signierte"):
+            self.flasher(dev, fw2.format1()).run()
+        self.assertEqual(dev.starts, 0)
+        self.wieder_in_der_anwendung(dev)
+
+    def test_format1_kaeme_nicht_durch(self):
+        """Auch ohne die Pruefung in PyST: Bootloader 2.0.0 nimmt nichts Unsigniertes."""
+        dev = basis2(mode="boot")
+        self.assertEqual(dev._head_status(fw2.format1()[:bp.UPD_LEN]), bp.BL_E_UNSUPPORTED)
+
+    def test_langsame_pruefung_mit_busy(self):
+        dev = basis2(start_s=0.5)
+        f = self.flasher(dev, fw2.format2("0.4.0"))
+        f.START_RESEND_S = 0.2
+        self.assertEqual(f.run(), "0.4.0")
+        self.assertGreater(dev.starts, 1)
+
+    def test_daten_nochmals_ab_offset(self):
+        dev = basis2(rewind=4096)
+        self.assertEqual(self.flasher(dev, fw2.format2("0.4.0")).run(), "0.4.0")
+        self.assertEqual(bytes(dev.stage), fw2.image("0.4.0"))
+
+    def test_stromausfall_beim_kopieren(self):
+        dev = basis2(copy_cut=True)
+        self.assertEqual(self.flasher(dev, fw2.format2("0.4.0", rollback=2)).run(), "0.4.0")
+        self.assertEqual(dev.rollback, 2)
 
 
 if __name__ == "__main__":

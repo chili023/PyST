@@ -23,6 +23,7 @@ import threading
 import time
 import zlib
 from collections import deque
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Dict, List, Optional
 
@@ -1634,6 +1635,15 @@ class BootSimDevice:
             self.state, self.next_off = "rx", 0
         self._reply(port, seq, bootproto.BL_START, status)
 
+    def _store(self, off: int, block: bytes):
+        self.stage[off:off + len(block)] = block
+
+    def _stage_good(self) -> bool:
+        return zlib.crc32(bytes(self.stage)) == struct.unpack_from("<I", self.stage_hdr.header, 72)[0]
+
+    def _make_commit(self) -> bootproto.UpdateFile:
+        return bootproto.UpdateFile.parse(self.stage_hdr.header + bytes(self.stage))
+
     def frame(self, port: BootSimPort, kind: int, seq: int, body: bytes):
         b = bootproto
         if kind == b.BL_PING:
@@ -1655,7 +1665,7 @@ class BootSimDevice:
                 self.next_off = off - 1024
                 self._reply(port, seq, kind, b.BL_E_OFFSET, self.next_off)
             else:
-                self.stage[off:off + len(block)] = block
+                self._store(off, block)
                 self.next_off = off + len(block)
                 if self.next_off >= self.faults.get("unplug", 1 << 30):
                     del self.faults["unplug"]
@@ -1672,11 +1682,11 @@ class BootSimDevice:
                 self._reply(port, seq, kind, b.BL_OK, self.next_off)
             elif self.state != "rx" or self.next_off != self.stage_hdr.image_len:
                 self._reply(port, seq, kind, b.BL_E_STATE, self.next_off)
-            elif zlib.crc32(bytes(self.stage)) != struct.unpack_from("<I", self.stage_hdr.header, 72)[0]:
+            elif not self._stage_good():
                 self.state = "idle"
                 self._reply(port, seq, kind, b.BL_E_VERIFY)
             else:
-                self.commit = b.UpdateFile.parse(self.stage_hdr.header + bytes(self.stage))
+                self.commit = self._make_commit()
                 self.state = "done"
                 self._reply(port, seq, kind, b.BL_OK, self.next_off)
         elif kind == b.BL_ABORT:
@@ -1689,6 +1699,64 @@ class BootSimDevice:
             threading.Timer(0.01, self._detach).start()
         else:
             self._reply(port, seq, kind, b.BL_E_CMD)
+
+
+def ctr_decrypt(aes: bytes, nonce: bytes, off: int, data: bytes) -> bytes:
+    """AES-256-CTR ab beliebigem Offset der Nutzdaten; Zaehler 128 Bit big-endian, je 16 Byte +1."""
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    counter = (int.from_bytes(nonce, "big") + off // 16) % (1 << 128)
+    dec = Cipher(algorithms.AES(aes), modes.CTR(counter.to_bytes(16, "big"))).decryptor()
+    skip = off % 16
+    return (dec.update(bytes(skip) + data) + dec.finalize())[skip:]
+
+
+class BootSim2Device(BootSimDevice):
+    """Bootloader 2.0.0 nach docs/STUFE2.md der Firmware: nimmt nur Format 2, prueft Signatur und Rollback vor dem
+    Loeschen, entschluesselt je Block, prueft am Ende SHA-256 und Rollback im Abbild. Die Schluessel kommen vom Aufrufer,
+    in diesem Repository sind das nur Testschluessel. Stoerungen wie BootSimDevice, start_s fuer eine langsame Pruefung."""
+
+    def __init__(self, public: bytes, aes: bytes, version: str = "0.2.3", app: bool = True, mode: Optional[str] = None,
+                 key_id: int = 0, rollback: int = 1, **faults):
+        super().__init__(version, app, mode, proto=2, key_id=key_id, **faults)
+        self.public = public
+        self.aes = aes
+        self.rollback = rollback
+
+    @staticmethod
+    def _rollback_of(header: bytes) -> int:
+        return struct.unpack_from("<I", header, 80)[0]
+
+    def _check_status(self, body: bytes) -> int:
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        b = bootproto
+        update = b.UpdateFile(body, b"", "", "", "", 0, 0, b.FORMAT_SIGNED)
+        try:
+            Ed25519PublicKey.from_public_bytes(self.public).verify(update.signature, update.signed_data)
+        except InvalidSignature:
+            return b.BL_E_SIGNATURE
+        if self.version is not None and self._rollback_of(body) < self.rollback:
+            return b.BL_E_ROLLBACK
+        return super()._check_status(body)
+
+    def _store(self, off: int, block: bytes):
+        plain = ctr_decrypt(self.aes, self.stage_hdr.header[84:100], off, block)
+        self.stage[off:off + len(plain)] = plain
+
+    def _stage_good(self) -> bool:
+        b = bootproto
+        h = self.stage_hdr.header
+        image_rollback = struct.unpack_from("<I", self.stage, b.IMG_HDR_OFS + 44)[0]
+        return hashlib.sha256(bytes(self.stage)).digest() == h[164:196] and image_rollback == self._rollback_of(h)
+
+    def _make_commit(self) -> bootproto.UpdateFile:
+        return replace(self.stage_hdr, payload=bytes(self.stage))      # der Zwischenspeicher haelt Klartext
+
+    def _boot(self):
+        commit = self.commit
+        super()._boot()
+        if commit is not None and self.commit is None:
+            self.rollback = self._rollback_of(commit.header)
 
 
 class LambdaSimPort(BasisSimSerial):
