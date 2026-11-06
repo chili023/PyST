@@ -372,7 +372,8 @@ class Gegenstelle(Ablauf):
         dev = basis2()
         with self.assertRaisesRegex(flash.FlashError, "Prüfung"):
             self.flasher(dev, fw2.format2("0.4.0", patch=setzen(164, b"\xaa" * 32))).run()
-        self.assertEqual((dev.version, dev.commit), ("0.1.0", None))
+        self.assertIsNone(dev.commit)
+        self.wieder_in_der_anwendung(dev)
 
     def test_fehlkombination(self):
         dev = basis2()

@@ -686,7 +686,10 @@ class UsbFlasher:
                 off = value
                 self.progress(off, u.image_len)
             self.log("Prüfe im Gerät …")
-            self._ok(self._ask(bp.BL_END, timeout=self.END_S, retries=1)[0], "Prüfung")
+            status = self._ask(bp.BL_END, timeout=self.END_S, retries=1)[0]
+            if status == bp.BL_E_VERIFY:             # kein Beleg geschrieben, die Anwendung ist unberuehrt
+                self._back_to_app()
+            self._ok(status, "Prüfung")
         except FlashCancelled:
             self._ask(bp.BL_ABORT, retries=int(self.START_S))   # steckt das Geraet in der Signaturpruefung, schweigt es
             self._ask(bp.BL_BOOT)                    # alte Anwendung wieder starten
