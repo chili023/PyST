@@ -14,6 +14,7 @@ Schluessel in beliebiger Reihenfolge, deutsche und englische Namen, fehlende Fel
 endet mit '#OK…'/'#ERR…' oder (bei Abfragen) mit der eigenen Statuszeile.
 """
 import math
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
@@ -428,18 +429,19 @@ def parse_pair(line: str) -> Optional[PairEntry]:
 
 
 # ---------------------------------------------------------------------------------------------- Log der Zange
-LOG_SPARK, LOG_MARK, LOG_SYNC, LOG_STATUS, LOG_BOOT = "F", "M", "Y", "S", "B"
+LOG_SPARK, LOG_MARK, LOG_SYNC, LOG_STATUS, LOG_BOOT, LOG_OFF = "F", "M", "Y", "S", "B", "A"
 _LOG_ART = {"F": LOG_SPARK, "FUNKE": LOG_SPARK, "SPARK": LOG_SPARK, "1": LOG_SPARK,
             "M": LOG_MARK, "MARK": LOG_MARK, "MARKER": LOG_MARK, "2": LOG_MARK,
             "Y": LOG_SYNC, "SYNC": LOG_SYNC, "3": LOG_SYNC,
             "S": LOG_STATUS, "STATUS": LOG_STATUS, "4": LOG_STATUS,
-            "B": LOG_BOOT, "BOOT": LOG_BOOT, "5": LOG_BOOT}
+            "B": LOG_BOOT, "BOOT": LOG_BOOT, "5": LOG_BOOT,
+            "A": LOG_OFF, "AUS": LOG_OFF, "6": LOG_OFF}
 
 
 @dataclass
 class LogEntry:
     """Logzeile der USB-Zange 'L;idx;art;lokal_us;…'. art: F Funke (src;flags;peak_mv), M Marker (taste),
-    Y Sync-Paar (master_us), S Status (akku_mv;akku_pct;…), B Start der Zange (lokal_us beginnt neu). Unbekannte Arten bleiben mit art = Originaltext."""
+    Y Sync-Paar (master_us), S Status (akku_mv;akku_pct;…), B Start der Zange (lokal_us beginnt neu), A geordnetes Aus (grund;akku_mv). Unbekannte Arten bleiben mit art = Originaltext."""
     idx: int
     art: str
     local_us: int
@@ -476,6 +478,9 @@ def parse_log_info(lines: List[str]) -> Dict[str, int]:
 
 
 # ---------------------------------------------------------------------------------------------- Befehle
+LOG_TRIES = 4
+
+
 def _done_prefix(*prefixes: str) -> Callable[[str], bool]:
     return lambda line: line.startswith("#OK") or line.startswith("#ERR") or any(line.startswith(p) for p in prefixes)
 
@@ -640,11 +645,12 @@ class BasisCommands:
 
     def log_get(self, start: int, n: int, timeout: float = 10.0,
                 progress: Optional[Callable[[int], None]] = None) -> List[LogEntry]:
-        """'#LOG GET von n' -> L-Zeilen bis '#OK…'/'#LOG;END'/'#ERR…' (oder bis n Zeilen da sind)."""
+        """'#LOG GET von n' -> L-Zeilen bis '#OK…'/'#LOG;END'/'#ERR…'. self.log_complete sagt danach, ob die Abschlusszeile
+        kam und ihre Zeilenzahl stimmt. n zaehlt Nummern, wegen der Startluecken kommen meist weniger Zeilen."""
         while not self.log_lines.empty():
             self.log_lines.get_nowait()
         lines = self.command(f"#LOG GET {int(start)} {int(n)}", timeout=timeout,
-                             done=_done_prefix("#LOG;END"), until=lambda: self.log_lines.qsize() >= n,
+                             done=_done_prefix("#LOG;END"),
                              progress=lambda: progress(self.log_lines.qsize()) if progress else None)
         out = []
         while not self.log_lines.empty():
@@ -653,23 +659,37 @@ class BasisCommands:
                 out.append(e)
         if lines and lines[-1].startswith("#ERR") and not out:
             raise RuntimeError(lines[-1])
+        m = re.search(r"\bn=(\d+)", lines[-1]) if lines else None
+        self.log_complete = bool(m) and int(m.group(1)) == len(out)
         return out
 
-    def log_read_all(self, block: int = 2000, progress: Optional[Callable[[int, int], None]] = None) -> List[LogEntry]:
-        """Ganzes Log der Zange in Bloecken lesen."""
+    def log_block_size(self) -> int:
+        """Bis Firmware 0.3.0 haengt die USB-Ausgabe, sobald mehr als 2 KB anstehen: dort nur kleine Bloecke."""
+        v = tuple(int(x) for x in re.findall(r"\d+", self.caps.get("fw", ""))[:3])
+        return 4000 if not v or v >= (0, 3, 1) else 40
+
+    def log_read_all(self, block: Optional[int] = None,
+                     progress: Optional[Callable[[int, int], None]] = None) -> List[LogEntry]:
+        """Ganzes Log der Zange in Bloecken lesen. Jeder Block wird geprueft und bei Bedarf neu geholt, leere Bloecke sind
+        normal (Startluecken). Was auch nach LOG_TRIES Versuchen fehlt, steht in self.log_gaps als (von, n)."""
+        block = block or self.log_block_size()
         info = self.log_info()
         if not info:
             raise RuntimeError("Keine Antwort auf #LOG INFO")
         tail, head = info["tail"], info["head"]
-        out: List[LogEntry] = []
+        found: Dict[int, LogEntry] = {}
+        self.log_gaps: List[Tuple[int, int]] = []
         k = tail
         while k < head:
             n = min(block, head - k)
-            got = self.log_get(k, n, timeout=max(5.0, n / 400.0))
-            if not got:
-                break
-            out += got
-            k = max(e.idx for e in got) + 1
+            for _ in range(LOG_TRIES):
+                got = self.log_get(k, n, timeout=max(5.0, n / 400.0))
+                if self.log_complete:
+                    break
+            found.update((e.idx, e) for e in got)
+            if not self.log_complete:
+                self.log_gaps.append((k, n))
+            k += n
             if progress:
                 progress(k - tail, head - tail)
-        return out
+        return [found[i] for i in sorted(found)]

@@ -194,6 +194,46 @@ class Parser(unittest.TestCase):
         self.assertEqual((p.id, p.typ, p.connected), (1, "zange", True))
         self.assertIsNone(basis.parse_pair("#PAIR;mac=aa"))
 
+    def test_log_read_all_gaps(self):
+        """Leere Bloecke (Startluecken) beenden das Lesen nicht, ein fehlerhafter Block wird neu geholt oder gemeldet."""
+        class Fake(basis.BasisCommands):
+            def __init__(self):
+                self.caps = {"fw": "PyST-Zange 0.3.0"}
+                self.calls = []
+                self.bad = {100: 2, 200: 99}          # von -> so oft unvollstaendig
+
+            def log_info(self):
+                return {"head": 300, "tail": 0, "n": 300}
+
+            def log_get(self, start, n, timeout=0, progress=None):
+                self.calls.append((start, n))
+                out = [basis.parse_log_line(f"L;{i};F;{i};0;0;100") for i in (0, 1, 120, 210, 299) if start <= i < start + n]
+                self.log_complete = self.bad.get(start, 0) == 0
+                if not self.log_complete:
+                    self.bad[start] -= 1
+                    return out[:0]
+                return out
+
+        f = Fake()
+        self.assertEqual(f.log_block_size(), 40)
+        f.caps["fw"] = "PyST-Zange 0.3.1"
+        self.assertEqual(f.log_block_size(), 4000)
+        got = f.log_read_all(block=100)
+        self.assertEqual([e.idx for e in got], [0, 1, 120])          # 210 und 299 liegen im gescheiterten Block
+        self.assertEqual(f.log_gaps, [(200, 100)])
+
+    def test_log_starts(self):
+        lines = ["L;1;B;70000;1;3", "L;2;F;100000;0;0;200", "L;3;F;200000;0;0;400", "L;4;S;5000000;4100;90;0",
+                 "L;5;A;6000000;2;3299", "L;1030;B;70000;1;3", "L;1031;F;9000000;0;0;300",
+                 "L;2060;B;70000;1;3", "L;3090;B;70000;4;3", "L;3091;F;80000;0;0;100"]
+        r = zange.log_starts([basis.parse_log_line(x) for x in lines])
+        self.assertEqual(len(r), 4)
+        self.assertEqual((r[0]["funken"], r[0]["akku_mv"], r[0]["ende"]), (2, 4100, "sauber aus: Akku leer"))
+        self.assertEqual(r[1]["ende"], "kein Aus im Log: Spannung weg")
+        self.assertEqual(r[2]["ende"], "Reset: Absturz (panic)")
+        self.assertEqual(r[3]["ende"], "läuft oder Log-Ende")
+        self.assertIn("4 Starts", zange.starts_report([basis.parse_log_line(x) for x in lines]))
+
     def test_log(self):
         e = basis.parse_log_line("L;1001;F;5000123;0;1;3900")
         self.assertEqual((e.idx, e.art, e.local_us, e.num(2)), (1001, "F", 5000123, 3900))
@@ -997,6 +1037,9 @@ class GuiZange(unittest.TestCase):
                 self.assertTrue(run(3, lambda: not hw.banner.isHidden()))
                 self.assertTrue(hw.b_log.isEnabled())
                 shot("zange_usb.png")
+                csv_pfad = hw.download_log(os.path.join(home, "zange.csv"))
+                self.assertEqual(csv_pfad, os.path.join(home, "zange.csv"))
+                self.assertTrue(os.path.exists(os.path.join(home, "zange.txt")))
                 folder = hw.read_log(save_pyst=os.path.join(home, "zange.pyst"))
                 self.assertTrue(os.path.exists(os.path.join(home, "zange.pyst")))
                 rid = w.db.runs()[0].id

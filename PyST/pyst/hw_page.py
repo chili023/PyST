@@ -220,7 +220,9 @@ class HardwarePage(QtWidgets.QScrollArea):
         self.b_more.setMenu(m)
         self.b_log = QtWidgets.QPushButton("Log auslesen …")
         self.b_log.setToolTip("Zange per USB: Log auslesen und als Dauermessung (und .pyst) speichern")
-        for b in (self.b_pair, self.b_mark, self.b_rec, self.b_ident, self.b_set, self.b_log):
+        self.b_log_csv = QtWidgets.QPushButton("Log herunterladen …")
+        self.b_log_csv.setToolTip("Zange per USB: ganzes Log als CSV speichern, dazu ein Bericht mit allen Starts")
+        for b in (self.b_pair, self.b_mark, self.b_rec, self.b_ident, self.b_set, self.b_log, self.b_log_csv):
             row.addWidget(b)
         row.addWidget(self.b_more)
         row.addStretch(1)
@@ -235,6 +237,7 @@ class HardwarePage(QtWidgets.QScrollArea):
         self.b_ident.clicked.connect(lambda: self._zcmd("IDENT"))
         self.b_set.clicked.connect(self.zange_settings)
         self.b_log.clicked.connect(lambda: self.read_log())
+        self.b_log_csv.clicked.connect(lambda: self.download_log())
         return g
 
     def _build_lambda(self):
@@ -373,7 +376,9 @@ class HardwarePage(QtWidgets.QScrollArea):
         for b in (self.b_mark, self.b_rec, self.b_ident, self.b_set):
             b.setEnabled(zange_ok)
         self.b_log.setVisible(usb)
+        self.b_log_csv.setVisible(usb)
         self.b_log.setEnabled(usb)
+        self.b_log_csv.setEnabled(usb)
         if not basis:
             self._show_lambda(None)
         self.b_key_neu.setEnabled(bool(basis and not link.needs_login))
@@ -532,9 +537,8 @@ class HardwarePage(QtWidgets.QScrollArea):
         elif ev.kind == "LAMBDA":
             self._last_lambda = 0.0                        # Wechsel sofort anzeigen, auch von T4 an der Zange
 
-    def read_log(self, save_pyst: Optional[str] = None, ask: bool = True) -> Optional[str]:
-        """Zange per USB: Log auslesen -> Dauermessung (Ordner) und optional .pyst. Liefert den Ordner."""
-        from . import zange
+    def _read_entries(self):
+        """Zange per USB: ganzes Log lesen, mit Fortschritt. Liefert (Eintraege, Einstellungen) oder None."""
         link = self.link
         if link is None or not link.is_zange_usb:
             return None
@@ -564,10 +568,43 @@ class HardwarePage(QtWidgets.QScrollArea):
         if not entries:
             self.z_msg.setText("Log ist leer.")
             return None
+        return entries, settings
+
+    def _gaps_text(self) -> str:
+        gaps = getattr(self.link, "log_gaps", [])
+        return f" Achtung: {len(gaps)} Blöcke nicht vollständig gelesen." if gaps else ""
+
+    def download_log(self, path: Optional[str] = None) -> Optional[str]:
+        """Zange per USB: ganzes Log als CSV speichern, daneben der Bericht mit allen Starts (.txt). Liefert den Pfad."""
+        from . import zange
+        res = self._read_entries()
+        if res is None:
+            return None
+        entries = res[0]
+        if path is None:
+            name = time.strftime("%y%m%d_%H%M%S") + "_Zange-Log.csv"
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Zangen-Log speichern",
+                                                            os.path.join(os.path.expanduser("~"), name), "CSV-Dateien (*.csv)")
+        if not path:
+            return None
+        zange.write_log_csv(entries, path)
+        with open(os.path.splitext(path)[0] + ".txt", "w", encoding="utf-8") as fh:
+            fh.write(zange.starts_report(entries))
+        self.z_msg.setText(f"{len(entries)} Log-Einträge gespeichert: {path}.{self._gaps_text()}")
+        return path
+
+    def read_log(self, save_pyst: Optional[str] = None, ask: bool = True) -> Optional[str]:
+        """Zange per USB: Log auslesen -> Dauermessung (Ordner) und optional .pyst. Liefert den Ordner."""
+        from . import zange
+        res = self._read_entries()
+        if res is None:
+            return None
+        entries, settings = res
+        link = self.link
         folder = zange.write_log_folder(entries, zange.log_folder_name(self.runs_dir()), self.get_params(),
                                         firmware=link.caps.get("fw", ""), port=link.port, settings=settings)
         self.log_saved.emit(folder)
-        msg = f"{len(entries)} Log-Einträge gelesen → Dauermessung „{os.path.basename(folder)}“ (Laufliste)."
+        msg = f"{len(entries)} Log-Einträge gelesen → Dauermessung „{os.path.basename(folder)}“ (Laufliste).{self._gaps_text()}"
         if save_pyst is None and ask:
             save_pyst, _ = QtWidgets.QFileDialog.getSaveFileName(
                 self, "Zangen-Log weitergeben (.pyst)", os.path.join(os.path.expanduser("~"),
