@@ -295,13 +295,17 @@ def analyse(n_roll, dt, p: physics.DynoParams, start: int = 0, n_meas=None, n_en
                     f"halten, bis die Rolle ausgerollt ist.").replace(".", ",", 1)
         return ""
 
+    beschleunigt = ("Die Rolle verzögert nicht, sie beschleunigt: Gas noch offen oder Kupplung nicht "
+                    "gezogen? Ausrollen ohne Antrieb wiederholen.")
+    if er.get("wieder") and e - i0 < MIN_DAUER_S * rate:     # Drehzahl steigt gleich nach dem Laufende wieder
+        res.meldung = beschleunigt
+        return res
     msg = zu_kurz(s, e)
     if msg:
         res.meldung = msg
         return res
     if np.mean(d[s:e]) <= 0 or n_s[e - 1] >= n_s[s]:
-        res.meldung = ("Die Rolle verzögert nicht, sie beschleunigt: Gas noch offen oder Kupplung nicht "
-                       "gezogen? Ausrollen ohne Antrieb wiederholen.")
+        res.meldung = beschleunigt
         return res
 
     # Uebergang am Anfang (Motorbremse, Kupplung schleift) und Bremsen am Ende verwerfen, bis die Verzoegerung

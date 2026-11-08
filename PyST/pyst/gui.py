@@ -1,7 +1,7 @@
 """
 PyST – Oberflaeche (PySide6 + pyqtgraph). Mac, Linux (Raspberry Pi), Windows.
 
-Reiter:  Messen | Fahrzeuge & Setups | Auswertung | Oszi / Dauermessung | ECU | Einstellungen
+Reiter:  Messen | Fahrzeuge & Setups | Auswertung | Oszi / Dauermessung | ECU | Kalibrierung | Einstellungen
 Einstellungen:  Allgemein | Verbindung | Zange · Netz · Steckdosen | Tasten | Prüfen | Firmware
 """
 import json
@@ -16,7 +16,7 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import farben
-from . import __version__, htmlexport, physics, report, storage, tasten
+from . import __version__, ausrollen, htmlexport, physics, report, storage, tasten
 from .channels import fault_text, lambda_from_afr, run_channels, run_faults
 from .db import SETUP_SUMMARY_KEYS, VEHICLE_FIELDS, Database, base_dir, field_label
 from .dialogs import FieldForm, SetupForm
@@ -24,6 +24,7 @@ from .basis import ZANGE_USB_WARNUNG
 from .flash_page import FlashPage
 from .pruef_page import PruefPage
 from .hw_page import HardwarePage
+from .kalib_page import KalibPage
 from .link import (DEFAULT_SIM_PORT, SIM_PORT, DynoLink, guess_port, is_pst_firmware, list_serial_ports,
                    pst_board_ports, zange_usb_ports)
 from .oszi import OsziPage
@@ -34,7 +35,7 @@ from .bg import Bg, wait_in_thread, waiting
 from .plots import EXTRA_PREFIX, LOWER_DEFAULT, MAX_LOWER, MAX_OVERLAYS, DynoPlot, fmt_value, run_color
 from .rusefi import COLUMN_PREFIX
 from .runcache import RunCache
-from .runner import ABORTED, DONE, IDLE, RUN, WAIT, RunController
+from .runner import ABORTED, ACTIVE, COAST, DONE, IDLE, RUN, WAIT, RunController
 from .rusefi_page import RusefiPage
 from .tasten_page import TastenBand, TastenPage
 from .viewer import LogViewer
@@ -47,6 +48,7 @@ LIVE_KEY = "live"
 FILTER_S_DEFAULT = (1.75, 0.75)       # = LabVIEW 35/15 bei 20 Hz
 # Reiterstand gespeicherter Fenster von vor den Unterreitern: alter Index -> (Reiter, Unterreiter)
 REITER_ALT = {0: (0, 0), 1: (1, 0), 2: (2, 0), 3: (3, 0), 4: (5, 2), 5: (5, 4), 6: (5, 5), 7: (4, 0), 8: (5, 0)}
+REITER_KALIB = 5          # Reiter Kalibrierung ist neu an dieser Stelle: aeltere gespeicherte Indizes ab hier + 1
 
 # (Feld, Beschriftung, Min, Max, Nachkommastellen)
 PARAM_FIELDS = {
@@ -69,6 +71,7 @@ PARAM_FIELDS = {
         ("m0", "Verlustmoment M0 [Nm]", -100, 100, 2),
         ("m1", "Verlustmoment M1 [Nm]", -100, 100, 2),
         ("n1", "bei Rollendrehzahl n1 [1/min]", 1, 100000, 0),
+        ("m2", "quadratisch m2 [Nm/(1000/min)²]", -100, 100, 3),
     ],
     "Klima": [
         ("temp_c", "Lufttemperatur [°C]", -30, 60, 1),
@@ -135,7 +138,12 @@ def color_icon(color: str) -> QtGui.QIcon:
 
 
 # =============================================================================================== Einstellungen
+LOSS_KEYS = ("m0", "m1", "n1", "m2")
+
+
 class SettingsPage(QtWidgets.QScrollArea):
+    losses_changed = QtCore.Signal()
+
     def __init__(self, settings: dict):
         super().__init__()
         self.setWidgetResizable(True)
@@ -217,6 +225,10 @@ class SettingsPage(QtWidgets.QScrollArea):
                 self.filter_label.setWordWrap(True)
                 self.filter_label.setStyleSheet("color: gray;")
                 fl.addRow(self.filter_label)
+                self.loss_label = QtWidgets.QLabel()
+                self.loss_label.setWordWrap(True)
+                self.loss_label.setStyleSheet("color: gray;")
+                fl.addRow(self.loss_label)
             if group == "Klima":
                 self.climate_auto = QtWidgets.QCheckBox("vor jedem Lauf vom Sensor lesen")
                 self.climate_auto.setChecked(settings.get("climate_auto", True))
@@ -244,6 +256,12 @@ class SettingsPage(QtWidgets.QScrollArea):
         for k in ("temp_c", "p_mbar"):
             self.fields[k].valueChanged.connect(self.update_ka)
         self.update_ka()
+        # Herkunft der Verluste: Ausrollversuch, bis jemand M0/M1/n1/m2 von Hand aendert
+        self.verlust_quelle = defaults.verlust_quelle
+        self._loss_guard = False
+        for k in LOSS_KEYS:
+            self.fields[k].valueChanged.connect(self._loss_edited)
+        self._show_loss_source()
         self.filter_mode.currentIndexChanged.connect(lambda i: self.set_filter_seconds(i == 0))
         self.set_filter_seconds(self.filter_seconds)
         self._rate = 60.0
@@ -264,16 +282,51 @@ class SettingsPage(QtWidgets.QScrollArea):
         d["ma"], d["dq"] = int(d["ma"]), int(d["dq"])
         if not self.filter_seconds:
             d["ma_s"] = d["dq_s"] = 0.0
+        d["verlust_quelle"] = self.verlust_quelle
         return physics.DynoParams(**d)
 
     def set_params(self, p: physics.DynoParams):
         """Filter in Sekunden, wenn p sie hat, sonst Messpunkte (z.B. LabVIEW-Lauf im Simulator)."""
-        for k, sp in self.fields.items():
-            v = float(getattr(p, k))
-            if k in ("ma_s", "dq_s") and v <= 0:
-                continue                                # Sekundenwerte behalten
-            sp.setValue(v)
+        self._loss_guard = True
+        try:
+            for k, sp in self.fields.items():
+                v = float(getattr(p, k))
+                if k in ("ma_s", "dq_s") and v <= 0:
+                    continue                                # Sekundenwerte behalten
+                sp.setValue(v)
+        finally:
+            self._loss_guard = False
+        self.verlust_quelle = p.verlust_quelle
+        self._show_loss_source()
         self.set_filter_seconds(p.ma_s > 0 or p.dq_s > 0)
+        self.losses_changed.emit()
+
+    def set_losses(self, m0: float, m1: float, n1: float, m2: float, quelle: str):
+        """Verluste eintragen (Ausrollversuch uebernehmen), mit ihrer Herkunft."""
+        self._loss_guard = True
+        try:
+            for k, v in zip(LOSS_KEYS, (m0, m1, n1, m2)):
+                self.fields[k].setValue(float(v))
+        finally:
+            self._loss_guard = False
+        self.verlust_quelle = quelle
+        self._show_loss_source()
+        self.losses_changed.emit()
+
+    def _loss_edited(self, _v=None):
+        if not self._loss_guard:
+            self.verlust_quelle = ""                    # von Hand geaendert
+            self._show_loss_source()
+            self.losses_changed.emit()
+
+    def _show_loss_source(self):
+        v = {k: self.fields[k].value() for k in LOSS_KEYS}
+        if not (v["m0"] or v["m1"] or v["m2"]):
+            text = "Keine Verluste: Ergebnis = Radleistung. Verluste aus dem Ausrollversuch (Reiter Kalibrierung)."
+        else:
+            text = ("Verluste: " + (self.verlust_quelle or "von Hand eingetragen")
+                    + ". Ergebnis = Motorleistung (Rad + Verluste).")
+        self.loss_label.setText(text)
 
     def update_ka(self):
         ka = physics.din70020(self.fields["temp_c"].value(), self.fields["p_mbar"].value())
@@ -506,7 +559,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                     lambda: self.page_settings.params(), self.db.runs_dir)
         self.page_tasten = TastenPage(self.settings, lambda: save_settings(self.settings), lambda: self.link)
         self.page_pruef = PruefPage(lambda: self.link, self.page_hw.pair,
-                                    lambda: bool(self.ctrl and self.ctrl.state in (WAIT, RUN)) or self.page_oszi.rec is not None)
+                                    lambda: bool(self.ctrl and self.ctrl.state in ACTIVE) or self.page_oszi.rec is not None)
         self.page_flash = FlashPage(self.settings, lambda: save_settings(self.settings), lambda: self.link,
                                     self.on_connect)
         for page, text in ((self.page_settings, "Allgemein"), (self.page_settings.conn_page, "Verbindung"),
@@ -514,6 +567,8 @@ class MainWindow(QtWidgets.QMainWindow):
                            (self.page_pruef, "Prüfen"), (self.page_flash, "Firmware")):
             self.settings_tabs.addTab(page, text)
         self.tabs.addTab(self.page_rusefi, "ECU")
+        self.page_kalib = KalibPage(self.settings, lambda: save_settings(self.settings))
+        self.tabs.addTab(self.page_kalib, "Kalibrierung")
         self.tabs.addTab(self.settings_tabs, "Einstellungen")
         self.page_settings.data_label.setText(self.db.path)
         self._build_menu()
@@ -796,6 +851,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.b_view.clicked.connect(lambda: self._open_in_viewer(self._current_run_id()))
         self.b_del.clicked.connect(self.on_delete)
         self.b_ratio.clicked.connect(self.on_measure_ratio)
+        self.page_kalib.uebernehmen.connect(self._apply_coast)
+        self.page_kalib.lauf_auswerten.connect(self._coast_from_run)
+        s.losses_changed.connect(lambda: self.page_kalib.set_current(s.params()))
+        self.page_kalib.set_current(s.params())
         s.fields["ratio"].valueChanged.connect(self._show_ratio)
         self._show_ratio(s.fields["ratio"].value())
         self.viewer.import_btn.clicked.connect(self.on_import)
@@ -1186,10 +1245,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._redraw_runs()
 
     def _update_buttons(self):
-        busy = self.ctrl is not None and self.ctrl.state in (WAIT, RUN)
+        busy = self.ctrl is not None and self.ctrl.state in ACTIVE
         connected = self.link is not None
         self.start_btn.setEnabled(connected and not busy)
         self.abort_btn.setEnabled(busy)
+        coast = busy and self.ctrl.state == COAST
+        self.abort_btn.setText("Ausrollen beenden  (Esc)" if coast else "Abbrechen  (Esc)")
+        self.page_kalib.lauf_btn.setEnabled(not busy)
+        self.page_kalib.apply_btn.setEnabled(not busy and self.page_kalib.result is not None
+                                             and self.page_kalib.result.ok)
         s = self.page_settings
         s.climate_btn.setEnabled(connected and not busy)
         self.b_ratio.setEnabled(not busy)
@@ -1512,7 +1576,7 @@ class MainWindow(QtWidgets.QMainWindow):
         (automatisches Verbinden); lost: Messboard wurde abgezogen (danach wieder automatisch verbinden)."""
         s = self.page_settings
         if self.link:
-            if self.ctrl and self.ctrl.state in (WAIT, RUN):
+            if self.ctrl and self.ctrl.state in ACTIVE:
                 self.ctrl.abort()
             try:
                 self.link.close()
@@ -1698,7 +1762,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 "Lauf prüfen")
 
     def on_measure_ratio(self):
-        if self.ctrl and self.ctrl.state in (WAIT, RUN):
+        if self.ctrl and self.ctrl.state in ACTIVE:
             return
 
         def apply(r: float):
@@ -1715,7 +1779,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------ Lauf
     def on_start(self):
-        if not self.ctrl or self.ctrl.state in (WAIT, RUN):
+        if not self.ctrl or self.ctrl.state in ACTIVE:
             return
         s = self.page_settings
         p = s.params()
@@ -1727,6 +1791,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tabs.setCurrentIndex(0)
         self.ctrl.params = p
         self.ctrl.auto_climate = s.climate_auto.isChecked()
+        self.ctrl.ausrollen = self.page_kalib.enabled()
+        self.ctrl.coast_n_ende, self.ctrl.coast_t_max, self.ctrl.coast_quadratisch = self.page_kalib.config()
         self.ctrl.ecu = self.page_rusefi.active_link()
         self.plot.remove(LIVE_KEY)
         self.plot.freeze(True)                     # Skalierung wie beim vorherigen Lauf
@@ -1740,7 +1806,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_buttons()
 
     def on_abort(self):
-        if self.ctrl and self.ctrl.state in (WAIT, RUN):
+        if self.ctrl and self.ctrl.state == COAST:
+            self.ctrl.end_coast()                          # Lauf ist fertig: nur das Ausrollen beenden
+        elif self.ctrl and self.ctrl.state in (WAIT, RUN):
             self.ctrl.abort()
             if self.page_settings.live_check.isChecked():
                 self.link.start()
@@ -1749,17 +1817,87 @@ class MainWindow(QtWidgets.QMainWindow):
     def _finish_run(self):
         r = self.ctrl.result
         self.plot.freeze(False)
+        coast = self.ctrl.coast
         if r is None:
             self._set_status("Fertig – keine Auswertung möglich", farben.BALKEN_FEHLER)
+            if coast is not None:
+                self.page_kalib.show_result(coast, self._coast_label(None))
             return
-        self.result_label.setText(r.summary() + f"\nEnde: {r.end_reason}   |   "
-                                  f"{len(self.ctrl.frames)} Telegramme, {self.link.lost} verloren")
-        self._set_status(f"{r.p_max:.1f} PS bei {r.n_pmax:.0f} 1/min", "#b8e6b8")
+        self.result_label.setText(r.summary() + f"\nEnde: {self.ctrl.message or r.end_reason}   |   "
+                                  f"{len(self.ctrl.frames)} Telegramme, {self.link.lost} verloren"
+                                  + (f"\n{self.ctrl.coast_text()}" if coast is not None else ""))
+        if r.verluste:
+            self._set_status(f"Motor {r.p_max:.1f} PS bei {r.n_pmax:.0f} 1/min  ·  Rad {r.p_rad_max:.1f} PS",
+                             "#b8e6b8")
+        else:
+            self._set_status(f"{r.p_max:.1f} PS bei {r.n_pmax:.0f} 1/min", "#b8e6b8")
+        rid = None
         if self.autosave.isChecked():
-            self.save_current_run()
+            rid = self.save_current_run()
         else:
             self._draw_live(final=True)
             self.plot.auto_scale()
+        if coast is not None:
+            self.page_kalib.show_result(coast, self._coast_label(rid), rid)
+            self.statusBar().showMessage(self.ctrl.coast_text(), 10000)
+            self.band.zeige(("Ausrollversuch ausgewertet – im Reiter Kalibrierung prüfen und übernehmen"
+                             if coast.ok else f"Ausrollversuch: {coast.meldung}"),
+                            farben.GUT if coast.ok else farben.FEHLER, 8.0)
+
+    # ------------------------------------------------------------------ Ausrollversuch
+    def _coast_label(self, rid) -> str:
+        """Woher der Ausrollversuch kommt (Lauf, Fahrzeug/Setup)."""
+        row = self.db.run(rid) if rid else None
+        veh = self.vehicle_combo.currentText() if self.vehicle_combo.currentData() else ""
+        setup = self.setup_combo.currentText() if self.setup_combo.currentData() else ""
+        if row is not None:
+            vehicles = {r["id"]: r["name"] for r in self.db.vehicles()}
+            veh = vehicles.get(row.vehicle_id, "")
+            s = self.db.setup(row.setup_id) if row.setup_id else None
+            setup = s["name"] if s else ""
+        lauf = f"Lauf {self._run_label(row)}" if row is not None else "aktueller Lauf (nicht gespeichert)"
+        return " · ".join(x for x in (lauf, veh, setup) if x)
+
+    def _coast_from_run(self):
+        """Ausrollphase des markierten Laufs auswerten (Reiter Messen, sonst Auswertung)."""
+        rid = self._current_run_id() or self.viewer.current_run_id()
+        if rid is None:
+            QtWidgets.QMessageBox.information(self, "Ausrollversuch", "Bitte zuerst in der Laufliste (Reiter "
+                                              "Messen) einen Lauf markieren.")
+            return
+        e = self._entry(rid)
+        if e is None:
+            return
+        run, res, _ch, p = e
+        start = res.end_index if res is not None and res.end_index >= 0 else None
+        n_ende, _t_max, quad = self.page_kalib.config()
+        c = wait_in_thread(lambda: ausrollen.analyse(run["n_roll"], run["dt"], p, start=start, n_meas=run["n_meas"],
+                                                     n_ende=n_ende, quadratisch=quad))
+        self.page_kalib.show_result(c, self._coast_label(rid), rid)
+
+    def _apply_coast(self, c, rid):
+        """„Übernehmen“: Verluste eintragen, speichern und den Lauf des Ausrollversuchs damit neu rechnen."""
+        s = self.page_settings
+        s.set_losses(c.m0, c.m1, c.n1, c.m2, c.quelle())
+        self._persist()
+        self.settings.setdefault("ausrollen", {})["uebernommen"] = c.als_dict()
+        save_settings(self.settings)
+        text = f"Verluste übernommen: M0 {c.m0:.2f} / M1 {c.m1:.2f} Nm bei {c.n1:.0f} 1/min"
+        if rid is not None and self.db.run(rid) is not None:
+            e = self._entry(rid)
+            if e is not None:
+                q = c.params_fuer(e[3])
+                self.db.update_run(rid, params=asdict(q))
+                self.cache.pop(rid, None)
+                self.viewer.invalidate(rid)
+                e = self._entry(rid)
+                if e and e[1]:
+                    r = e[1]
+                    self.db.update_run(rid, p_max=r.p_max, n_pmax=r.n_pmax, m_max=r.m_max, n_mmax=r.n_mmax, ka=r.ka)
+                    text += f" – Lauf neu gerechnet: Motor {r.p_max:.1f} PS, Rad {r.p_rad_max:.1f} PS"
+                self._reload_runs()
+        self._set_status(text, "#b8e6b8")
+        self.statusBar().showMessage(text, 8000)
 
     def save_current_run(self) -> Optional[int]:
         if not self.ctrl or not self.ctrl.result:
@@ -1779,8 +1917,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.result_label.setToolTip(folder)
         return rid
 
-    def _draw_live(self, final: bool = False):
-        r = self.ctrl.result if final else self.ctrl.live_result
+    def _draw_live(self, final: bool = False, res=None):
+        r = res or (self.ctrl.result if final else self.ctrl.live_result)
         if r is None:
             return
         egt2 = np.array([f.egt2 for f in self.ctrl.frames])[r.segment] if self.ctrl.frames else None
@@ -2043,17 +2181,24 @@ class MainWindow(QtWidgets.QMainWindow):
                                     if setup.get(k))
             e = self._entry(row.id)
             p = e[3] if e else None
+            res = e[1] if e else None
             veh = " / ".join(x for x in (vehicles.get(row.vehicle_id, ""), setup["name"] if setup else "") if x)
+            if res is not None and res.verluste:
+                ergebnis = (f"Motor {row.p_max:.1f} PS bei {row.n_pmax:.0f} 1/min\n"
+                            f"Rad {res.p_rad_max:.1f} PS bei {res.n_prad_max:.0f} 1/min\n"
+                            f"{row.m_max:.1f} Nm (Motor) bei {row.n_mmax:.0f} 1/min")
+            else:
+                ergebnis = f"{row.p_max:.1f} PS bei {row.n_pmax:.0f} 1/min\n{row.m_max:.1f} Nm bei {row.n_mmax:.0f} 1/min"
             rows.append({
                 "farbe": self._run_color(row),
                 "name": self._run_label(row) + (f"\n{row.notiz}" if row.notiz else ""),
                 "fahrzeug": veh + ("\n" + details if details else ""),
-                "ergebnis": f"{row.p_max:.1f} PS bei {row.n_pmax:.0f} 1/min\n"
-                            f"{row.m_max:.1f} Nm bei {row.n_mmax:.0f} 1/min",
+                "ergebnis": ergebnis,
                 "klima": "" if p is None else
                 f"{p.temp_c:.1f} °C, {p.p_mbar:.0f} mbar\nk = {physics.din70020(p.temp_c, p.p_mbar):.3f}",
                 "details": ("" if p is None else
                             f"i = {p.ratio:.3f}, J = {p.inertia:.2f}\n{physics.filter_text(p, row.rate)}")
+                + (f"\n{res.verlust_text()}" if res is not None and res.verluste else "")
                 + (f"\nMessfehler: {fault_text(row.fehler)}" if row.fehler else ""),
             })
         return rows
@@ -2072,8 +2217,9 @@ class MainWindow(QtWidgets.QMainWindow):
             open_after = True
         else:
             open_after = False
-        notes = ["Leistung nach DIN 70020 korrigiert.  Oben: ── Leistung [PS], ╌╌ Drehmoment [Nm].  "
-                 "Unten: ── λ, ╌╌ EGT 1, ┈┈ EGT 2."]
+        notes = ["Leistung nach DIN 70020 korrigiert (Radanteil; Verluste unkorrigiert wie LabVIEW).  "
+                 "Mit Verlusten: Motor = Rad + Verluste (Herkunft unter Details).  "
+                 "Oben: ── Leistung [PS], ╌╌ Drehmoment [Nm].  Unten: ── λ, ╌╌ EGT 1, ┈┈ EGT 2."]
         report.export_pdf(path, self.plot.render_image(), title, rows, notes)
         if open_after:
             QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(path))
@@ -2095,7 +2241,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.page_tasten.on_event(ev)
                 self.statusBar().showMessage(self._event_text(ev), 4000)
         self.page_oszi.poll()
-        lauf = bool(self.ctrl and self.ctrl.state in (WAIT, RUN))
+        lauf = bool(self.ctrl and self.ctrl.state in ACTIVE)
         self.page_hw.automatic(lauf, self.page_oszi.rec is not None)
         self._ratio_tick()
         if not self.ctrl:
@@ -2122,12 +2268,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_status("GO – Vollgas!", "#7ed67e")
         elif st == RUN:
             if self.ctrl.gas_off():
-                self._set_status("GAS WEG!", "#ff5555")
+                self._set_status("GAS WEG – KUPPLUNG ZIEHEN!" if self.ctrl.ausrollen else "GAS WEG!", "#ff5555")
             else:
                 self._set_status(f"Messung … {lv.n_calc:,.0f} 1/min".replace(",", "."), "#ffe08a")
+        elif st == COAST:
+            self._set_status(f"KUPPLUNG ZIEHEN – ausrollen lassen … {lv.n_calc:,.0f} 1/min".replace(",", "."),
+                             "#9fc9ff")
         if st in (WAIT, RUN) and time.time() > self._plot_due:
             self._plot_due = time.time() + 0.05
             self._draw_live()
+        elif st == COAST and self._plot_due >= 0:
+            self._plot_due = -1.0                          # Lauf ist fertig: Kurve einmal ganz zeichnen
+            self._draw_live(final=True, res=self.ctrl.live_result)
         elif st in (DONE, ABORTED) and not self._done_handled:
             self._done_handled = True
             if st == DONE:
@@ -2136,7 +2288,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.plot.freeze(False)
                 self._set_status(self.ctrl.message or "Abgebrochen", farben.BALKEN_FEHLER)
             self._update_buttons()
-        if st in (WAIT, RUN):
+        if st in ACTIVE:
             self._update_buttons()
 
         # Live-Anzeige: Ausgabe nach Autostopp der Firmware wieder anstossen
@@ -2150,14 +2302,14 @@ class MainWindow(QtWidgets.QMainWindow):
         """Marker in der Statusleiste so, wie er im Lauf bzw. in der Aufzeichnung heißt."""
         if not ev.is_marker:
             return ev.text
-        if self.ctrl and self.ctrl.state in (WAIT, RUN):
+        if self.ctrl and self.ctrl.state in ACTIVE:
             nr = sum(e.is_marker for e in self.ctrl.basis_events)
         else:
             nr = len(self.page_oszi.markers)
         return ev.marker_text(nr) if nr else ev.text
 
     def _taste_sperre(self) -> str:
-        return tasten.sperre(self.ctrl is not None, bool(self.ctrl and self.ctrl.state in (WAIT, RUN)),
+        return tasten.sperre(self.ctrl is not None, bool(self.ctrl and self.ctrl.state in ACTIVE),
                              self.page_oszi.rec is not None, self.page_flash.busy,
                              QtWidgets.QApplication.activeModalWidget() is not None, bool(self.page_pruef.bg.pending))
 
@@ -2258,6 +2410,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "auswertung_teilung": b64(self.viewer.split.saveState()),
             "laufliste_spalten": [self.run_tree.columnWidth(c) for c in range(self.run_tree.columnCount())],
             "reiter_neu": [self.tabs.currentIndex(), self.settings_tabs.currentIndex()],
+            "reiter_kalib": True,                  # Indizes zaehlen den Reiter Kalibrierung mit
         }
 
     def restore_window_layout(self) -> bool:
@@ -2273,6 +2426,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 if wd > 0:
                     self.run_tree.setColumnWidth(c, wd)
             haupt, unter = f.get("reiter_neu") or REITER_ALT.get(f.get("reiter"), (0, 0))
+            if not f.get("reiter_kalib") and haupt >= REITER_KALIB:
+                haupt += 1                         # gespeichert von der Version ohne Reiter Kalibrierung
             if 0 <= unter < self.settings_tabs.count():
                 self.settings_tabs.setCurrentIndex(unter)
             if 0 <= haupt < self.tabs.count():

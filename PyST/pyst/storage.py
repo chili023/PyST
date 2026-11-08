@@ -6,7 +6,7 @@ Ein Lauf = Ordner  messungen/YYMMDD_HHMMSS_<PS>_<n>/  mit
                 (+ Spalten rusefi_<Kanal>: ECU-Werte auf die Telegramm-Zeitpunkte gelegt)
   rusefi.csv    ECU-Werte in ihrer eigenen Abtastung (nur mit rusEFI)
   kurve.csv     ausgewertete Kurve (n, PS, Nm, n gemessen, AFR, EGT)
-  lauf.json     Parameter, Klima, Ergebnis, Firmware-Info
+  lauf.json     Parameter, Klima, Ergebnis, Firmware-Info, Ausrollversuch (wenn eingeschaltet: "ausrollen")
   lauf.xml      dasselbe im LabVIEW-3.2.1-Format (in LabVIEW-Recalc oeffnbar)
   marker.csv    Marker mit Text (Dauermessung), ereignisse.csv (Software-Trigger), bursts/burst_NNN.csv
 Dauermessung = Ordner  messungen/YYMMDD_HHMMSS_Dauermessung/  (siehe recorder.py): waehrend der Messung
@@ -140,8 +140,14 @@ def save_run(ctrl, vehicle: str = "", firmware: str = "", base_dir: str = "") ->
             "p_max_ps": res.p_max, "n_pmax": res.n_pmax, "m_max_nm": res.m_max, "n_mmax": res.n_mmax,
             "v_max_kmh": res.v_max, "ka": res.ka, "strecke_m": res.distance_m, "ende": res.end_reason,
             "text": res.summary(),
+            # mit Verlusten: p_max_ps = Motor, p_rad_max_ps = Rad; Herkunft der Verluste
+            "p_rad_max_ps": res.p_rad_max, "n_prad_max": res.n_prad_max,
+            "verluste": res.verlust_text(),
         },
     }
+    coast = getattr(ctrl, "coast", None)
+    if coast is not None:
+        meta["ausrollen"] = coast.als_dict(punkte=True)
     with open(os.path.join(folder, "lauf.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=2, ensure_ascii=False)
     # LabVIEW-Datei mit Filtern in Messpunkten (LabVIEW kennt keine Sekunden)
