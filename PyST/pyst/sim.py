@@ -1881,7 +1881,7 @@ def ausroll_engine(**kw) -> SimEngine:
 
 def open_sim(port: str, replay_file: str = ""):
     """Portname -> (Ersatz fuer den seriellen Port, abgespielter Lauf oder None).
-    SIM[:mega|:mega300][:stoerung], SIM:basis[:ohne|:wlan|:stoerung], SIM:zange; replay_file spielt einen Lauf ab."""
+    SIM[:mega|:mega300|:ausrollen][:stoerung], SIM:basis[:ohne|:wlan|:stoerung], SIM:zange; replay_file spielt einen Lauf ab."""
     if replay_file:
         source = ReplaySource(replay_file)
         return SimSerial(source=source), source

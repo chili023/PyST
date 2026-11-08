@@ -6,6 +6,8 @@ Läuft auf **Mac**, **Linux/Raspberry Pi** (und Windows).
 - steuert die Messelektronik: Klima lesen (`e`), Messung starten (`m`) und stoppen (`s`)
 - Lauf mit **fester Übersetzung**, Start bei *n vom Gas*, Ende bei **n Stop** (z.B. 8000 1/min) oder beim Gaswegnehmen
 - Prüfstandsdaten: Rollengeber, Rollenumfang, Trägheit, Zündimpulse, Filter, Verlustmoment
+- **Ausrollversuch** (Reiter „Kalibrierung“): nach dem Lauf Kupplung ziehen, aus dem Ausrollen der Rolle das
+  Verlustmoment bestimmen – Ergebnis Radleistung und Motorleistung getrennt
 - Übersetzung einmessen aus Zündsignal oder rusEFI-Drehzahl (Verlauf, getrimmter Mittelwert, von Hand anpassbar)
 - **rusEFI-Steuergerät** als zweite Datenquelle (Reiter „ECU“), Kanäle frei wählbar und mit jedem Lauf gespeichert
 - Live-Anzeige (Motor berechnet und gemessen, km/h, Messfrequenz, verlorene Telegramme), Live-Kurve
@@ -31,6 +33,8 @@ Testablauf für den Vergleich alt/neu: siehe [TESTPLAN.md](TESTPLAN.md).
 | **Fahrzeuge & Setups** | Datenbank: Hersteller, Modell, Vergaser/EFI; je Setup Motor (Hubraum, CR, Steuerzeiten), Vergaser (Düsen, Nadel, Clip …), ECU/Tune, Zündung, Antrieb (Übersetzung, Vario, Rollen, Federn), Ein-/Auslass, Kraftstoff. Setups kopieren, „für neue Läufe verwenden“. |
 | **Auswertung** | Fahrzeug wählen → Läufe nach Datum oder nach Setup gruppiert → **Hinzufügen**, dann nächstes Fahrzeug. Fahrzeug/Setup direkt bearbeiten (auch Rechtsklick: Setup zuordnen, neues Setup). Log-Viewer wie MegaLogViewer: bis 4 Felder, beliebige Kanäle (gleiche Einheit = gleiche Skala), Cursor mit Maus und ←/→, X-Achse Zeit oder Drehzahl, beliebig viele Läufe (Farbe je Lauf, Linienart je Kanal). **Setup-Vergleich** mit markierten Unterschieden. Kanal „Übersetzung Zündung/Rolle“. |
 | **Oszi / Dauermessung** | Messwerkzeug für die Fehlersuche (Zündung oder Rolle?), siehe unten |
+| **ECU** | rusEFI-Steuergerät, siehe unten |
+| **Kalibrierung** | Ausrollversuch ein/aus, Ergebnis (Verlustleistung bzw. Verlustmoment über der Drehzahl, Messpunkte + Fit, M0/M1/m2, Fit-Güte), **Übernehmen**, aktuell gültige Verluste – siehe unten |
 | **Einstellungen** | Unterreiter **Allgemein** (Prüfstand, Lauf, Filter & Verluste, Klima, Anzeige λ oder AFR), **Verbindung** (Port, Verbinden, Live-Anzeige, automatisches Verbinden), **Zange · Netz · Steckdosen** (PyST-Basis mit Funk-Zündzange, WLAN der Basis, WLAN-Steckdosen, Zange per USB), **Tasten** (Tasten-Setup der Zange), **Prüfen**, **Firmware** – siehe unten |
 
 - Während eines Laufs bleibt die Skalierung wie beim vorherigen Lauf stehen; danach wird neu skaliert.
@@ -71,6 +75,58 @@ Testablauf für den Vergleich alt/neu: siehe [TESTPLAN.md](TESTPLAN.md).
     auf Linux ggf. `pip install py7zr` oder `apt install p7zip-full`).
 - Weitere Messkanäle (später WSB) sind zusätzliche Spalten in `roh.csv` und
   erscheinen automatisch im Auswerter und im CSV-Export.
+
+## Ausrollversuch (Reiter „Kalibrierung“)
+
+Bestimmt die Verluste von Rolle, Rad, Kette und Getriebeausgang. Damit weist PyST neben der Radleistung die
+**Motorleistung** aus.
+
+**Ablauf für den Fahrer**
+
+1. Im Reiter „Kalibrierung“ **Ausrollversuch nach jedem Lauf** einschalten (bleibt gespeichert). Ausgeschaltet
+   läuft alles exakt wie bisher.
+2. Lauf wie immer. Bei *n Stop* zeigt die Statuszeile **GAS WEG – KUPPLUNG ZIEHEN!**
+3. Gas weg und **gleich die Kupplung ziehen**, gezogen halten, nicht bremsen, nicht schalten. Nach dem Laufende
+   steht **KUPPLUNG ZIEHEN – ausrollen lassen** (blau), die Aufzeichnung läuft weiter.
+4. Das Ausrollen endet bei der eingestellten Motordrehzahl (Rolle × i, Vorgabe 3000 1/min, 0 = bis Stillstand),
+   nach der Höchstdauer (Vorgabe 120 s), wenn die Drehzahl wieder steigt, keine Daten mehr kommen oder mit
+   **Ausrollen beenden (Esc)**. Der Lauf ist dann schon fertig und wird wie immer ausgewertet und gespeichert
+   (das Ausrollen steht mit in `roh.csv`, das Ergebnis unter `"ausrollen"` in `lauf.json`).
+5. Im Reiter „Kalibrierung“ Kurve und Fit-Güte prüfen und **Übernehmen** drücken. Erst dann werden M0, M1, n1 und
+   m2 in die Einstellungen (Filter & Verluste) eingetragen; der Lauf des Versuchs wird damit neu gerechnet.
+   „Markierten Lauf auswerten“ wertet das Ausrollen eines gespeicherten Laufs nachträglich aus.
+
+**Formel**
+
+- Ohne Antrieb gilt an der Rolle J · dω/dt = −Mv(n), also Verlustmoment Mv = −J · dω/dt, Verlustleistung
+  Pv = Mv · ω (n = Rollendrehzahl, ω = n · 2π/60).
+- Modell (wie LabVIEW, um einen quadratischen Anteil erweitert, Vorgabe m2 = 0):
+  Mv(n) = M0 + n · (M1 − M0)/n1 + m2 · (n/1000) · ((n − n1)/1000). M0 und M1 bleiben die Werte bei 0 und n1.
+- Fit ohne numerische Ableitung: ω(t) = ω0 − 1/J · Σ c_k ∫ φ_k(n) dt mit φ = 1, n/n1, (quadratisch) – lineare
+  kleinste Quadrate über alle Messpunkte. n1 = eingestellter Wert (über 100 1/min), sonst die obere Drehzahl
+  des Ausrollens.
+- Erkennung: ab dem Laufende das Drehzahlmaximum, die Kupplung über das Zündsignal (Motor dreht langsamer als
+  Rolle × i) oder ohne Zündsignal über die Verzögerung. Der Übergang am Anfang (Motorbremse, Kupplung schleift)
+  und Bremsen am Ende werden verworfen, bis das Modell ω(t) im Randfenster (0,5 s) trifft.
+- Messpunkte im Diagramm: lokale Steigung (±0,25 s) → Mv, nach Drehzahl in Klassen gemittelt. Fit-Güte = R² und
+  RMS dieser Klassenmittel gegen den Fit.
+- Motorleistung = Radleistung + Verlustleistung bei gleicher Rollendrehzahl:
+  M_Motor = k · J / i² · a + Mv / i (wie bisher), Radanteil = k · J / i² · a. Ergebnis-Zeile, PDF-Bericht,
+  `lauf.json` und die Kanäle „Leistung Rad“ / „Verlustleistung“ im Auswerter weisen beides getrennt aus und
+  nennen die Herkunft der Verluste (Ausrollversuch mit Datum und R², oder „von Hand eingetragen“).
+
+**Grenzen**
+
+- J ist die Rollenträgheit. Die Trägheit von Rad und Getriebeausgang fehlt beim Beschleunigen wie beim Ausrollen.
+- Die DIN-70020-Korrektur wirkt wie in LabVIEW nur auf den Radanteil, nicht auf die Verluste.
+- Erfasst werden nur Verluste hinter der Kupplung (Rolle, Reifen, Kette, Getriebeausgang), nicht Getriebeeingang,
+  Primärtrieb und Kupplung selbst. Die Verluste hängen von Reifendruck, Anpressung und Temperatur ab: nach
+  Änderungen neu messen.
+- Fehlt der untere Drehzahlbereich, ist M0 hochgerechnet (Hinweis im Reiter). Ein quadratischer Anteil
+  (m2 ≠ 0) lässt sich im LabVIEW-XML nicht abbilden; dort stehen nur M0/M1.
+- Meldungen statt Ergebnis bei: keine Ausrolldaten, zu kurz (unter 3 s), Drehzahlbereich zu klein
+  (unter 20 %), Rolle beschleunigt, Kupplung nicht gezogen erkennbar, Verlustmoment negativ.
+- Simulator: Port `SIM:ausrollen` (Kupplung 0,8 s nach dem Gaswegnehmen gezogen, Verlust von Rad/Kette).
 
 ## Oszi / Dauermessung (ab 1.3)
 
@@ -292,7 +348,8 @@ Alle Prüfstandsparameter lassen sich überschreiben, z.B. `--ratio 6.85 --inert
 3. Drehzahl unter *n vom Gas* halten → **START (F1)** → Klima wird gelesen → **GO – Vollgas!**
 4. Über *n vom Gas* beginnt die Messung (gelb), ab *n Stop* erscheint **GAS WEG!** (rot).
 5. Ergebnis wird angezeigt und (Auto-Speichern) unter `~/PyST/messungen/` abgelegt.
-6. **Abbrechen (Esc)** jederzeit.
+6. **Abbrechen (Esc)** jederzeit. Mit Ausrollversuch: nach dem Laufende Kupplung ziehen (siehe „Ausrollversuch“);
+   Esc beendet dann nur das Ausrollen, der Lauf bleibt.
 
 *n vom Gas* muss über der Haltedrehzahl liegen. Sonst erkennt die Auswertung (wie LabVIEW) schon
 beim Halten ein „Laufende“, weil die Drehzahl dort schwankt.
@@ -334,7 +391,9 @@ pyst/oszi.py      Reiter „Oszi / Dauermessung“, Dialog Geräte-Einstellungen
 pyst/recorder.py  Dauermessung (fortlaufend in Abschnitten gesichert)
 pyst/htmlexport.py HTML-Ansicht zum Weitergeben (uPlot eingebettet)
 pyst/share_ui.py  Dialoge Weitergeben und Import von Mitschnitten
-pyst/runner.py    Ablauf eines Laufs
+pyst/runner.py    Ablauf eines Laufs (mit Ausrollen)
+pyst/ausrollen.py Ausrollversuch: Erkennung, Fit des Verlustmoments, Prüfungen (ohne Oberfläche)
+pyst/kalib_page.py Reiter „Kalibrierung“
 pyst/storage.py   Speichern/Laden (CSV, JSON, LabVIEW-XML, .pyst, Terminal-Mitschnitte)
 pyst/lvxml.py     LabVIEW-Datenspeicher lesen/schreiben
 pyst/sim.py       Simulator (Firmware + Motor + Rolle, PyST-Basis mit Zange, Zange per USB)
