@@ -2558,8 +2558,8 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QVBoxLayout(pr).addWidget(self.page_pruef_lambda)
         fw = QtWidgets.QGroupBox("Firmware")
         fl = QtWidgets.QVBoxLayout(fw)
-        fl.addWidget(ew.neben("Der Wideband-Controller (F042) wird beim Basis-Update automatisch mit aktualisiert; "
-                              "einzeln im Expertenmodus unter Firmware."))
+        fl.addWidget(ew.neben("Der Wideband-Controller (F042) wird über die Basis geflasht: "
+                              "Einstellungen › Firmware, Expertenmodus, Zeile Lambda (F042)."))
         b = QtWidgets.QPushButton("Zur Firmware …")
         b.clicked.connect(lambda: self.show_page(self.page_flash))
         fl.addWidget(b, 0, QtCore.Qt.AlignLeft)

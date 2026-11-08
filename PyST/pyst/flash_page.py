@@ -760,8 +760,8 @@ class FlashPage(QtWidgets.QScrollArea):
             unten, hinweis = "", ""
             if key == "basis":
                 esp = self._ist(flash.BASIS_ESP)
-                unten = (f"Basis-ESP{f' ({esp})' if esp else ''} und Lambda-Controller werden automatisch mit "
-                         "aktualisiert.")
+                unten = (f"Basis-ESP{f' ({esp})' if esp else ''} wird automatisch mit aktualisiert. "
+                         "Den Lambda-Controller (F042) aktualisiert man einzeln im Expertenmodus.")
             elif key == "zange":
                 hinweis = "⚠ Zum Aktualisieren die Zange per USB anschließen – vorher vom Zündkabel nehmen!"
                 name = self.get_zange() if er["zange"] == "Funk" else ""

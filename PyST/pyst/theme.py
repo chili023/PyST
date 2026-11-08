@@ -338,6 +338,12 @@ def stylesheet(thema: str) -> str:
         QCheckBox::indicator {{ {ind} }}
         QCheckBox::indicator:checked {{ {ind_an} }}
         QCheckBox::indicator:disabled {{ border-color: {T['border']}; background: {T['win']}; }}
+        QRadioButton::indicator {{ width: 14px; height: 14px; border: 2px solid {T['border_strong']};
+                       border-radius: 9px; background: {T['field']}; }}
+        QRadioButton::indicator:checked {{ border-color: {T['accent']};
+                       background: qradialgradient(cx:0.5, cy:0.5, radius:0.5, fx:0.5, fy:0.5,
+                       stop:0 {T['accent']}, stop:0.45 {T['accent']}, stop:0.55 {T['field']}, stop:1 {T['field']}); }}
+        QRadioButton::indicator:disabled {{ border-color: {T['border']}; background: {T['win']}; }}
         QTabWidget::pane {{ border: 1px solid {T['border']}; top: -1px; }}
         QTabBar::tab {{ background: {T['win']}; color: {T['text2']}; border: 1px solid {T['border']};
                        border-bottom: none; padding: 5px 14px; margin-right: 2px;

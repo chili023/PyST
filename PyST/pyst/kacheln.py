@@ -395,6 +395,7 @@ class WertKachel(QtWidgets.QFrame):
         while g.count():
             it = g.takeAt(0)
             if it.widget() is not None:
+                it.widget().hide()          # sonst bleiben Reste sichtbar, bis deleteLater greift
                 it.widget().deleteLater()
         if not self.laeufe:
             return

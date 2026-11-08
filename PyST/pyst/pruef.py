@@ -125,7 +125,7 @@ def check_net(lines: List[str]) -> List[Check]:
     out.append(Check(g, "ESP-Neustarts", OK if n == 0 else WARN, str(n), "0"))
     ssid = kv.get("ssid", "")
     out.append(Check(g, "WLAN-Name", OK if ssid else WARN, ssid or "nicht gesetzt",
-                     "gesetzt (Reiter Zange · Netz · Steckdosen)"))
+                     "gesetzt (Einstellungen › WiFi)"))
     out.append(Check(g, "WLAN-Modus", INFO, f"{kv.get('mode', '–')}, Kanal {kv.get('kanal', '–')}, {kv.get('ip', '–')}"))
     return out
 
