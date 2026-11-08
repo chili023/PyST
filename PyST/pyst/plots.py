@@ -13,6 +13,10 @@ Strichart = Kanal, Farbe = Lauf; ganz ausblendbar (set_lower_visible).
 Zusatzkanaele (z.B. rusEFI) werden ohne eigene Achse ueber das Leistungsdiagramm gelegt: jeder in
 einer eigenen ViewBox, die ihren Wertebereich auf die volle Hoehe streckt. Farbe = Lauf, Strichart =
 Kanal; die Legende oben links nennt Strichart und Bereich.
+
+Band (set_band): halbtransparente Flaeche zwischen zwei Kurven je Lauf, z.B. min–max der Quelllaeufe eines
+Mittelwert-Laufs (Leistung links, Drehmoment rechts), in der Laufarbe. set_legende: Hinweis oben im Diagramm
+(z.B. „━━ Ø 3 Läufe · Serie HD 135  gesperrt, Referenz · Band = min–max der Quellläufe“).
 """
 import math
 from typing import Dict, List, Optional, Tuple
@@ -256,6 +260,10 @@ class DynoPlot(pg.GraphicsLayoutWidget):
         self.items: Dict[str, Dict[str, Tuple[object, object]]] = {}   # Lauf -> Rolle -> (Linie, Besitzer)
         self._styles: Dict[str, tuple] = {}
         self.data: Dict[str, Dict[str, np.ndarray]] = {}
+        # Baender je Lauf: Kanal ("ps"/"nm") -> (Flaeche, Kurve unten, Kurve oben, Besitzer); Farbe/Deckkraft je Lauf
+        self.bands: Dict[str, Dict[str, tuple]] = {}
+        self._band_styles: Dict[str, Tuple[str, int]] = {}
+        self.band_data: Dict[str, Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray]]] = {}
         self.frozen = False
         self.last_scale: Optional[dict] = None
         self.limits: Dict[str, float] = {k: 0.0 for k in LIMIT_KEYS}
@@ -275,6 +283,11 @@ class DynoPlot(pg.GraphicsLayoutWidget):
             self.cursor_lines.append(line)
         self.scene().sigMouseMoved.connect(self._mouse_moved)
         self._build_fields()
+        self.legende = QtWidgets.QLabel(self)
+        self.legende.setTextFormat(QtCore.Qt.RichText)
+        self.legende.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+        self.legende.hide()
+        self._legende_html = ""
         for plot in (self.top, self.bottom):
             plot.end_labels = False
         self.apply_scale(self.default_scale())
@@ -311,6 +324,10 @@ class DynoPlot(pg.GraphicsLayoutWidget):
                 c.setAlpha(pen.color().alpha())
                 pen.setColor(c)
                 item.setPen(pen)
+        for key in list(self.bands):                     # Baender: Laufarbe im neuen Thema
+            self._band_farbe(key, thema)
+        if self._legende_html:
+            self.set_legende(self._legende_html)
         if self.overlays:
             self._scale_overlays()
         self._lower_axis_labels()
@@ -338,7 +355,7 @@ class DynoPlot(pg.GraphicsLayoutWidget):
         want.update(self._lower_want(store, thin))
 
         if self._styles.get(key) != (color, width):
-            self.remove(key)
+            self._remove_curves(key)                   # neue Farbe/Breite: Linien neu (ein Band bleibt)
         cur = self.items.get(key, {})
         for role in [r for r in cur if r not in want]:
             item, owner = cur.pop(role)
@@ -524,14 +541,87 @@ class DynoPlot(pg.GraphicsLayoutWidget):
                                f" color: {T['text']}; font-size: {theme.ACHSE_PX}px;'>"
                                + "<br>".join(lines) + "</div>" if lines else "")
 
-    def remove(self, key: str):
+    # ------------------------------------------------------------ Baender, Legende
+    BAND_ALPHA = 60                 # Deckkraft der Bandflaeche (0..255)
+
+    def set_band(self, key: str, n, baender: Dict[str, Tuple[np.ndarray, np.ndarray]], color: str = "#000000",
+                 alpha: int = BAND_ALPHA):
+        """Band(er) eines Laufs: baender = {"ps": (unten, oben), "nm": (unten, oben)} zu n (z.B.
+        mittelwert.MittelwertErgebnis.band). Halbtransparent in der Laufarbe (color wie bei set_curves, auch
+        "@avg_color"). Ersetzt ein vorhandenes Band des Laufs; remove(key) entfernt es mit."""
+        self.remove_band(key)
+        n = np.asarray(n, float)
+        owners = {"ps": self.top.pi, "nm": self.top.vb2}
+        cur, store = {}, {}
+        for kanal, (lo, hi) in (baender or {}).items():
+            if kanal not in owners or lo is None or hi is None:
+                continue
+            lo, hi = np.asarray(lo, float), np.asarray(hi, float)
+            if len(lo) != len(n) or len(hi) != len(n) or not len(n):
+                continue
+            a = pg.PlotCurveItem(n, lo, pen=pg.mkPen(None), connect="finite")
+            b = pg.PlotCurveItem(n, hi, pen=pg.mkPen(None), connect="finite")
+            fill = pg.FillBetweenItem(a, b)
+            fill.setZValue(-10)                        # unter den Kurven
+            owner = owners[kanal]
+            for it in (a, b, fill):
+                owner.addItem(it)
+            cur[kanal] = (fill, a, b, owner)
+            store[kanal] = (n, lo, hi)
+        if cur:
+            self.bands[key] = cur
+            self.band_data[key] = store
+            self._band_styles[key] = (color, int(alpha))
+            self._band_farbe(key)
+
+    def _band_farbe(self, key: str, thema: Optional[str] = None):
+        color, alpha = self._band_styles.get(key, ("#000000", self.BAND_ALPHA))
+        c = pg.mkColor(theme.laufarbe(color, thema or None))
+        c.setAlpha(alpha if (thema or theme.aktiv()) != theme.NACHT else min(255, int(alpha * 1.3)))
+        for fill, _a, _b, _owner in self.bands.get(key, {}).values():
+            fill.setBrush(pg.mkBrush(c))
+
+    def remove_band(self, key: str):
+        for fill, a, b, owner in self.bands.pop(key, {}).values():
+            for it in (fill, a, b):
+                owner.removeItem(it)
+        self._band_styles.pop(key, None)
+        self.band_data.pop(key, None)
+
+    def set_legende(self, html: str):
+        """Hinweis oben im Leistungsdiagramm rechts neben „Kurven ▾“ (Rich Text, "" = keiner). Hintergrund, Rahmen
+        und Schrift aus dem Thema; Farben im Text setzt der Aufrufer."""
+        self._legende_html = html or ""
+        if not self._legende_html:
+            self.legende.hide()
+            return
+        T = theme.tokens()
+        self.legende.setStyleSheet(f"QLabel {{ background: {T['panel']}; color: {T['plot_axis']};"
+                                   f" border: 1px solid {T['border']}; border-radius: 3px; padding: 1px 8px;"
+                                   f" font-size: {theme.SCHRIFT_PX}px; }}")
+        self.legende.setText(self._legende_html)
+        self.legende.adjustSize()
+        self.legende.show()
+        self.legende.raise_()
+        self._place_fields()
+
+    def legende_text(self) -> str:
+        """Text der Legende ohne Formatierung (fuer Tests)."""
+        return self.legende.text() if self._legende_html else ""
+
+    def _remove_curves(self, key: str):
         for item, owner in self.items.pop(key, {}).values():
             owner.removeItem(item)
         self._styles.pop(key, None)
         self.data.pop(key, None)
 
+    def remove(self, key: str):
+        """Lauf aus dem Diagramm: Kurven und Band."""
+        self._remove_curves(key)
+        self.remove_band(key)
+
     def clear_all(self):
-        for key in list(self.items):
+        for key in list(self.items) + list(self.bands):
             self.remove(key)
 
     # ------------------------------------------------------------ Skalierung
@@ -550,6 +640,10 @@ class DynoPlot(pg.GraphicsLayoutWidget):
                 for k in ("egt1", "egt2"):
                     if k in d and len(d[k]):
                         egt.append(float(np.nanmax(d[k])))
+        for bd in self.band_data.values():               # Baender sollen ganz zu sehen sein
+            for kanal, (_n, _lo, hi) in bd.items():
+                if np.isfinite(hi).any():
+                    (ps if kanal == "ps" else nm).append(float(np.nanmax(hi)))
         if not xs:
             return
         step = 500.0
@@ -654,6 +748,9 @@ class DynoPlot(pg.GraphicsLayoutWidget):
             vb = rect(plot.pi.vb)
             btn.move(vb.left() + 3, vb.top() + 3)
         self.bottom_btn.setVisible(self.lower_visible)
+        if getattr(self, "legende", None) is not None and self._legende_html:
+            vb = rect(self.top.pi.vb)
+            self.legende.move(self.top_btn.x() + self.top_btn.width() + 12, vb.top() + 2)
 
     def render_image(self):
         """Bild fuer den PDF-Bericht: mit allen Achsbeschriftungen (die Felder sind nicht Teil der Szene),
