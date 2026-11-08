@@ -666,7 +666,8 @@ class FlashSeite(unittest.TestCase):
 
     def test_ziele(self):
         self.assertEqual(set(self.page.rows), {flash.ZANGE, flash.ZANGE_ESPTOOL, flash.BASIS_STM, flash.BASIS_STLINK, flash.BASIS_ESP,
-                                               flash.BASIS_ESP_BRIDGE, flash.LAMBDA_F042})
+                                               flash.BASIS_ESP_BRIDGE, flash.LAMBDA_F042, flash.MEGA, flash.F446,
+                                               flash.F446_STLINK})
         self.assertEqual(flash.TARGETS[flash.LAMBDA_F042].name, "Lambda (F042) per CAN")
 
     def test_erfolg(self):

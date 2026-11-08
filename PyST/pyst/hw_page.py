@@ -1,24 +1,31 @@
 """
-Unterreiter „Zange · Netz · Steckdosen“ (PyST-Basis, Funk-Zange, Zange per USB, WLAN-Steckdosen).
+Unterreiter „Zange“ (Entwurf 08.11.2026) und die Gruppen für Lambda und WiFi (PyST-Basis, Funk-Zange, Zange per USB,
+WLAN-Steckdosen).
 
-- Zange: Akku, Signal, Sync, Funken, Blitz φ; Koppeln, gekoppelte Geräte, Markieren, Aufnahme, Identifizieren,
-  Ausschalten, Einstellungen (#ZANGE SET/GET). Zange per USB: Warnhinweis (galvanische Verbindung),
-  Log auslesen -> Dauermessung / .pyst.
-- Lambda-Heizung: Knopf ein/aus, Zustand mit Restzeit und Grund. Die Abschaltzeit läuft in der Basis.
+- Zange: Kopfkarten Verbindung, Signal, Akku, Sync, Funken, Blitz φ, Log, Firmware; Kopplung (Liste der gekoppelten
+  Zangen, Koppeln, Identifizieren, Entkoppeln), Aufnahme & Log (Funk: Aufnahme, Markieren, Log nachladen; USB: Log
+  auslesen -> Dauermessung / .pyst, Log herunterladen), Geräte-Einstellungen der Zange auf der Seite (#ZANGE SET/GET),
+  Zange ausschalten. Tasten und Tests setzt das Hauptfenster in box_tasten/box_tests.
+- Lambda-Heizung: Knopf ein/aus, Zustand mit Restzeit und Grund, AFR-Eingang und 12-V-Grenze (#GET/#SET).
+  Die Abschaltzeit läuft in der Basis.
 - Netzwerk: WLAN der Basis (Access Point / im Werkstattnetz / aus), PC per WLAN mit der Basis verbinden.
 - Steckdosen: über die Basis oder direkt vom PC (Shelly Gen1/Gen2+, Tasmota, ESPHome), Ein/Aus, Leistung,
   Totmann-Zeit, Automatik (beim Laufstart ein, nach Laufende + Nachlaufzeit aus).
 Netzwerk- und Funkzugriffe laufen im Hintergrund, damit die Oberfläche nicht hängt.
 """
 import os
+import re
 import time
 from typing import Callable, Dict, List, Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from . import einst_widgets as ew
 from . import farben
+from . import pruef
 from . import theme
 from . import storage
+from . import update
 from .auth import AuthError, refusal_text, wlan_password
 from .bg import Bg, wait_in_thread
 from .basis import (LAMBDA_GRUND, MAX_PLUGS, PLUG_TYPE_TEXT, PLUG_TYPES, ZANGE_KEYS, ZANGE_USB_WARNUNG, LambdaStatus,
@@ -130,12 +137,156 @@ class PlugDialog(QtWidgets.QDialog):
                           self.auto_lauf.isChecked(), self.auto_dauer.isChecked(), self.nachlauf.value())
 
 
+# Geräte-Einstellungen der Zange auf der Seite: (Gruppe, [(Schluessel, Beschriftung, Art)]).
+# Art: ("zahl", min, max) | ("x10", min, max) Anzeige /10 | ("wahl", [(Wert, Text)]) | ("text",)
+ZANGE_FELDER = (
+    ("Zündsignal", (("imp_per_rev_x10", "Zündimpulse/U × 10", ("zahl", 1, 160)),
+                    ("deadtime_us", "Totzeit nach Funke [µs]", ("zahl", 0, 20000)),
+                    ("plaus_lo_pct", "Plausibilität min [%]", ("zahl", 1, 100)),
+                    ("plaus_hi_pct", "Plausibilität max [%]", ("zahl", 100, 1000)),
+                    ("agc_mode", "Verstärkung (AGC)", ("wahl", (("0", "aus"), ("1", "ein"), ("2", "automatisch")))))),
+    ("Probe-Eingang", (("probe_enable", "Probe benutzen", ("wahl", (("0", "nein"), ("1", "ja")))),
+                       ("probe_edge", "Flanke", ("wahl", (("1", "Laden (steigend)"), ("2", "Funke (fallend)")))))),
+    ("Blitz", (("blitz_mode", "Blitzmodus", ("wahl", (("0", "aus"), ("1", "Trigger"), ("2", "Funken")))),
+               ("blitz_phi_x10", "Verstellung φ [°KW]", ("x10", -900, 900)),
+               ("blitz_pulse_us", "Pulsdauer [µs]", ("zahl", 1, 25)))),
+    ("Funk & Gerät", (("status_rate_hz", "Statusmeldungen [1/s]", ("zahl", 0, 20)),
+                      ("tx_power", "Sendeleistung", ("zahl", 0, 84)))),
+)
+# Lambda/AFR-Werte der Basis (#GET/#SET), Unterreiter Lambda
+LAMBDA_FELDER = (
+    ("AFR-Eingang", (("afr_src", "AFR-Quelle (Analogeingang)", ("text",)),
+                     ("afr_0v", "AFR bei 0 V", ("text",)),
+                     ("afr_fs", "AFR bei Vollausschlag", ("text",)))),
+    ("Heizung", (("lambda_umin", "12-V-Grenze [V × 10]", ("text",)),
+                 ("lambda_off_min", "Abschalten ohne Motor [min]", ("text",)))),
+)
+LAMBDA_HILFE = {"afr_src": "Quelle AFR (Analogeingang)", "afr_0v": "AFR bei 0 V", "afr_fs": "AFR bei Vollausschlag",
+                "lambda_umin": "Heizung nur über dieser Bordspannung (V × 10, 110 = 11,0 V)",
+                "lambda_off_min": "ohne Motor schaltet die Basis die Sonde nach so vielen Minuten aus"}
+HAUPTZANGE_FEHLT = ("Kommt mit einer Basis-Firmware, die die Hauptzange wählen lässt. Bis dahin ist die erste "
+                    "verbundene Zange die Hauptzange.")
+
+
+def log_belegt(text: str):
+    """Log der Zange ('#ZANGE;…;log=…'): „55022/452000“ (belegt/gesamt) oder „12 %“ -> (Prozent, Rest) bzw. (None, "")."""
+    text = text or ""
+    m = re.match(r"\s*(\d+)\s*/\s*(\d+)\s*(.*)$", text)
+    if m and int(m.group(2)) > 0:
+        belegt, gesamt = int(m.group(1)), int(m.group(2))
+        return 100.0 * belegt / gesamt, f"{belegt:,} von {gesamt:,}".replace(",", ".") + (f" · {m.group(3)}"
+                                                                                           if m.group(3) else "")
+    m = re.match(r"\s*(\d+(?:[.,]\d+)?)\s*%\s*[,·]?\s*(.*)$", text)
+    if m:
+        return float(m.group(1).replace(",", ".")), m.group(2)
+    return None, ""
+
+
+class WerteFormular(QtWidgets.QWidget):
+    """Werte eines Geräts direkt auf der Seite (statt Dialog). Gelesen und übertragen wird im Hintergrund (Seite)."""
+
+    def __init__(self, gruppen, standard: Dict[str, str], hilfe: Dict[str, str]):
+        super().__init__()
+        self.standard = standard
+        self.felder: Dict[str, QtWidgets.QWidget] = {}
+        self.arten: Dict[str, tuple] = {}
+        self.gelesen: Dict[str, str] = {}
+        lay = QtWidgets.QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(28)
+        for titel, felder in gruppen:
+            col = QtWidgets.QVBoxLayout()
+            col.setSpacing(6)                      # sonst erben Spalte und Formular die 28 px der Zeile
+            col.addWidget(ew.abschnitt(titel))
+            form = QtWidgets.QFormLayout()
+            form.setVerticalSpacing(6)
+            form.setHorizontalSpacing(10)
+            form.setLabelAlignment(QtCore.Qt.AlignLeft)
+            for key, text, art in felder:
+                w = self._feld(art)
+                w.setToolTip(hilfe.get(key, ""))
+                w.setMinimumWidth(120)
+                form.addRow(text, w)
+                self.felder[key] = w
+                self.arten[key] = art
+            col.addLayout(form)
+            col.addStretch(1)
+            lay.addLayout(col)
+        lay.addStretch(1)
+
+    @staticmethod
+    def _feld(art) -> QtWidgets.QWidget:
+        if art[0] == "wahl":
+            w = QtWidgets.QComboBox()
+            for wert, text in art[1]:
+                w.addItem(text, wert)
+            return w
+        if art[0] == "zahl":
+            w = QtWidgets.QSpinBox()
+            w.setRange(art[1], art[2])
+            return w
+        if art[0] == "x10":
+            w = QtWidgets.QDoubleSpinBox()
+            w.setDecimals(1)
+            w.setSingleStep(0.5)
+            w.setRange(art[1] / 10, art[2] / 10)
+            return w
+        return QtWidgets.QLineEdit()
+
+    def wert(self, key: str) -> str:
+        """Wert im Format des Geräts."""
+        w, art = self.felder[key], self.arten[key]
+        if art[0] == "wahl":
+            return str(w.currentData())
+        if art[0] == "zahl":
+            return str(w.value())
+        if art[0] == "x10":
+            return str(int(round(w.value() * 10)))
+        return w.text().strip()
+
+    def setze(self, key: str, wert: str):
+        w, art = self.felder[key], self.arten[key]
+        try:
+            if art[0] == "wahl":
+                i = w.findData(str(wert))
+                if i < 0:
+                    w.addItem(str(wert), str(wert))
+                    i = w.count() - 1
+                w.setCurrentIndex(i)
+            elif art[0] == "zahl":
+                w.setValue(int(float(wert)))
+            elif art[0] == "x10":
+                w.setValue(float(wert) / 10)
+            else:
+                w.setText(str(wert))
+        except (TypeError, ValueError):
+            pass
+
+    def fuellen(self, items):
+        self.gelesen = {k: str(v) for k, v in items if k in self.felder}
+        for k, v in self.gelesen.items():
+            self.setze(k, v)
+
+    def standardwerte(self):
+        for k in self.felder:
+            if k in self.standard:
+                self.setze(k, self.standard[k])
+
+    def aenderungen(self) -> List[tuple]:
+        """Geänderte Werte gegenüber dem zuletzt gelesenen Stand; nie gelesene Werte werden nicht geschickt."""
+        return [(k, self.wert(k)) for k in self.felder if k in self.gelesen and self.wert(k) != self.gelesen[k]]
+
+
 class HardwarePage(QtWidgets.QScrollArea):
+    """Unterreiter Zange (Entwurf 08.11.2026): Kopfkarten, Kopplung, Aufnahme & Log, Tasten, Tests, Geräte-Einstellungen.
+    Lambda-Heizung, Netzwerk und Steckdosen baut die Seite ebenfalls (box_lambda, box_net, box_plugs), das Hauptfenster
+    setzt sie in die Unterreiter Lambda und WiFi. Tasten und Tests setzt es in box_tasten/box_tests."""
     zange_text = QtCore.Signal(str)          # Kurztext für die Statusleiste
     zange_state = QtCore.Signal(str)         # Anzeige Statusleiste: ok, weg, usb oder leer
     lambda_text = QtCore.Signal(str, str)    # Statusleiste: Text, Farbe; leer = keine Basis
     log_saved = QtCore.Signal(str)           # ausgelesenes Zangen-Log (Ordner) -> Datenbank
     connect_port = QtCore.Signal(str)        # „Per WLAN verbinden“ -> Hauptfenster
+    zur_firmware = QtCore.Signal()           # Karte Firmware: Unterreiter Firmware zeigen
 
     def __init__(self, settings: dict, save_settings: Callable[[], None], get_link: Callable[[], object],
                  get_params: Callable, runs_dir: Callable[[], str]):
@@ -148,30 +299,49 @@ class HardwarePage(QtWidgets.QScrollArea):
         self.link = None
         self.bg = Bg()
         self.zst: Optional[ZangeStatus] = None
+        self.zangen: List[ZangeStatus] = []
         self.demo = []                         # simulierte Steckdosen (Demo)
         self._last_zange = 0.0
         self._last_plugs = 0.0
         self._last_net = 0.0
         self._last_lambda = 0.0
+        self.fw_neu = ""                       # neuere Zangen-Firmware laut Unterreiter Firmware
+        self.kanal = 0                         # WLAN-/Funkkanal laut '#NET' 
         self.lam: Optional[LambdaStatus] = None
         self.setWidgetResizable(True)
         inner = QtWidgets.QWidget()
         self.setWidget(inner)
         root = QtWidgets.QVBoxLayout(inner)
+        root.setSpacing(8)
         self.banner = QtWidgets.QLabel("ACHTUNG: " + ZANGE_USB_WARNUNG.replace("\n", " "))
         theme.rolle(self.banner, "banner_fehler")
         self.banner.setWordWrap(True)
         self.banner.hide()
         root.addWidget(self.banner)
-        # Gruppen als Attribute: das Hauptfenster verteilt sie auf die Unterreiter Zange, Lambda und WiFi
-        self.box_zange, self.box_net = self._build_zange(), self._build_net()
+        root.addLayout(self._build_karten())
+        self.z_msg = ew.AutoLabel("")
+        self.z_msg.setWordWrap(True)
+        theme.rolle(self.z_msg, "neben")
+        root.addWidget(self.z_msg)
+        # Gruppen als Attribute: Zange hier, Lambda und Netz/Steckdosen setzt das Hauptfenster in ihre Unterreiter
+        self.box_zange = self._build_kopplung()
+        self.box_log = self._build_aufnahme()
+        self.box_tasten = QtWidgets.QGroupBox("Tasten der Zange")
+        self.tasten_lay = QtWidgets.QVBoxLayout(self.box_tasten)
+        self.box_tests = QtWidgets.QGroupBox("Tests")
+        self.tests_lay = QtWidgets.QVBoxLayout(self.box_tests)
+        self.box_geraet = self._build_geraet()
+        self.box_net = self._build_net()
         self.box_lambda, self.box_plugs = self._build_lambda(), self._build_plugs()
-        top = QtWidgets.QHBoxLayout()
-        top.addWidget(self.box_zange, 3)
-        top.addWidget(self.box_net, 2)
-        root.addLayout(top)
-        root.addWidget(self.box_lambda)
-        root.addWidget(self.box_plugs, 1)
+        mitte = QtWidgets.QHBoxLayout()
+        links = QtWidgets.QVBoxLayout()
+        links.addWidget(self.box_zange, 1)
+        links.addWidget(self.box_log)
+        mitte.addLayout(links, 10)
+        mitte.addWidget(self.box_tasten, 8)
+        mitte.addWidget(self.box_tests, 10)
+        root.addLayout(mitte, 1)
+        root.addWidget(self.box_geraet)
         mode = settings.get("steckdosen_weg", "direkt")
         key = "steckdosen" if mode == "direkt" else "steckdosen_basis"
         self.plugs = PlugManager([PlugConfig.from_dict(d) for d in settings.get(key, [])], mode=mode,
@@ -184,88 +354,172 @@ class HardwarePage(QtWidgets.QScrollArea):
         self._link_changed()
 
     # ------------------------------------------------------------------ Aufbau
-    def _build_zange(self):
-        g = QtWidgets.QGroupBox("Zange")
+    def _build_karten(self):
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(8)
+        self.karten: Dict[str, ew.Karte] = {}
+        for k, titel, balken in (("verb", "Verbindung", False), ("rssi", "Signal", True), ("akku", "Akku", True),
+                                 ("sync", "Sync", False), ("funken", "Funken", False), ("blitz", "Blitz φ", False),
+                                 ("log", "Log", True), ("fw", "Firmware", False)):
+            karte = ew.Karte(titel, balken)
+            karte.setMinimumHeight(84)
+            row.addWidget(karte, 1)
+            self.karten[k] = karte
+        self.karten["fw"].chip.setCursor(QtCore.Qt.PointingHandCursor)
+        self.karten["fw"].chip.setToolTip("Zum Unterreiter Firmware")
+        self.karten["fw"].chip.mousePressEvent = lambda _e: self.zur_firmware.emit()
+        return row
+
+    def _build_kopplung(self):
+        g = QtWidgets.QGroupBox("Kopplung")
         lay = QtWidgets.QVBoxLayout(g)
-        grid = QtWidgets.QGridLayout()
-        self.z_vals: Dict[str, QtWidgets.QLabel] = {}
-        for i, (k, label) in enumerate((("verb", "Verbindung"), ("akku", "Akku"), ("rssi", "Signal"),
-                                        ("sync", "Sync"), ("funken", "Funken"), ("blitz", "Blitz φ"),
-                                        ("log", "Log"), ("fw", "Firmware"))):
-            t = QtWidgets.QLabel(label)
-            theme.rolle(t, "neben")
-            v = QtWidgets.QLabel("–")
-            v.setStyleSheet("font-size: 15px; font-weight: 600;")
-            grid.addWidget(t, (i // 4) * 2, i % 4)
-            grid.addWidget(v, (i // 4) * 2 + 1, i % 4)
-            self.z_vals[k] = v
-        lay.addLayout(grid)
-        self.z_weitere = QtWidgets.QLabel("")
-        theme.rolle(self.z_weitere, "neben")
-        self.z_weitere.setToolTip("Weitere gekoppelte Zangen; den Zündkanal liefert die Hauptzange (Basis: zange_id).")
-        self.z_weitere.setVisible(False)
-        lay.addWidget(self.z_weitere)
+        self.ztable = QtWidgets.QTableWidget(0, 5)
+        self.ztable.setHorizontalHeaderLabels(["Zange", "Kennung (MAC)", "Rolle", "Signal", "zuletzt"])
+        self.ztable.verticalHeader().setVisible(False)
+        self.ztable.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.ztable.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.ztable.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.ztable.setShowGrid(False)
+        hh = self.ztable.horizontalHeader()
+        for col in range(4):
+            hh.setSectionResizeMode(col, QtWidgets.QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(4, QtWidgets.QHeaderView.Stretch)
+        self.ztable.setMinimumHeight(110)
+        lay.addWidget(self.ztable, 1)
         row = QtWidgets.QHBoxLayout()
         self.b_pair = QtWidgets.QPushButton("Koppeln …")
+        theme.rolle(self.b_pair, "primaer")
         self.b_pair.setToolTip("Kopplungsfenster der Basis öffnen (30 s). An der Zange T1 + T2 gleichzeitig 3 s halten.")
-        self.b_mark = QtWidgets.QPushButton("Markieren (F3)")
-        self.b_rec = QtWidgets.QPushButton("Aufnahme Zange")
-        self.b_rec.setCheckable(True)
         self.b_ident = QtWidgets.QPushButton("Identifizieren")
-        self.b_set = QtWidgets.QPushButton("Einstellungen …")
-        self.b_more = QtWidgets.QToolButton()
-        self.b_more.setText("Weiteres ▾")
-        self.b_more.setPopupMode(QtWidgets.QToolButton.InstantPopup)
-        m = QtWidgets.QMenu(self.b_more)
-        m.addAction("Gekoppelte Geräte …", self.show_pairs)
-        m.addAction("Log nachladen (Lücken)", lambda: self._zcmd("LOG"))
-        m.addAction("Zange ausschalten", lambda: self._zcmd("OFF"))
-        self.b_more.setMenu(m)
-        self.b_log = QtWidgets.QPushButton("Log auslesen …")
-        self.b_log.setToolTip("Zange per USB: Log auslesen und als Dauermessung (und .pyst) speichern")
-        self.b_log_csv = QtWidgets.QPushButton("Log herunterladen …")
-        self.b_log_csv.setToolTip("Zange per USB: ganzes Log als CSV speichern, dazu ein Bericht mit allen Starts")
-        for b in (self.b_pair, self.b_mark, self.b_rec, self.b_ident, self.b_set, self.b_log, self.b_log_csv):
+        self.b_ident.setToolTip("Die Zange lässt ihre LED blinken.")
+        self.b_haupt = QtWidgets.QPushButton("Als Hauptzange")
+        self.b_haupt.setEnabled(False)
+        self.b_haupt.setToolTip(HAUPTZANGE_FEHLT)
+        self.b_unpair = QtWidgets.QPushButton("Entkoppeln")
+        self.b_unpair.setToolTip("Gewählte Zange aus der Kopplungsliste der Basis löschen")
+        for b in (self.b_pair, self.b_ident, self.b_haupt, self.b_unpair):
             row.addWidget(b)
-        row.addWidget(self.b_more)
         row.addStretch(1)
         lay.addLayout(row)
-        self.z_msg = QtWidgets.QLabel("")
-        self.z_msg.setWordWrap(True)
-        theme.rolle(self.z_msg, "neben")
-        lay.addWidget(self.z_msg)
+        lay.addWidget(ew.neben("Koppeln: Knopf drücken, dann an der Zange T1 + T2 gleichzeitig 3 s halten. "
+                               "Identifizieren lässt die LED der Zange blinken."))
         self.b_pair.clicked.connect(self.pair)
+        self.b_ident.clicked.connect(lambda: self._zcmd("IDENT"))
+        self.b_unpair.clicked.connect(self.unpair_selected)
+        return g
+
+    def _build_aufnahme(self):
+        g = QtWidgets.QGroupBox("Aufnahme && Log")
+        lay = QtWidgets.QVBoxLayout(g)
+        lay.addWidget(ew.abschnitt("per Funk (über die Basis)"))
+        row = QtWidgets.QHBoxLayout()
+        self.b_rec = QtWidgets.QPushButton("● Aufnahme Zange")
+        self.b_rec.setCheckable(True)
+        self.b_mark = QtWidgets.QPushButton("Markieren (F3)")
+        self.b_lognach = QtWidgets.QPushButton("Log nachladen (Lücken)")
+        self.b_lognach.setToolTip("Die Zange schickt fehlende Log-Blöcke über die Basis nach")
+        for b in (self.b_rec, self.b_mark, self.b_lognach):
+            row.addWidget(b, 1)
+        lay.addLayout(row)
+        lay.addWidget(ew.abschnitt("per USB an der Zange"))
+        row = QtWidgets.QHBoxLayout()
+        self.b_log = QtWidgets.QPushButton("Log auslesen … (als Dauermessung)")
+        self.b_log.setToolTip("Zange per USB: Log auslesen und als Dauermessung (und .pyst) speichern")
+        self.b_log_csv = QtWidgets.QPushButton("Log herunterladen … (CSV + Bericht)")
+        self.b_log_csv.setToolTip("Zange per USB: ganzes Log als CSV speichern, dazu ein Bericht mit allen Starts")
+        row.addWidget(self.b_log, 1)
+        row.addWidget(self.b_log_csv, 1)
+        lay.addLayout(row)
+        warn = QtWidgets.QLabel("⚠ " + ZANGE_USB_WARNUNG.replace("\n", " "))
+        warn.setWordWrap(True)
+        theme.rolle(warn, "banner_fehler")
+        lay.addWidget(warn)
         self.b_mark.clicked.connect(self.mark)
         self.b_rec.toggled.connect(lambda on: self._zcmd("REC 1" if on else "REC 0"))
-        self.b_ident.clicked.connect(lambda: self._zcmd("IDENT"))
-        self.b_set.clicked.connect(self.zange_settings)
+        self.b_lognach.clicked.connect(lambda: self._zcmd("LOG"))
         self.b_log.clicked.connect(lambda: self.read_log())
         self.b_log_csv.clicked.connect(lambda: self.download_log())
         return g
 
+    def _build_geraet(self):
+        g = QtWidgets.QGroupBox("Geräte-Einstellungen der Zange (per Funk)")
+        lay = QtWidgets.QHBoxLayout(g)
+        self.zform = WerteFormular(ZANGE_FELDER, {k: d for k, (_h, d) in ZANGE_KEYS.items()},
+                                   {k: h for k, (h, _d) in ZANGE_KEYS.items()})
+        left = QtWidgets.QVBoxLayout()
+        left.addWidget(self.zform)
+        self.zform_msg = ew.neben("Erst „Lesen“: Die Werte gehen per Funk an die Zange (Antwort nach Quittung), sie "
+                                  "speichert sie gesammelt rund 5 s später. Zündimpulse für die Rechnung: Rolle/Lauf.")
+        left.addWidget(self.zform_msg)
+        lay.addLayout(left, 1)
+        knoepfe = QtWidgets.QVBoxLayout()
+        self.b_zlesen = QtWidgets.QPushButton("Lesen")
+        self.b_zsenden = QtWidgets.QPushButton("Übertragen")
+        theme.rolle(self.b_zsenden, "primaer")
+        self.b_zstandard = QtWidgets.QPushButton("Standardwerte")
+        self.b_zstandard.setToolTip("Standardwerte eintragen; zur Zange gehen sie erst mit „Übertragen“")
+        self.b_zaus = QtWidgets.QPushButton("Zange ausschalten")
+        for b in (self.b_zlesen, self.b_zsenden, self.b_zstandard, self.b_zaus):
+            b.setMinimumWidth(150)
+            knoepfe.addWidget(b)
+        knoepfe.addStretch(1)
+        lay.addLayout(knoepfe)
+        self.b_zlesen.clicked.connect(self.zange_lesen)
+        self.b_zsenden.clicked.connect(self.zange_senden)
+        self.b_zstandard.clicked.connect(self.zform.standardwerte)
+        self.b_zaus.clicked.connect(lambda: self._zcmd("OFF"))
+        return g
+
     def _build_lambda(self):
         g = QtWidgets.QGroupBox("Lambda-Heizung")
-        lay = QtWidgets.QHBoxLayout(g)
+        lay = QtWidgets.QVBoxLayout(g)
+        row = QtWidgets.QHBoxLayout()
         self.b_lambda = QtWidgets.QPushButton("Lambda ein")
+        self.b_lambda.setMinimumWidth(130)
         self.b_lambda.setToolTip("Schaltet die Sonde bereit: Vorheizen, volle Heizung erst mit Motor. Ohne Motor schaltet "
-                                 "die Basis selbst ab (lambda_off_min). An der Zange: Standard T4 lang, siehe Unterreiter Tasten.")
+                                 "die Basis selbst ab (lambda_off_min). An der Zange: Standard T4 lang, siehe Zange › Tasten.")
         self.b_lambda.clicked.connect(self.lambda_toggle)
         self.lam_state = QtWidgets.QLabel("–")
         self.lam_state.setStyleSheet("font-size: 15px; font-weight: 600;")
         self.lam_detail = QtWidgets.QLabel("")
         theme.rolle(self.lam_detail, "neben")
+        row.addWidget(self.b_lambda)
+        row.addSpacing(12)
+        row.addWidget(QtWidgets.QLabel("Zustand"))
+        row.addWidget(self.lam_state)
+        row.addWidget(self.lam_detail, 1)
+        lay.addLayout(row)
         self.lam_warn = QtWidgets.QLabel("12-V-Spannung zu niedrig: Sonde heizt nicht (lambda_umin).")
         theme.rolle(self.lam_warn, "banner_fehler")
         self.lam_warn.hide()
-        lay.addWidget(self.b_lambda)
-        lay.addWidget(self.lam_state)
-        lay.addWidget(self.lam_detail)
         lay.addWidget(self.lam_warn)
-        lay.addStretch(1)
+        lay.addWidget(ew.neben("Die Basis heizt die Sonde nur über der 12-V-Grenze (lambda_umin) und schaltet sie "
+                               "ohne Motor nach lambda_off_min Minuten selbst ab. Volle Heizung erst mit Motor."))
+        # Werte der Basis zu Lambda/AFR (#GET/#SET; alle Werte unter Verbindung › Geräte-Einstellungen der Basis)
+        self.box_afr = QtWidgets.QGroupBox("AFR-Eingang und 12-V-Grenze (Werte des Messboards)")
+        al = QtWidgets.QHBoxLayout(self.box_afr)
+        self.lform = WerteFormular(LAMBDA_FELDER, {}, LAMBDA_HILFE)
+        left = QtWidgets.QVBoxLayout()
+        left.addWidget(self.lform)
+        self.lform_msg = ew.neben("Für PST-Diag-Geräte (Basis, Mega 3.1, F446 1.1). Nicht jedes Gerät kennt alle "
+                                  "Werte; was es nicht kennt, bleibt leer.")
+        left.addWidget(self.lform_msg)
+        al.addLayout(left, 1)
+        kn = QtWidgets.QVBoxLayout()
+        self.b_llesen = QtWidgets.QPushButton("Lesen")
+        self.b_lsenden = QtWidgets.QPushButton("Übernehmen")
+        theme.rolle(self.b_lsenden, "primaer")
+        for b in (self.b_llesen, self.b_lsenden):
+            b.setMinimumWidth(130)
+            kn.addWidget(b)
+        kn.addStretch(1)
+        al.addLayout(kn)
+        self.b_llesen.clicked.connect(self.basis_lesen)
+        self.b_lsenden.clicked.connect(self.basis_senden)
         return g
 
     def _build_net(self):
-        g = QtWidgets.QGroupBox("Netzwerk (WLAN der Basis)")
+        g = QtWidgets.QGroupBox("WLAN der Basis")
         form = QtWidgets.QFormLayout(g)
         self.net_state = QtWidgets.QLabel("–")
         self.net_state.setWordWrap(True)
@@ -292,6 +546,7 @@ class HardwarePage(QtWidgets.QScrollArea):
         form.addRow("Passwort", pw_row)
         row = QtWidgets.QHBoxLayout()
         self.b_net_apply = QtWidgets.QPushButton("Übernehmen")
+        theme.rolle(self.b_net_apply, "primaer")
         self.b_net_read = QtWidgets.QPushButton("Neu lesen")
         self.b_tcp = QtWidgets.QPushButton("PC per WLAN verbinden")
         self.b_tcp.setToolTip("Statt USB: PyST verbindet sich über TCP (Port 2323) mit der Basis und meldet sich mit dem "
@@ -302,7 +557,12 @@ class HardwarePage(QtWidgets.QScrollArea):
         for b in (self.b_net_apply, self.b_net_read, self.b_tcp, self.b_key_neu):
             row.addWidget(b)
         form.addRow(row)
-        self.net_msg = QtWidgets.QLabel("Der Kanal gilt auch für den Funk zur Zange (ESP-NOW).")
+        kanal = QtWidgets.QLabel("Der Kanal gilt auch für den Funk zur Zange (ESP-NOW): Nach einem Wechsel sucht die "
+                                 "Zange die Basis neu.")
+        kanal.setWordWrap(True)
+        theme.stufe(kanal, "info")
+        form.addRow(kanal)
+        self.net_msg = QtWidgets.QLabel("")
         self.net_msg.setWordWrap(True)
         theme.rolle(self.net_msg, "neben")
         form.addRow(self.net_msg)
@@ -316,7 +576,7 @@ class HardwarePage(QtWidgets.QScrollArea):
         return g
 
     def _build_plugs(self):
-        g = QtWidgets.QGroupBox("Steckdosen (Gebläse, Absaugung, Heizlüfter …)")
+        g = QtWidgets.QGroupBox("Steckdosen (Shelly, Tasmota, ESPHome: Lüfter, Absaugung, Heizlüfter …)")
         lay = QtWidgets.QVBoxLayout(g)
         bar = QtWidgets.QHBoxLayout()
         bar.addWidget(QtWidgets.QLabel("Schalten über"))
@@ -373,17 +633,23 @@ class HardwarePage(QtWidgets.QScrollArea):
         basis = bool(link and link.is_basis)
         usb = bool(link and link.is_zange_usb)
         self.banner.setVisible(usb)
-        for b in (self.b_pair, self.b_more):
-            b.setEnabled(basis)
+        self.b_pair.setEnabled(basis)
         zange_ok = basis and link.ign_source == "zange"
-        for b in (self.b_mark, self.b_rec, self.b_ident, self.b_set):
+        for b in (self.b_mark, self.b_rec, self.b_ident, self.b_lognach, self.b_unpair, self.b_zlesen, self.b_zaus,
+                  self.b_zstandard):
             b.setEnabled(zange_ok)
-        self.b_log.setVisible(usb)
-        self.b_log_csv.setVisible(usb)
+        self.b_zsenden.setEnabled(zange_ok and bool(self.zform.gelesen))
+        self.zform.setEnabled(zange_ok)
+        diag = bool(link and link.has_diag and not usb)
+        for b in (self.b_llesen, self.lform):
+            b.setEnabled(diag)
+        self.b_lsenden.setEnabled(diag and bool(self.lform.gelesen))
         self.b_log.setEnabled(usb)
         self.b_log_csv.setEnabled(usb)
         if not basis:
             self._show_lambda(None)
+            self.zangen = []
+            self._fill_zangen()
         self.b_key_neu.setEnabled(bool(basis and not link.needs_login))
         for w in (self.net_mode, self.net_ch, self.net_ssid, self.net_pw, self.b_net_pw, self.b_net_apply, self.b_net_read):
             w.setEnabled(basis)
@@ -392,13 +658,14 @@ class HardwarePage(QtWidgets.QScrollArea):
         if usb:
             self._show_zange(None)
             self.zange_state.emit("usb")
-            self.z_vals["verb"].setText("per USB")
-            self.z_vals["fw"].setText(link.caps.get("fw", ""))
+            self.karten["verb"].set_wert("per USB", stufe=theme.WARNUNG, unten="Zange direkt am PC")
+            self._show_fw(link.caps.get("fw", ""))
             self.z_msg.setText("Zange direkt per USB: Zündungs-Oszi im Reiter „Oszi / Dauermessung“ "
-                               "(nur Kanal Zündung), Log auslesen hier.")
+                               "(nur Kanal Zündung), Log auslesen hier unter Aufnahme & Log.")
         elif link is None:
             self._show_zange(None)
-            self.z_msg.setText("Keine Basis verbunden (USB oder WLAN, oder Simulator „SIM:basis“).")
+            self.z_msg.setText("Keine Basis verbunden (USB oder WLAN, oder Simulator „SIM:basis“) – "
+                               "Einstellungen › Verbindung.")
         elif not basis:
             self._show_zange(None)
             self.z_msg.setText("Das verbundene Gerät ist keine PyST-Basis – Zange und Netzwerk nicht verfügbar.")
@@ -415,33 +682,191 @@ class HardwarePage(QtWidgets.QScrollArea):
         if link is not self.link:
             self.link = link
             self.zst = None
+            self.zform.gelesen = {}
+            self.lform.gelesen = {}
             self._link_changed()
 
+    def _show_fw(self, fw: str):
+        """Karte Firmware: Version, darunter der Hinweis auf eine neuere Firmware (Unterreiter Firmware)."""
+        hit = re.search(r"\d+\.\d+\.\d+", fw or "")
+        ver = hit.group(0) if hit else (fw or "–")
+        neu = self.fw_neu if self.fw_neu and hit and update.is_newer(self.fw_neu, ver) else ""
+        self.karten["fw"].set_wert(ver, chip=f"{neu} verfügbar › Firmware" if neu else "",
+                                   unten="aktuell" if hit and self.fw_neu and not neu else "Unterreiter Firmware")
+
+    def set_fw_verfuegbar(self, version: str):
+        """Aus dem Unterreiter Firmware: neueste Zangen-Firmware laut Manifest."""
+        self.fw_neu = version or ""
+        fw = self.zst.fw if self.zst is not None else (self.link.caps.get("fw", "") if self.link is not None
+                                                       and self.link.is_zange_usb else "")
+        if fw:
+            self._show_fw(fw)
+
     def _show_zange(self, st: Optional[ZangeStatus]):
-        v = self.z_vals
+        k = self.karten
         if st is None:
-            for k in v:
-                v[k].setText("–")
-            v["verb"].setStyleSheet("font-size: 15px; font-weight: 600;")
-            theme.stufe(v["verb"], "")
+            for karte in k.values():
+                karte.set_wert("–", stufe=theme.AUS if karte is k["verb"] else "")
+            k["verb"].set_wert("–", stufe=theme.AUS, unten="keine Zange")
             self.zange_text.emit("")
             self.zange_state.emit("")
             return
         nan = lambda x: x != x
-        v["verb"].setText(("verbunden" if st.connected else "nicht erreichbar") + (f" (ID {st.id})" if st.id else ""))
-        v["verb"].setStyleSheet("font-size: 15px; font-weight: 600;")
-        theme.stufe(v["verb"], theme.GUT if st.connected else theme.FEHLER)
-        v["akku"].setText("–" if nan(st.akku_pct) else f"{st.akku_pct:.0f} %" +
-                          ("" if nan(st.akku_mv) else f" ({st.akku_mv / 1000:.2f} V)") + (" lädt" if st.vbus else ""))
-        v["rssi"].setText("–" if nan(st.rssi) else f"{st.rssi:.0f} dBm")
-        v["sync"].setText(f"ok (±{st.sync_us:.0f} µs)" if st.sync_ok else "kein Sync")
-        v["funken"].setText(f"{st.funken:,}".replace(",", "."))
-        v["blitz"].setText(("aus" if not st.blitz else ("Trigger" if st.blitz == 1 else "Funken"))
-                           + ("" if nan(st.phi) or not st.blitz else f" · φ {st.phi:.1f}°"))
-        v["log"].setText(st.log or "–")
-        v["fw"].setText(st.fw or "–")
+        kanal = f" · Kanal {self.kanal}" if self.kanal else ""
+        k["verb"].set_wert("Funk ok" if st.connected else "nicht erreichbar",
+                           stufe=theme.GUT if st.connected else theme.FEHLER, unten=f"über Basis{kanal}")
+        if nan(st.rssi):
+            k["rssi"].set_wert("–")
+        else:
+            gut = st.rssi > pruef.RSSI_WARN_DBM
+            k["rssi"].set_wert(f"{st.rssi:.0f}", "dBm", "gut" if st.rssi > -65 else "ausreichend" if gut else "schwach",
+                               balken=max(0.0, min(100.0, (st.rssi + 100) * 100 / 60)),
+                               zone="zone_ok" if gut else "zone_warn")
+        if nan(st.akku_pct):
+            k["akku"].set_wert("–")
+        else:
+            volt = "–" if nan(st.akku_mv) else f"{st.akku_mv / 1000:.2f}".replace(".", ",")
+            k["akku"].set_wert(volt, "V" if volt != "–" else "", f"≈ {st.akku_pct:.0f} %" + (", lädt" if st.vbus else ""),
+                               balken=st.akku_pct, zone="zone_ok" if st.akku_pct > pruef.AKKU_WARN_PCT else "zone_warn")
+        if st.sync_ok:
+            k["sync"].set_wert(f"{st.sync_us / 1000:.2f}".replace(".", ","), "ms", "Zeitabgleich mit Basis")
+        else:
+            k["sync"].set_wert("kein Sync", stufe=theme.WARNUNG, unten="Zeitabgleich fehlt")
+        k["funken"].set_wert(f"{st.funken:,}".replace(",", "."), "", "Zündimpulse seit dem Einschalten")
+        if not st.blitz:
+            k["blitz"].set_wert("aus", unten="Blitzmodus T2 lang")
+        else:
+            k["blitz"].set_wert("Trigger" if st.blitz == 1 else "Funken",
+                                unten="" if nan(st.phi) else f"φ {st.phi:.1f} °KW".replace(".", ","))
+        p, rest = log_belegt(st.log)
+        if p is not None:
+            k["log"].set_wert(f"{p:.0f}", "% belegt", rest, balken=p, zone="zone_ok" if p < 80 else "zone_warn")
+        else:
+            k["log"].set_wert(st.log or "–")
+        self._show_fw(st.fw)
         self.zange_text.emit(st.summary())
         self.zange_state.emit("ok" if st.connected else "weg")
+
+    def _fill_zangen(self):
+        """Tabelle Kopplung aus der letzten '#ZANGE'-Antwort."""
+        t = self.ztable
+        main = self.zst
+        rows = [z for z in self.zangen if z.id]
+        sel = self._selected_zange()
+        t.setRowCount(len(rows))
+        for r, z in enumerate(rows):
+            haupt = main is not None and z.id == main.id
+            vals = [f"Zange {z.id}", z.mac or "–", "Hauptzange (Zündkanal)" if haupt else "weitere",
+                    "–" if z.rssi != z.rssi else f"{z.rssi:.0f} dBm", "jetzt" if z.connected else "nicht erreichbar"]
+            for col, v in enumerate(vals):
+                it = t.item(r, col)
+                if it is None:
+                    it = QtWidgets.QTableWidgetItem()
+                    t.setItem(r, col, it)
+                it.setText(v)
+                it.setData(QtCore.Qt.UserRole, z.id)
+            if z.id == sel:
+                t.selectRow(r)
+
+    def _selected_zange(self) -> Optional[int]:
+        r = self.ztable.currentRow()
+        it = self.ztable.item(r, 0) if r >= 0 else None
+        return it.data(QtCore.Qt.UserRole) if it is not None else None
+
+    def unpair_selected(self, frage: bool = True) -> bool:
+        """Gewählte (sonst einzige) Zange entkoppeln."""
+        link = self.link
+        if link is None or not link.is_basis:
+            return False
+        ids = [z.id for z in self.zangen if z.id]
+        zid = self._selected_zange() or (ids[0] if len(ids) == 1 else None)
+        if zid is None:
+            self.z_msg.setText("Erst eine Zange in der Liste wählen.")
+            return False
+        if frage and QtWidgets.QMessageBox.question(self, "Entkoppeln", f"Zange {zid} wirklich entkoppeln?") != \
+                QtWidgets.QMessageBox.Yes:
+            return False
+        ok = link.pair_delete(zid)
+        self.z_msg.setText(f"Zange {zid} entkoppelt." if ok else "Basis lehnt ab.")
+        if ok:
+            self.zangen = [z for z in self.zangen if z.id != zid]
+            self._fill_zangen()
+            link.probe_caps()
+            self._link_changed()
+        return ok
+
+    # ------------------------------------------------------------------ Geräte-Einstellungen (Zange, Basis)
+    def zange_lesen(self):
+        link = self.link
+        if link is None or link.ign_source != "zange":
+            return
+        self.zform_msg.setText("Lese die Werte der Zange …")
+        self.b_zlesen.setEnabled(False)
+        self.bg.submit("zlesen", link.zange_get_all, self._zange_gelesen)
+
+    def _zange_gelesen(self, items, err):
+        self.b_zlesen.setEnabled(self.link is not None and self.link.ign_source == "zange")
+        if err is not None or not items:
+            self.zform_msg.setText(f"Lesen fehlgeschlagen: {err}" if err else
+                                   "Keine Antwort der Zange (nicht gekoppelt oder außer Reichweite?).")
+            return
+        self.zform.fuellen(items)
+        self.b_zsenden.setEnabled(True)
+        self.zform_msg.setText(f"{len(items)} von {len(ZANGE_KEYS)} Werten gelesen.")
+
+    def zange_senden(self):
+        link = self.link
+        if link is None or link.ign_source != "zange":
+            return
+        aend = self.zform.aenderungen()
+        if not aend:
+            self.zform_msg.setText("Nichts geändert.")
+            return
+        self.zform_msg.setText(f"Übertrage {len(aend)} Wert(e) …")
+        self.bg.submit("zsenden", lambda: [(k, v, link.zange_set(k, v)) for k, v in aend],
+                       lambda res, err: self._gesendet(self.zform, self.zform_msg, res, err, "übertragen"))
+
+    def basis_lesen(self):
+        link = self.link
+        if link is None or not link.has_diag:
+            return
+        self.lform_msg.setText("Lese die Werte des Messboards …")
+        self.bg.submit("llesen", link.get_settings, self._basis_gelesen)
+
+    def _basis_gelesen(self, items, err):
+        if err is not None or items is None:
+            self.lform_msg.setText(f"Lesen fehlgeschlagen: {err}")
+            return
+        self.lform.fuellen(items)
+        n = len(self.lform.gelesen)
+        self.b_lsenden.setEnabled(n > 0)
+        self.lform_msg.setText(f"{n} von {len(self.lform.felder)} Werten gelesen." if n else
+                               "Das Messboard kennt keinen dieser Werte.")
+
+    def basis_senden(self):
+        link = self.link
+        if link is None or not link.has_diag:
+            return
+        aend = self.lform.aenderungen()
+        if not aend:
+            self.lform_msg.setText("Nichts geändert.")
+            return
+        self.bg.submit("lsenden", lambda: [(k, v, link.set_setting(k, v)) for k, v in aend],
+                       lambda res, err: self._gesendet(self.lform, self.lform_msg, res, err, "übernommen (flüchtig; "
+                                                       "dauerhaft: Geräte-Einstellungen › Im Gerät speichern)"))
+
+    def _gesendet(self, form: WerteFormular, msg: QtWidgets.QLabel, res, err, text: str):
+        if err is not None:
+            msg.setText(f"Fehler: {err}")
+            return
+        fehler, n = [], 0
+        for k, v, lines in res or []:
+            if self.link is not None and self.link.ok(lines):
+                form.gelesen[k] = v
+                n += 1
+            else:
+                fehler.append(f"{k}: {lines[-1] if lines else 'keine Antwort'}")
+        msg.setText(f"{n} Wert(e) {text}." + ("  Fehler: " + "; ".join(fehler) if fehler else ""))
 
     # ------------------------------------------------------------------ Lambda
     def _show_lambda(self, st: Optional[LambdaStatus]):
@@ -509,6 +934,7 @@ class HardwarePage(QtWidgets.QScrollArea):
         self.z_msg.setText("Kopplungsfenster 30 s offen – an der Zange T1 + T2 gleichzeitig 3 s halten …")
 
     def show_pairs(self):
+        """Gekoppelte Geräte laut '#PAIR LIST' (mit Typ und Seriennummer) im Dialog, OK = entkoppeln."""
         link = self.link
         if link is None:
             return
@@ -659,6 +1085,7 @@ class HardwarePage(QtWidgets.QScrollArea):
         if err is not None or st is None:
             self.net_state.setText("keine Antwort" if err is None else str(err))
             return
+        self.kanal = st.channel
         self.net_state.setText(st.summary())
 
     def _refresh_net(self, force: bool = False):
@@ -871,12 +1298,14 @@ class HardwarePage(QtWidgets.QScrollArea):
         self._sync_caps(zangen)
         st = main_zange(zangen)
         if st is None or not st.id:
+            self.zangen = []
+            self._fill_zangen()
             return
         self.zst = st
+        self.zangen = list(zangen)
         self._show_zange(st)
+        self._fill_zangen()
         weitere = [z for z in zangen if z is not st]
-        self.z_weitere.setText("\n".join(f"ID {z.id}: " + z.summary().replace("Zange: ", "") for z in weitere))
-        self.z_weitere.setVisible(bool(weitere))
         if weitere:
             self.zange_text.emit(st.summary() + f" (+{len(weitere)} weitere)")
 

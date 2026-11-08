@@ -8,6 +8,8 @@ Ordner mit dem Build. Vor dem Flashen wird geprueft, ob der Build zum Ziel passt
 Basis-ESP landet (beides ESP32-C3). Die Adressen stammen aus dem Build (flasher_args.json), nicht aus diesem Code.
 Hier Pruefen, Befehlszeilen bauen und der Ablauf der USB-Updates (UsbFlasher Basis, ZangeFlasher Zange, BasisEspFlasher
 Basis-ESP); esptool und st-flash startet flash_page.py.
+Aeltere Messplatinen (am Ende der Datei): Arduino Mega 2560 mit avrdude ueber den Arduino-Bootloader, STM32 F446
+(Nucleo-64) durch Kopieren auf das Laufwerk NODE_F446RE (F446Flasher), ersatzweise st-flash oder dfu-util.
 """
 import base64
 import glob
@@ -165,7 +167,7 @@ def version_matches(version: str, text: str) -> bool:
 
 def image_version(image: Image) -> str:
     """Firmware-Version der gewählten Datei; leer, wenn sie sich nicht auslesen lässt (Gesamtdatei, Lambda)."""
-    if image.update is not None:              # Update-Datei: Version steht im Kopf
+    if image.update is not None or image.target in (MEGA, F446, F446_STLINK):   # Kopf bzw. Kennung in der Datei
         return image.version
     if image.target == BASIS_STLINK:          # Gesamtdatei: Version steht in der Update-Datei daneben
         try:
@@ -180,8 +182,10 @@ def image_version(image: Image) -> str:
     return hit.group(1).decode() if hit else ""
 
 
-def device_versions(link) -> dict:
-    """Versionen, die das verbundene Gerät meldet: {Ziel: 'x.y.z'}. Lambda meldet keine Build-Version."""
+def device_versions(link, info: str = "") -> dict:
+    """Versionen, die das verbundene Gerät meldet: {Ziel: 'x.y.z'}. Lambda meldet keine Build-Version.
+    Mega und F446: aus '#CAP' (fw=PST-Mega 3.1.0 …) oder der Antwort auf 'v' (info: "Version 3.1.0 vom …",
+    "PST-STM32 … 1.1.0")."""
     out = {}
 
     def put(target, text):
@@ -204,6 +208,13 @@ def device_versions(link) -> dict:
                 put(ZANGE, z.fw)
                 put(ZANGE_ESPTOOL, z.fw)
                 break
+    else:
+        text = f"{link.caps.get('fw', '')}\n{info or ''}"
+        if link.is_stm:
+            put(F446, text)
+            put(F446_STLINK, text)
+        else:
+            put(MEGA, text)
     return out
 
 
@@ -345,6 +356,10 @@ def load_lambda_image(folder: str) -> Image:
 def load_image(target: str, folder: str) -> Image:
     if not folder:
         raise FlashError("Noch kein Ordner gewählt.")
+    if target == MEGA:
+        return load_mega_image(folder)
+    if target in (F446, F446_STLINK):
+        return load_f446_image(folder)
     if target == LAMBDA_F042:
         return load_lambda_image(folder)
     if target in FILE_TARGET:
@@ -415,11 +430,14 @@ def basis_port() -> Optional[str]:
 
 def target_port(target: str) -> Optional[str]:
     return {ZANGE: zange_port, ZANGE_ESPTOOL: zange_port, BASIS_ESP: basis_port, BASIS_ESP_BRIDGE: bridge_port,
-            BASIS_STM: basis_port, LAMBDA_F042: basis_port}.get(target, lambda: None)()
+            BASIS_STM: basis_port, LAMBDA_F042: basis_port, MEGA: mega_port, F446: f446_port,
+            F446_STLINK: f446_port}.get(target, lambda: None)()
 
 
 def build_command(target: str, folder: str, port: Optional[str]) -> Tuple[Image, List[str]]:
     """Alle Pruefungen; -> (Abbild, Befehlszeile) oder FlashError mit Klartext."""
+    if target in (MEGA, F446, F446_STLINK):
+        return build_command_alt(target, folder, port)
     image = load_image(target, folder)
     if target in (BASIS_STM, ZANGE, BASIS_ESP, LAMBDA_F042):
         return image, []                  # kein externes Werkzeug: UsbFlasher, ZangeFlasher, BasisEspFlasher, LambdaFlasher
@@ -1442,3 +1460,344 @@ class LambdaFlasher:
                     raise FlashError("Basis nimmt keine Blöcke mehr an. " + self._retry_hint())
                 if line is not None:
                     off = int(parts[3])
+
+
+# ============================================================================================== ältere Messplatinen
+# Arduino Mega 2560 (PST 3.x, Sketch) und STM32 F446 (Nucleo-64 mit ST-LINK/V2-1, PST-STM32). Die Dateien liegen
+# unsigniert im Firmware-Repo (manifest.json: "mega" -> pst-mega-<v>.hex, "stm32_f446" -> pst-stm32-f446-<v>.bin).
+# Mega: avrdude über den Arduino-Bootloader (stk500v2, 115200 Bd). F446: .bin auf das Laufwerk NODE_F446RE des
+# Nucleo kopieren (der ST-Link flasht selbst), ersatzweise st-flash bzw. dfu-util an 0x08000000.
+MEGA, F446, F446_STLINK = "mega", "stm32_f446", "stm32_f446_stlink"
+MEGA_USB_IDS = {(0x2341, 0x0042), (0x2341, 0x0010), (0x2A03, 0x0042), (0x2A03, 0x0010),   # Arduino Mega 2560
+                (0x1A86, 0x7523)}                                                           # Nachbau mit CH340
+MEGA_FLASH_MAX = 256 * 1024 - 8 * 1024    # ATmega2560 ohne den 8-KB-Bootloader
+MEGA_BAUD = 115200
+F446_FLASH = 0x08000000
+F446_FLASH_MAX = 512 * 1024
+F446_SRAM = (0x20000000, 0x20020000)      # 128 KB
+NUCLEO_LABEL = "NODE_F446RE"
+NUCLEO_MERKMAL = ("MBED.HTM", "DETAILS.TXT")
+_MEGA_VERSION = re.compile(rb"Version (\d+\.\d+\.\d+)")
+_F446_VERSION = re.compile(rb"PST-STM32(?:[ _-]?F446(?:RE)?)?[^0-9\r\n]{0,24}(\d+\.\d+\.\d+)")
+_NAME_VERSION = re.compile(r"(\d+\.\d+\.\d+)")
+
+TARGETS[MEGA] = Target(MEGA, "Arduino Mega (PST 3.x)", "", MEGA_BAUD,
+                       "Messplatine mit Arduino Mega 2560 per USB anstecken. PyST trennt die Messverbindung und flasht "
+                       "mit avrdude über den Arduino-Bootloader (115200 Bd); die Einstellungen im EEPROM bleiben. "
+                       "Dauer ca. 30 s, danach startet der Mega neu und PyST verbindet sich wieder.")
+TARGETS[F446] = Target(F446, "STM32 (F446) per USB", "", 0,
+                       "Nucleo-64 (F446RE) per USB anstecken. PyST kopiert die Datei auf das Laufwerk NODE_F446RE, der "
+                       "ST-Link flasht selbst und startet neu. Ohne Laufwerk: st-flash oder dfu-util an 0x08000000. "
+                       "Dauer ca. 30 s.")
+TARGETS[F446_STLINK] = Target(F446_STLINK, "STM32 (F446) Erstflash per ST-Link/DFU", "", 0,
+                              "Für leere oder verkonfigurierte Platinen: st-flash über den ST-Link an 0x08000000, ohne "
+                              "st-flash dfu-util (BOOT0 auf 1, Reset), danach BOOT0 wieder auf 0.")
+
+
+def parse_ihex(text: str) -> Tuple[bytes, int, int]:
+    """Intel-HEX -> (Daten ab der kleinsten Adresse, kleinste Adresse, größte Adresse + 1). Prüft jede Zeile."""
+    mem = {}
+    base, ende = 0, False
+    for nr, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line:
+            continue
+        if not line.startswith(":") or len(line) < 11:
+            raise FlashError(f"Keine Intel-HEX-Datei (Zeile {nr}).")
+        try:
+            rec = bytes.fromhex(line[1:])
+        except ValueError:
+            raise FlashError(f"Intel-HEX: Zeile {nr} ist kein Hex.")
+        n, addr, typ = rec[0], int.from_bytes(rec[1:3], "big"), rec[3]
+        if len(rec) != n + 5 or sum(rec) & 0xFF:
+            raise FlashError(f"Intel-HEX: Prüfsumme oder Länge in Zeile {nr} falsch, Datei beschädigt.")
+        data = rec[4:4 + n]
+        if typ == 0:
+            for i, b in enumerate(data):
+                mem[base + addr + i] = b
+        elif typ == 1:
+            ende = True
+            break
+        elif typ == 2:
+            base = int.from_bytes(data, "big") << 4
+        elif typ == 4:
+            base = int.from_bytes(data, "big") << 16
+    if not ende:
+        raise FlashError("Intel-HEX: Endezeile fehlt, Datei unvollständig.")
+    if not mem:
+        raise FlashError("Intel-HEX: keine Daten.")
+    lo, hi = min(mem), max(mem) + 1
+    return bytes(mem.get(a, 0xFF) for a in range(lo, hi)), lo, hi
+
+
+def _version_aus(data: bytes, pattern, path: str) -> str:
+    hit = pattern.search(data)
+    if hit:
+        return hit.group(1).decode()
+    hit = _NAME_VERSION.search(os.path.basename(path))
+    return hit.group(1) if hit else ""
+
+
+def load_mega_image(folder: str) -> Image:
+    path = _find_file(folder, ("pst-mega-*.hex", "*.hex"), "Keine Mega-Datei (.hex) gefunden.")
+    if not path.lower().endswith(".hex"):
+        raise FlashError("Falsche Datei: Für den Arduino Mega gehört eine .hex-Datei (Intel-HEX).")
+    with open(path, encoding="ascii", errors="replace") as fh:
+        data, lo, hi = parse_ihex(fh.read())
+    if lo != 0 or hi > MEGA_FLASH_MAX:
+        raise FlashError(f"Falsche Firmware: Adressen {lo:#x}…{hi:#x} passen nicht zum ATmega2560 "
+                         f"(0…{MEGA_FLASH_MAX:#x} ohne Bootloader).")
+    return Image(MEGA, os.path.dirname(path), "PST-Mega", _version_aus(data, _MEGA_VERSION, path),
+                 files=[(0, path)], main=path)
+
+
+def load_f446_image(folder: str) -> Image:
+    path = _find_file(folder, ("pst-stm32-f446-*.bin", "*.bin"), "Keine F446-Datei (.bin) gefunden.")
+    with open(path, "rb") as fh:
+        data = fh.read()
+    if len(data) < 8 or len(data) > F446_FLASH_MAX:
+        raise FlashError(f"Größe {len(data)} Byte passt nicht zum STM32F446 (höchstens 512 KB).")
+    if data[0] == ESP_IMAGE_MAGIC:
+        raise FlashError("Falsche Firmware: Das ist ein ESP-Abbild, kein STM32.")
+    if data[:8] == bp.UPD_MAGIC:
+        raise FlashError("Falsche Firmware: Update-Datei der PyST-Basis, nicht für den F446.")
+    if len(data) > bp.BOOT_SIZE + bp.IMG_HDR_OFS + 4 and \
+            data[bp.BOOT_SIZE + bp.IMG_HDR_OFS:bp.BOOT_SIZE + bp.IMG_HDR_OFS + 4] == struct.pack("<I", bp.IMG_MAGIC):
+        raise FlashError("Falsche Firmware: Das ist die Gesamtdatei der PyST-Basis (STM32G473), nicht der F446.")
+    sp, reset = struct.unpack_from("<II", data)
+    if not F446_SRAM[0] < sp <= F446_SRAM[1] or not reset & 1 or not F446_FLASH < reset < F446_FLASH + len(data):
+        raise FlashError("Falsche Firmware: Die Vektortabelle passt nicht zu einem STM32F446 ab 0x08000000.")
+    return Image(F446, os.path.dirname(path), "PST-STM32", _version_aus(data, _F446_VERSION, path),
+                 files=[(F446_FLASH, path)], main=path)
+
+
+# ---------------------------------------------------------------------------------------------- Werkzeuge Mega/F446
+def _windows() -> bool:
+    return sys.platform.startswith("win")
+
+
+def avrdude_kandidaten() -> List[str]:
+    """Wo avrdude liegt: PATH, Homebrew, Arduino-IDE (1.x und 2.x), PlatformIO."""
+    home = os.path.expanduser("~")
+    exe = "avrdude.exe" if _windows() else "avrdude"
+    out = [p for p in (shutil.which("avrdude"),) if p]
+    out += ["/opt/homebrew/bin/avrdude", "/usr/local/bin/avrdude", "/usr/bin/avrdude"]
+    for root in (os.path.join(home, ".arduino15"), os.path.join(home, "Library", "Arduino15"),
+                 os.path.join(os.environ.get("LOCALAPPDATA", os.path.join(home, "AppData", "Local")), "Arduino15")):
+        out += sorted(glob.glob(os.path.join(root, "packages", "arduino", "tools", "avrdude", "*", "bin", exe)),
+                      reverse=True)
+    out += ["/Applications/Arduino.app/Contents/Java/hardware/tools/avr/bin/avrdude",
+            "/usr/share/arduino/hardware/tools/avr/bin/avrdude",
+            r"C:\Program Files (x86)\Arduino\hardware\tools\avr\bin\avrdude.exe",
+            r"C:\Program Files\Arduino\hardware\tools\avr\bin\avrdude.exe",
+            os.path.join(home, ".platformio", "packages", "tool-avrdude", exe),
+            os.path.join(home, ".platformio", "packages", "tool-avrdude", "bin", exe)]
+    return out
+
+
+def avrdude_conf(exe: str) -> str:
+    """avrdude.conf zum gefundenen avrdude (Arduino: ../etc, PlatformIO: daneben); leer = eingebaute nehmen."""
+    d = os.path.dirname(exe)
+    for p in (os.path.join(d, "avrdude.conf"), os.path.join(d, "..", "etc", "avrdude.conf"),
+              os.path.join(d, "..", "avrdude.conf")):
+        if os.path.isfile(p):
+            return os.path.normpath(p)
+    return ""
+
+
+def find_avrdude() -> Optional[List[str]]:
+    """-> [avrdude] bzw. [avrdude, -C, conf] oder None."""
+    for exe in avrdude_kandidaten():
+        if exe and os.path.isfile(exe):
+            conf = avrdude_conf(exe)
+            return [exe, "-C", conf] if conf else [exe]
+    return None
+
+
+def avrdude_command(tool: List[str], port: str, image: Image) -> List[str]:
+    """Mega 2560 mit Arduino-Bootloader (stk500v2): -c wiring -p m2560 -b 115200 -D (der Bootloader löscht selbst)."""
+    return tool + ["-p", "m2560", "-c", "wiring", "-P", port, "-b", str(MEGA_BAUD), "-D",
+                   "-U", f"flash:w:{image.main}:i"]
+
+
+def find_dfu_util() -> Optional[List[str]]:
+    exe = shutil.which("dfu-util") or next((p for p in ("/opt/homebrew/bin/dfu-util", "/usr/local/bin/dfu-util")
+                                            if os.path.isfile(p)), None)
+    return [exe] if exe else None
+
+
+def f446_stflash_command(tool: List[str], image: Image) -> List[str]:
+    addr, path = image.files[0]
+    return tool + ["--reset", "write", path, hex(addr)]
+
+
+def dfu_command(tool: List[str], image: Image) -> List[str]:
+    addr, path = image.files[0]
+    return tool + ["-a", "0", "-s", f"{addr:#010x}:leave", "-D", path]
+
+
+def mega_ports() -> List[str]:
+    if list_ports is None:
+        return []
+    return sorted(p.device for p in list_ports.comports() if (p.vid, p.pid) in MEGA_USB_IDS)
+
+
+def f446_ports() -> List[str]:
+    """Virtueller COM-Port des ST-LINK/V2-1 auf dem Nucleo."""
+    from .link import PST_USB_IDS
+    if list_ports is None:
+        return []
+    return sorted(p.device for p in list_ports.comports() if (p.vid, p.pid) in PST_USB_IDS)
+
+
+def mega_port() -> Optional[str]:
+    ports = mega_ports()
+    return ports[0] if len(ports) == 1 else None
+
+
+def f446_port() -> Optional[str]:
+    ports = f446_ports()
+    return ports[0] if len(ports) == 1 else None
+
+
+def _windows_label(root: str) -> str:
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(261)
+        if ctypes.windll.kernel32.GetVolumeInformationW(ctypes.c_wchar_p(root), buf, 261, None, None, None, None, 0):
+            return buf.value
+    except (AttributeError, OSError, ValueError):
+        pass
+    return ""
+
+
+def ist_nucleo(pfad: str) -> bool:
+    """Massenspeicher des ST-Link: MBED.HTM oder DETAILS.TXT im Wurzelverzeichnis."""
+    try:
+        namen = {n.upper() for n in os.listdir(pfad)}
+    except OSError:
+        return False
+    return any(m in namen for m in NUCLEO_MERKMAL)
+
+
+def nucleo_laufwerke(muster: Optional[List[str]] = None) -> List[str]:
+    """Laufwerke NODE_F446RE: Linux /media/<user>/…, /run/media/<user>/…, macOS /Volumes/…, Windows je Buchstabe
+    mit diesem Namen; immer nur, wenn MBED.HTM oder DETAILS.TXT darauf liegt."""
+    if muster is None and _windows():
+        out = []
+        for buchstabe in "DEFGHIJKLMNOPQRSTUVWXYZ":
+            root = f"{buchstabe}:\\"
+            if os.path.isdir(root) and ist_nucleo(root) and _windows_label(root).upper().startswith(NUCLEO_LABEL):
+                out.append(root)
+        return out
+    if muster is None:
+        muster = [f"/media/*/{NUCLEO_LABEL}*", f"/run/media/*/{NUCLEO_LABEL}*", f"/media/{NUCLEO_LABEL}*",
+                  f"/mnt/{NUCLEO_LABEL}*", f"/Volumes/{NUCLEO_LABEL}*"]
+    out = []
+    for m in muster:
+        out += [p for p in sorted(glob.glob(m)) if os.path.isdir(p) and ist_nucleo(p)]
+    return out
+
+
+def f446_weg() -> str:
+    """Wie der F446 geflasht wird: laufwerk, stflash, dfu oder leer (nichts gefunden)."""
+    if nucleo_laufwerke():
+        return "laufwerk"
+    if find_stflash():
+        return "stflash"
+    if find_dfu_util():
+        return "dfu"
+    return ""
+
+
+def build_command_alt(target: str, folder: str, port: Optional[str]) -> Tuple[Image, List[str]]:
+    """Mega und F446: Prüfen und Befehlszeile; F446 über das Laufwerk -> [] (F446Flasher kopiert)."""
+    if target == MEGA:
+        image = load_mega_image(folder)
+        tool = find_avrdude()
+        if tool is None:
+            raise FlashError("avrdude nicht gefunden (Arduino-IDE oder PlatformIO installieren; Linux: apt install "
+                             "avrdude, Mac: brew install avrdude).")
+        if not port:
+            raise FlashError("Arduino Mega nicht am USB gefunden (2341:0042, 2A03:0042 oder CH340 1A86:7523).")
+        return image, avrdude_command(tool, port, image)
+    image = load_f446_image(folder)
+    weg = "" if target == F446_STLINK else ("laufwerk" if nucleo_laufwerke() else "")
+    if weg == "laufwerk":
+        return image, []
+    tool = find_stflash()
+    if tool:
+        return image, f446_stflash_command(tool, image)
+    tool = find_dfu_util()
+    if tool:
+        return image, dfu_command(tool, image)
+    raise FlashError(f"Weder das Laufwerk {NUCLEO_LABEL} noch st-flash oder dfu-util gefunden. Nucleo per USB "
+                     "anstecken (ST-Link-Seite) oder st-flash installieren (Mac: brew install stlink, Linux: apt "
+                     "install stlink-tools).")
+
+
+class F446Flasher:
+    """F446 über das Massenspeicher-Laufwerk des ST-Link: .bin hinkopieren, warten, bis der ST-Link geflasht hat
+    (Laufwerk verschwindet und kommt wieder, FAIL.TXT = Fehler), dann auf den COM-Port warten. run() blockiert."""
+    WAIT_GONE_S = 8.0
+    WAIT_BACK_S = 30.0
+    WAIT_PORT_S = 15.0
+    BLOCK = 16384
+
+    def __init__(self, image: Image, laufwerke: Callable[[], List[str]] = nucleo_laufwerke,
+                 ports: Callable[[], List[str]] = f446_ports, log: Callable[[str], None] = lambda _t: None,
+                 progress: Callable[[int, int], None] = lambda _d, _n: None,
+                 cancelled: Callable[[], bool] = lambda: False, sleep: Callable[[float], None] = time.sleep):
+        self.image = image
+        self.laufwerke = laufwerke
+        self.ports = ports
+        self.log = log
+        self.progress = progress
+        self.cancelled = cancelled
+        self.sleep = sleep
+
+    def _warte(self, cond: Callable[[], bool], sekunden: float) -> bool:
+        end = time.time() + sekunden
+        while time.time() < end:
+            if cond():
+                return True
+            self.sleep(0.2)
+        return cond()
+
+    def run(self) -> str:
+        drives = self.laufwerke()
+        if not drives:
+            raise FlashError(f"Laufwerk {NUCLEO_LABEL} nicht gefunden: Nucleo per USB (ST-Link-Seite) anstecken.")
+        if len(drives) > 1:
+            raise FlashError("Mehrere Nucleo-Laufwerke gefunden: nur einen F446 anstecken.")
+        drive = drives[0]
+        src = self.image.main
+        dest = os.path.join(drive, os.path.basename(src))
+        size = os.path.getsize(src)
+        self.log(f"Kopiere {os.path.basename(src)} ({size} Byte) nach {drive} …")
+        done = 0
+        with open(src, "rb") as fin, open(dest, "wb") as fout:
+            while True:
+                if self.cancelled():
+                    raise FlashCancelled("Abgebrochen, bevor die Datei vollständig war: Der ST-Link flasht nichts.")
+                block = fin.read(self.BLOCK)
+                if not block:
+                    break
+                fout.write(block)
+                done += len(block)
+                self.progress(done, size)
+            fout.flush()
+            os.fsync(fout.fileno())
+        self.log("Datei übergeben, der ST-Link flasht …")
+        # Der ST-Link meldet das Laufwerk zum Flashen ab und danach wieder an
+        self._warte(lambda: drive not in self.laufwerke(), self.WAIT_GONE_S)
+        if not self._warte(lambda: drive in self.laufwerke(), self.WAIT_BACK_S):
+            raise FlashError(f"Das Laufwerk {NUCLEO_LABEL} kam nicht wieder. USB ab- und wieder anstecken.")
+        fail = os.path.join(drive, "FAIL.TXT")
+        if os.path.isfile(fail):
+            with open(fail, encoding="ascii", errors="replace") as fh:
+                raise FlashError(f"Der ST-Link meldet einen Fehler: {fh.read().strip()}")
+        if not self._warte(lambda: bool(self.ports()), self.WAIT_PORT_S):
+            self.log("COM-Port des Nucleo noch nicht da – PyST verbindet sich, sobald er erscheint.")
+        self.log(f"F446 geflasht ({self.image.version or 'Version unbekannt'}).")
+        return self.image.version
