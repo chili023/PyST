@@ -74,6 +74,7 @@ class Frame:
 SIM_VARIANTS = [
     (SIM_PORT, "Simulator: synthetischer Motor (PST-Diag 1)"),
     (SIM_PORT + ":stoerung", "Simulator: synthetischer Motor mit Störungen (Zündung/Rolle, PST-Diag 1)"),
+    (SIM_PORT + ":ausrollen", "Simulator: synthetischer Motor, nach dem Lauf Kupplung gezogen (Ausrollversuch)"),
     (SIM_PORT + ":mega", "Simulator: Arduino-Mega-Sketch 3.1.0 (PST-Diag 1)"),
     (SIM_PORT + ":mega300", "Simulator: alter Arduino-Mega-Sketch 3.0.0 (ohne Diagnose)"),
     (SIM_PORT + ":mega300:stoerung", "Simulator: alter Mega 3.0.0 mit Störungen (ohne Diagnose)"),

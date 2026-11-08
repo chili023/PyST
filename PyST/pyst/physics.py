@@ -21,6 +21,10 @@ Aus den Blockdiagrammen rekonstruiert (Haupt-VI, Messschleife):
           = Beginn des Beschleunigens nach dem Halten
 
 Erweiterung PyST: optional n_stop – der Lauf endet auch, sobald n >= n_stop.
+Erweiterung PyST: Verlustmoment optional mit quadratischem Anteil m2 (Vorgabe 0 = linear wie LabVIEW),
+  Mv = M0 + n (M1 - M0)/n1 + m2 (n/1000) ((n - n1)/1000)   -> Mv(0) = M0 und Mv(n1) = M1 bleiben erhalten.
+  Radleistung = Anteil aus der Rollenbeschleunigung (Ka J/i^2 a), Motorleistung = Radleistung + Verlust (Mv/i).
+  Die Verluste kommen aus dem Ausrollversuch (ausrollen.py) oder sind von Hand eingetragen (verlust_quelle).
 """
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -36,10 +40,14 @@ def din70020(temp_c: float, p_mbar: float) -> float:
     return (1013.0 / p_mbar) * ((temp_c + 273.15) / 293.15) ** 0.5
 
 
-def loss_torque(n_roll: np.ndarray, m0: float, m1: float, n1: float) -> np.ndarray:
-    """Verlustmoment der Rolle, linear: Mv = M0 + n * (M1 - M0) / n1."""
+def loss_torque(n_roll: np.ndarray, m0: float, m1: float, n1: float, m2: float = 0.0) -> np.ndarray:
+    """Verlustmoment an der Rolle [Nm]: Mv = M0 + n * (M1 - M0) / n1 (+ m2 * n/1000 * (n - n1)/1000).
+    m2 = 0: linear wie LabVIEW. Der quadratische Anteil verschwindet bei n = 0 und n = n1."""
     n1 = max(n1, 1.0)
-    return m0 + n_roll * (m1 - m0) / n1
+    mv = m0 + n_roll * (m1 - m0) / n1
+    if m2:
+        mv = mv + m2 * (n_roll / 1000.0) * ((n_roll - n1) / 1000.0)
+    return mv
 
 
 def smoothing_coeffs(half_width: int, triangle: bool) -> np.ndarray:
@@ -108,6 +116,8 @@ class DynoParams:
     m0: float = 0.0               # Verlustmoment bei n=0 [Nm]
     m1: float = 0.0               # Verlustmoment bei n1 [Nm]
     n1: float = 1.0               # Rollendrehzahl zu M1 [1/min]
+    m2: float = 0.0               # quadratischer Anteil des Verlustmoments [Nm/(1000/min)^2], 0 = linear
+    verlust_quelle: str = ""      # woher M0/M1/m2 kommen: "" = von Hand, sonst z.B. "Ausrollversuch 08.11.2026 14:30"
     temp_c: float = 20.0
     p_mbar: float = 1013.0
 
@@ -139,15 +149,34 @@ class RunResult:
     stop: int = 0                             # Ende des Kurvenbereichs (exklusiv)
     ma_used: int = 0                          # tatsaechlich verwendete Filter [Messpunkte]
     dq_used: int = 0
+    # Rad- und Motorleistung getrennt: ps/nm oben = Motor (Rad + Verlust), *_rad = nur Rollenbeschleunigung
+    ps_rad: Optional[np.ndarray] = None
+    nm_rad: Optional[np.ndarray] = None
+    full_ps_rad: Optional[np.ndarray] = None
+    p_rad_max: float = 0.0
+    n_prad_max: float = 0.0
+    verluste: bool = False                    # Verlustmoment eingerechnet (M0/M1/m2 nicht alle 0)
+    verlust_quelle: str = ""                  # Herkunft der Verluste (DynoParams.verlust_quelle)
 
     @property
     def segment(self) -> slice:
         return slice(self.start_index, self.stop)
 
+    def verlust_text(self) -> str:
+        """Herkunft der Verluste fuer Ergebnis und Bericht ("" ohne Verluste)."""
+        if not self.verluste:
+            return ""
+        return "Verluste: " + (self.verlust_quelle or "von Hand eingetragen (M0/M1)")
+
     def summary(self) -> str:
-        return (f"{self.p_max:.1f} PS bei {self.n_pmax:.0f} 1/min   |   "
-                f"{self.m_max:.1f} Nm bei {self.n_mmax:.0f} 1/min   |   vmax {self.v_max:.0f} km/h\n"
-                f"DIN 70020 k = {self.ka:.3f}   |   {self.distance_m:.0f} m")
+        if self.verluste:
+            kopf = (f"Motor {self.p_max:.1f} PS bei {self.n_pmax:.0f} 1/min   |   "
+                    f"Rad {self.p_rad_max:.1f} PS bei {self.n_prad_max:.0f} 1/min   |   ")
+        else:
+            kopf = f"{self.p_max:.1f} PS bei {self.n_pmax:.0f} 1/min   |   "
+        return (kopf + f"{self.m_max:.1f} Nm bei {self.n_mmax:.0f} 1/min   |   vmax {self.v_max:.0f} km/h\n"
+                f"DIN 70020 k = {self.ka:.3f}   |   {self.distance_m:.0f} m"
+                + (f"   |   {self.verlust_text()}" if self.verluste else ""))
 
 
 def sample_rate(dt) -> float:
@@ -240,10 +269,12 @@ def evaluate(n_roll_raw, dt_raw, p: DynoParams, n_meas_raw=None, afr_raw=None, e
     k = np.minimum(np.minimum(dq, idx), N - 1 - idx)
     with np.errstate(divide="ignore", invalid="ignore"):
         a = (w[idx + k] - w[idx - k]) / (k * 2.0 * dt_f)
-    mv = loss_torque(n_roll_f, p.m0, p.m1, p.n1)
-    m = ka * p.inertia / i ** 2 * a + mv / i
+    mv = loss_torque(n_roll_f, p.m0, p.m1, p.n1, p.m2)
+    m_rad = ka * p.inertia / i ** 2 * a
+    m = m_rad + mv / i
     with np.errstate(invalid="ignore"):
         ps = PS_PER_W * w * m
+        ps_rad = PS_PER_W * w * m_rad
 
     # Laufende wie LabVIEW (erste Verzoegerung oberhalb n_min) ...
     with np.errstate(invalid="ignore"):
@@ -279,13 +310,19 @@ def evaluate(n_roll_raw, dt_raw, p: DynoParams, n_meas_raw=None, afr_raw=None, e
     res = RunResult(n=n_e[sl], ps=ps[sl], nm=m[sl], n_meas=n_meas_f[sl], afr=afr_raw[sl], egt=egt_raw[sl],
                     ka=ka, end_index=e if reason != "noch kein Laufende" else -1, start_index=start,
                     end_reason=reason, warnings=warnings, full_n=n_e, full_ps=ps, full_nm=m, full_accel=a,
-                    stop=e, ma_used=int(p.ma), dq_used=int(p.dq))
+                    stop=e, ma_used=int(p.ma), dq_used=int(p.dq),
+                    ps_rad=ps_rad[sl], nm_rad=m_rad[sl], full_ps_rad=ps_rad,
+                    verluste=bool(p.m0 or p.m1 or p.m2),
+                    verlust_quelle=p.verlust_quelle or "")
     finite = np.isfinite(res.ps)
     if finite.any():
         jp = int(np.nanargmax(np.where(finite, res.ps, -np.inf)))
         jm = int(np.nanargmax(np.where(np.isfinite(res.nm), res.nm, -np.inf)))
         res.p_max, res.n_pmax = float(res.ps[jp]), float(res.n[jp])
         res.m_max, res.n_mmax = float(res.nm[jm]), float(res.n[jm])
+        fr = np.isfinite(res.ps_rad)
+        jr = int(np.nanargmax(np.where(fr, res.ps_rad, -np.inf))) if fr.any() else jp
+        res.p_rad_max, res.n_prad_max = float(res.ps_rad[jr]), float(res.n[jr])
         res.v_max = float(np.max(res.n) / i * p.roll_circ * 0.06)
     res.distance_m = float(np.sum(n_roll_raw / 60.0 * p.roll_circ * dt_raw))
     return res

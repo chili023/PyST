@@ -322,7 +322,8 @@ class Gui(unittest.TestCase):
     def test_reiterstruktur(self):
         w = self.w
         top = [w.tabs.tabText(i) for i in range(w.tabs.count())]
-        self.assertEqual(top, ["Messen", "Fahrzeuge && Setups", "Auswertung", "Oszi / Dauermessung", "ECU", "Einstellungen"])
+        self.assertEqual(top, ["Messen", "Fahrzeuge && Setups", "Auswertung", "Oszi / Dauermessung", "ECU",
+                               "Kalibrierung", "Einstellungen"])
         sub = [w.settings_tabs.tabText(i) for i in range(w.settings_tabs.count())]
         self.assertEqual(sub, ["Allgemein", "Verbindung", "Zange · Netz · Steckdosen", "Tasten", "Prüfen", "Firmware"])
         s = w.page_settings
@@ -387,11 +388,11 @@ class Gui(unittest.TestCase):
         w.show_page(w.page_tasten)
         w.save_window_layout()
         f = w.settings["fenster"]
-        self.assertEqual(f["reiter_neu"], [5, 3])
+        self.assertEqual(f["reiter_neu"], [6, 3])
         w.show_page(w.page_oszi)
         w.settings_tabs.setCurrentIndex(0)
         w.restore_window_layout()
-        self.assertEqual((w.tabs.currentIndex(), w.settings_tabs.currentWidget()), (5, w.page_tasten))
+        self.assertEqual((w.tabs.currentIndex(), w.settings_tabs.currentWidget()), (6, w.page_tasten))
         # gespeichert von der Version ohne Unterreiter
         for alt, page in ((6, w.page_flash), (4, w.page_hw), (5, w.page_pruef), (8, w.page_settings)):
             w.settings["fenster"] = {"reiter": alt}

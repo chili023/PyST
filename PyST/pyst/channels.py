@@ -225,6 +225,10 @@ def run_channels(run: Dict, res: Optional[physics.RunResult], p: physics.DynoPar
             ch["Leistung"] = Channel(res.full_ps, "PS", "Auswertung")
             ch["Drehmoment"] = Channel(res.full_nm, "Nm", "Auswertung")
             ch["Beschleunigung Motor"] = Channel(res.full_accel * 60.0 / (2 * np.pi), "1/min/s", "Auswertung")
+            if res.verluste and res.full_ps_rad is not None:
+                # Motor = Rad + Verluste (Ausrollversuch oder von Hand): Anteile getrennt
+                ch["Leistung Rad"] = Channel(res.full_ps_rad, "PS", "Auswertung")
+                ch["Verlustleistung"] = Channel(res.full_ps - res.full_ps_rad, "PS", "Auswertung")
     afr = np.asarray(run["afr"], float)
     ch["Lambda"] = Channel(lambda_from_afr(afr), "λ", "Gemisch")
     ch["AFR"] = Channel(np.where(afr > 0.5, afr, np.nan), "AFR", "Gemisch")
