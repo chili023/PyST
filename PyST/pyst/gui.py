@@ -8,6 +8,7 @@ Einstellungen:  Rolle/Lauf | Verbindung | Zange | Lambda | ECU | Firmware | WiFi
   Zange: Zange (Zustand, Kopplung, Log) | Tasten;  Lambda: Lambda-Heizung;  ECU: rusEFI (frueher Hauptreiter ECU)
   WiFi: Netzwerk der Basis, Steckdosen
 Tag/Nacht: theme.py (Menue Ansicht › Darstellung, Umschalter in der Statusleiste), Statusleiste: statusleiste.py
+Messen: Aufbau und Messlogik in messen_page.py (MessenMixin), Einstellung messen_page.START_NACHFRAGE
 """
 import json
 import logging
@@ -47,12 +48,11 @@ from .runner import ABORTED, ACTIVE, COAST, DONE, IDLE, RUN, WAIT, RunController
 from .rusefi_page import RusefiPage
 from .tasten_page import TastenBand, TastenPage
 from .viewer import LogViewer
-from .widgets import Gauge
+from .messen_page import GEAENDERT, LIVE_KEY, START_NACHFRAGE, MessenMixin  # noqa: F401
 
 log = logging.getLogger("pyst.gui")
 
 SETTINGS_FILE = os.path.join(base_dir(), "einstellungen.json")
-LIVE_KEY = "live"
 FILTER_S_DEFAULT = (1.75, 0.75)       # = LabVIEW 35/15 bei 20 Hz
 # Gespeicherter Reiterstand: heute der Schluessel der Seite ("seite", siehe MainWindow.seiten).
 # Aeltere Fenster: "reiter" (Index vor den Unterreitern) -> (Reiter, Unterreiter) ...
@@ -525,7 +525,7 @@ class DatabasePage(QtWidgets.QWidget):
 
 
 # =============================================================================================== Hauptfenster
-class MainWindow(QtWidgets.QMainWindow):
+class MainWindow(MessenMixin, QtWidgets.QMainWindow):
     def __init__(self, db: Optional[Database] = None):
         super().__init__()
         self.setWindowTitle(f"PyST {__version__}")
@@ -632,183 +632,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.fault_timer.timeout.connect(self._fault_backfill)
         self.fault_timer.start(80)
 
-    # ------------------------------------------------------------------ Aufbau Messen
-    def _build_measure(self) -> QtWidgets.QWidget:
-        w = QtWidgets.QWidget()
-        lay = QtWidgets.QVBoxLayout(w)
-        lay.setContentsMargins(6, 4, 6, 4)
-        lay.setSpacing(4)
-
-        top = QtWidgets.QHBoxLayout()
-        top.setSpacing(6)
-        self.status = QtWidgets.QLabel()
-        self.status.setAlignment(QtCore.Qt.AlignCenter)
-        self.status.setFixedHeight(34)
-        top.addWidget(self.status, 1)
-        self.connect_main = QtWidgets.QPushButton("Verbinden")
-        self.connect_main.setFixedHeight(34)
-        self.connect_main.setMinimumWidth(100)
-        top.addWidget(self.connect_main)
-        self.start_btn = QtWidgets.QPushButton("START  (F1)")
-        self.abort_btn = QtWidgets.QPushButton("Abbrechen  (Esc)")
-        for b in (self.start_btn, self.abort_btn):
-            b.setFixedHeight(34)
-            b.setMinimumWidth(130)
-        self.start_btn.setStyleSheet("font-size: 16px; font-weight: 700;")
-        top.addWidget(self.start_btn)
-        top.addWidget(self.abort_btn)
-        lay.addLayout(top)
-
-        info = QtWidgets.QHBoxLayout()
-        self.vehicle_combo = QtWidgets.QComboBox()
-        self.setup_combo = QtWidgets.QComboBox()
-        self.vehicle_combo.setMinimumWidth(220)
-        self.setup_combo.setMinimumWidth(220)
-        self.run_note = QtWidgets.QLineEdit()
-        self.run_note.setPlaceholderText("Notiz zu diesem Lauf (z.B. Änderung gegenüber vorher)")
-        self.autosave = QtWidgets.QCheckBox("Auto-Speichern")
-        self.autosave.setChecked(self.settings.get("autosave", True))
-        for label, wdg in (("Fahrzeug", self.vehicle_combo), ("Setup", self.setup_combo)):
-            info.addWidget(QtWidgets.QLabel(label))
-            info.addWidget(wdg)
-        info.addWidget(self.run_note, 1)
-        info.addWidget(self.autosave)
-        lay.addLayout(info)
-
-        gauges = QtWidgets.QHBoxLayout()
-        self.g_pmax = Gauge("Pmax", "PS")
-        self.g_mmax = Gauge("Mmax", "Nm")
-        for g, tok in ((self.g_pmax, "p_color"), (self.g_mmax, "m_color")):
-            theme.bei_wechsel(g, lambda _t, g=g, tok=tok: g.value.setStyleSheet(
-                f"font-size: 24px; font-weight: 700; color: {theme.farbe(tok)};"))
-        self.g_n = Gauge("Motor (Rolle × i)", "1/min")
-        self.g_ign = Gauge("Motor (Zündung)", "1/min")
-        self.g_v = Gauge("Rolle", "km/h")
-        self.g_egt1 = Gauge("EGT 1", "°C")
-        self.g_egt2 = Gauge("EGT 2", "°C")
-        self.g_lam = Gauge("Lambda", "λ")
-        self.g_ratio = Gauge("Übersetzung Zündung/Rolle", "")
-        self.g_ratio_ecu = Gauge("Übersetzung ECU/Rolle", "")
-        self.g_rate = Gauge("Messfrequenz", "Hz")
-        self.g_lost = Gauge("COM verloren", "")
-        # Auswaehlbare Anzeigen: Schluessel -> (Name im Menue, Widget)
-        self.gauges = {
-            "pmax": ("Pmax / Leistung am Cursor", self.g_pmax), "mmax": ("Mmax / Drehmoment am Cursor", self.g_mmax),
-            "n": ("Motor (Rolle × i)", self.g_n), "ign": ("Motor (Zündung)", self.g_ign), "v": ("Rolle km/h", self.g_v),
-            "egt1": ("EGT 1", self.g_egt1), "egt2": ("EGT 2", self.g_egt2), "lam": ("Lambda / AFR", self.g_lam),
-            "ratio": ("Übersetzung Zündung/Rolle", self.g_ratio), "ratio_ecu": ("Übersetzung ECU/Rolle", self.g_ratio_ecu),
-            "rate": ("Messfrequenz", self.g_rate), "lost": ("COM verloren", self.g_lost),
-        }
-        hidden = set(self.settings.get("gauges_hidden", ["egt2"]))
-        # neu hinzugekommene Anzeigen: nur "Übersetzung ECU/Rolle" gleich zeigen, andere erst auf Wunsch
-        known = self.settings.get("gauges_known")
-        if known is not None:
-            hidden |= {k for k in self.gauges if k not in known and k != "ratio_ecu"}
-        else:
-            hidden.add("ratio")
-        self.settings["gauges_known"] = list(self.gauges)
-        self.settings["gauges_hidden"] = sorted(hidden)
-        for key, (_name, g) in self.gauges.items():
-            gauges.addWidget(g)
-            g.setVisible(key not in hidden)
-        self.gauge_row = gauges
-        self.ecu_gauges: Dict[str, Gauge] = {}        # rusEFI-Kanal -> Anzeige (hinter den festen Anzeigen)
-        self.gauge_btn = QtWidgets.QToolButton()
-        self.gauge_btn.setText("Anzeigen …")
-        self.gauge_btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
-        self.gauge_menu = QtWidgets.QMenu(self.gauge_btn)
-        self.gauge_menu.aboutToShow.connect(self._fill_gauge_menu)
-        self.gauge_btn.setMenu(self.gauge_menu)
-        gauges.addWidget(self.gauge_btn)
-        lay.addLayout(gauges)
-
-        split = QtWidgets.QSplitter()
-        self.measure_split = split
-        left = QtWidgets.QWidget()
-        ll = QtWidgets.QVBoxLayout(left)
-        ll.setContentsMargins(0, 0, 0, 0)
-        self.plot = DynoPlot()
-        self.plot.set_limits(self.settings.get("plot_limits", {}))
-        self.plot.limits_changed.connect(self._limits_changed)
-        ll.addWidget(self.plot, 1)
-        self.cursor_table = QtWidgets.QTableWidget(0, 8)
-        self.cursor_table.setHorizontalHeaderLabels(["", "Lauf", "n [1/min]", "PS", "Nm", "λ", "EGT 1", "EGT 2"])
-        self.cursor_table.verticalHeader().setVisible(False)
-        self.cursor_table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
-        self.cursor_table.setColumnWidth(0, 18)
-        self.cursor_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        compact_table(self.cursor_table, row_h=24)
-        self.cursor_table.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        self._fit_cursor_table()
-        self.cursor_toggle = QtWidgets.QToolButton()
-        self.cursor_toggle.setAutoRaise(True)
-        self.cursor_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-        self.cursor_toggle.setCheckable(True)
-        theme.rolle(self.cursor_toggle, "klein")
-        self.cursor_toggle.setFixedHeight(18)
-        self.cursor_toggle.toggled.connect(self._show_cursor_table)
-        self.cursor_cols_btn = QtWidgets.QToolButton()
-        self.cursor_cols_btn.setText("Spalten …")
-        self.cursor_cols_btn.setAutoRaise(True)
-        theme.rolle(self.cursor_cols_btn, "klein")
-        self.cursor_cols_btn.setFixedHeight(18)
-        self.cursor_cols_btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
-        self.cursor_menu = QtWidgets.QMenu(self.cursor_cols_btn)
-        self.cursor_menu.aboutToShow.connect(self._fill_cursor_menu)
-        self.cursor_cols_btn.setMenu(self.cursor_menu)
-        bar = QtWidgets.QHBoxLayout()
-        bar.setContentsMargins(0, 0, 0, 0)
-        bar.setSpacing(8)
-        bar.addWidget(self.cursor_toggle)
-        bar.addWidget(self.cursor_cols_btn)
-        bar.addStretch(1)
-        ll.addLayout(bar)
-        ll.addWidget(self.cursor_table)
-        self.cursor_toggle.setChecked(self.settings.get("cursor_table", True))
-        self._show_cursor_table(self.cursor_toggle.isChecked())
-        self.result_label = AutoHideLabel("")
-        self.result_label.setStyleSheet("font-size: 13px;")
-        self.result_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        self.result_label.setText("")
-        ll.addWidget(self.result_label)
-        split.addWidget(left)
-
-        right = QtWidgets.QWidget()
-        rl = QtWidgets.QVBoxLayout(right)
-        rl.setContentsMargins(0, 0, 0, 0)
-        hb = QtWidgets.QHBoxLayout()
-        hb.addWidget(QtWidgets.QLabel("<b>Läufe</b>"))
-        self.run_filter = QtWidgets.QComboBox()
-        self.run_filter.addItems(["alle", "aktuelles Fahrzeug", "aktuelles Setup"])
-        self.run_filter.setCurrentIndex(self.settings.get("run_filter", 0))
-        hb.addWidget(self.run_filter, 1)
-        rl.addLayout(hb)
-        self.run_tree = QtWidgets.QTreeWidget()
-        self.run_tree.setHeaderLabels(["Lauf", "PS", "bei", "Nm", "Fehler", "Hz", "Notiz"])
-        self.run_tree.setRootIsDecorated(False)
-        self.run_tree.setAlternatingRowColors(True)
-        self.run_tree.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
-        self.run_tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-        self.run_tree.header().setStretchLastSection(True)
-        self.run_tree.setUniformRowHeights(True)
-        self.run_tree.setStyleSheet("QTreeView::item { padding: 0px; }")
-        rl.addWidget(self.run_tree, 1)
-        grid = QtWidgets.QGridLayout()
-        self.b_none = QtWidgets.QPushButton("Alle ausblenden")
-        self.b_view = QtWidgets.QPushButton("In Auswertung")
-        self.b_del = QtWidgets.QPushButton("Löschen")
-        self.b_ratio = QtWidgets.QPushButton("Übersetzung einmessen …")
-        self.b_ratio.setStyleSheet("font-weight: 600;")
-        for i, b in enumerate((self.b_none, self.b_view, self.b_del, self.b_ratio)):
-            grid.addWidget(b, i // 2, i % 2)
-        rl.addLayout(grid)
-        right.setMinimumWidth(300)
-        split.addWidget(right)
-        split.setStretchFactor(0, 1)
-        lay.addWidget(split, 1)
-        self._set_status("Nicht verbunden – „Verbinden“ drücken", farben.BALKEN_NORMAL)
-        return w
-
+    # ------------------------------------------------------------------ Aufbau (Messen: messen_page.py)
     def _build_menu(self):
         v = self.menuBar().addMenu("Ansicht")
         size = v.addMenu("Größe (wirkt nach Neustart)")
@@ -893,21 +717,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._lambda_mode_changed(s.lambda_radio.isChecked())
 
     # ------------------------------------------------------------------ Hilfen
-    def _set_status(self, text: str, color: str):
-        """Zustandszeile Messen. color: Stufe (ok/warn/err/info, "" = neutral) oder eine alte feste Farbe;
-        die Flaeche kommt aus dem Thema."""
-        self._status_last = (text, color)
-        self.status.setText(text)
-        stufe = farben.stufe_von(color)
-        if stufe in (theme.GUT, theme.WARNUNG, theme.FEHLER):
-            bg, fg, _sym = theme.status_farben(stufe)
-        elif stufe == "info":
-            bg, fg = theme.farbe("accent"), theme.farbe("accent_text")
-        else:
-            bg, fg = theme.farbe("panel"), theme.farbe("text")
-        self.status.setStyleSheet(f"background: {bg}; color: {fg}; font-size: 18px; font-weight: 700; "
-                                  f"border: 1px solid {theme.farbe('border')}; border-radius: 6px; padding: 0px;")
-
     def _refresh_ports(self):
         combo = self.page_settings.port_combo
         current = combo.currentText() or self.settings.get("port", "")
@@ -949,13 +758,6 @@ class MainWindow(QtWidgets.QMainWindow):
         os.environ.pop("QT_SCALE_FACTOR", None)
         os.execv(sys.executable, [sys.executable, "-m", "pyst"] + [a for a in sys.argv[1:]])
 
-    def _toggle_gauge(self, key: str, on: bool):
-        self.gauges[key][1].setVisible(on)
-        hidden = set(self.settings.get("gauges_hidden", ["egt2"]))
-        (hidden.discard if on else hidden.add)(key)
-        self.settings["gauges_hidden"] = sorted(hidden)
-        save_settings(self.settings)
-
     # ---- rusEFI-Kanaele als Anzeige und im Diagramm
     def _ecu_available(self):
         """[(Kanal, Bezeichnung, Einheit)] der aufgezeichneten rusEFI-Kanaele."""
@@ -991,23 +793,6 @@ class MainWindow(QtWidgets.QMainWindow):
         n = sum(cb.isChecked() for cb in boxes)
         for cb in boxes:
             cb.setEnabled(cb.isChecked() or n < n_max)
-
-    def _fill_gauge_menu(self):
-        """Anzeigen oben: feste Anzeigen + ECU-Kanaele."""
-        m = self.gauge_menu
-        m.clear()
-        hidden = set(self.settings.get("gauges_hidden", ["egt2"]))
-        m.addSection("Messboard / Auswertung")
-        for key, (name, _g) in self.gauges.items():
-            self._check_row(m, name, [("", key not in hidden, lambda on, k=key: self._toggle_gauge(k, on))])
-        avail = self._ecu_available()
-        m.addSection("ECU")
-        if not avail:
-            m.addAction("(keine Kanäle – Reiter ECU)").setEnabled(False)
-        shown = self.settings.get("ecu_gauges", [])
-        for name, label, unit in avail:
-            self._check_row(m, f"{label} [{unit}]" if unit else label,
-                            [("", name in shown, lambda on, n=name: self._toggle_ecu(n, on, "ecu_gauges"))])
 
     def _fill_top_menu(self):
         """Hauptdiagramm: ECU-Kurven ueber der Leistung, unteres Diagramm ein/aus."""
@@ -1119,32 +904,11 @@ class MainWindow(QtWidgets.QMainWindow):
         save_settings(self.settings)
         self._ecu_changed()
 
-    def _ecu_changed(self):
-        """Anzeigen und Diagramm-Kanaele nach Auswahl/Verbindung neu aufbauen."""
-        avail = {n: (lab, unit) for n, lab, unit in self._ecu_available()}
-        want = [n for n in self.settings.get("ecu_gauges", []) if n in avail]
-        for name in list(self.ecu_gauges):
-            if name not in want:
-                g = self.ecu_gauges.pop(name)
-                self.gauge_row.removeWidget(g)
-                g.deleteLater()
-        for name in want:
-            if name not in self.ecu_gauges:
-                g = Gauge(f"{avail[name][0]} (ECU)", avail[name][1])
-                self.ecu_gauges[name] = g
-                self.gauge_row.insertWidget(self.gauge_row.indexOf(self.gauge_btn), g)
-        self.plot.set_overlays([(n, *avail[n]) for n in self.settings.get("ecu_plot", []) if n in avail])
-        self._apply_lower([(n, *avail[n]) for n in avail])
-        self._redraw_runs()
-        if self.ctrl and self.ctrl.frames:
-            self._draw_live(final=self.ctrl.state == DONE)
-
     def _ecu_names(self):
         """ECU-Kanaele, die zu jedem Lauf ins Diagramm-Datenlager kommen (Anzeigen, Kurven, Cursor)."""
         lower = [k[len(EXTRA_PREFIX):] for k in sum(self._lower_sides(), []) + self._cursor_cols()
                  if k.startswith(EXTRA_PREFIX)]
-        return list(dict.fromkeys(self.settings.get("ecu_gauges", []) + self.settings.get("ecu_plot", [])
-                                  + lower + ["RPMValue"]))
+        return list(dict.fromkeys(self.settings.get("ecu_plot", []) + lower + ["RPMValue"]))
 
     def _ecu_extra_run(self, run, res) -> Dict[str, np.ndarray]:
         cols = run.get("columns", {})
@@ -1163,120 +927,6 @@ class MainWindow(QtWidgets.QMainWindow):
             return {}
         cols = resample(snap, np.array([f.t for f in frames]))
         return {n: cols[COLUMN_PREFIX + n] for n in names if COLUMN_PREFIX + n in cols}
-
-    def _show_ecu_live(self):
-        if self._cursor_inside:
-            return
-        for name, g in self.ecu_gauges.items():
-            g.set(fmt_value(self.page_rusefi.live(name)))
-
-    def _ref_key(self) -> Optional[str]:
-        """Lauf fuer die Pmax/Mmax-Anzeige: laufende/letzte Messung, sonst neuester sichtbarer Lauf."""
-        if LIVE_KEY in self.plot.data:
-            return LIVE_KEY
-        for row in self.db.runs():                 # neueste zuerst
-            if row.sichtbar and str(row.id) in self.plot.data:
-                return str(row.id)
-        return None
-
-    def _update_max_display(self):
-        key = self._ref_key()
-        d = self.plot.data.get(key) if key else None
-        if self._cursor_inside and d is not None:
-            vals = self._cursor_values(key, self._cursor_n)
-            self._show_gauge_texts(vals or {k: "–" for k in ("n", "ign", "v", "egt1", "egt2", "lam", "rate",
-                                                             "ratio", "ratio_ecu")})
-            for gkey, (_name, g) in self.gauges.items():
-                g.set_highlight(True)
-            v = self.plot.values_at(key, self._cursor_n) or {}
-            for name, g in self.ecu_gauges.items():
-                g.set_highlight(True)
-                g.set(fmt_value(v.get(EXTRA_PREFIX + name)))
-            v = self.plot.values_at(key, self._cursor_n)
-            n = f"{self._cursor_n:,.0f}".replace(",", ".")
-            self.g_pmax.set_title(f"PS @ {n}")
-            self.g_mmax.set_title(f"Nm @ {n}")
-            self.g_pmax.set("–" if v is None else f"{v['ps']:.1f}")
-            self.g_mmax.set("–" if v is None else f"{v['nm']:.1f}")
-            return
-        if d is None or not len(d["n"]) or not np.isfinite(d["ps"]).any():
-            self.g_pmax.set_title("Pmax [PS]")
-            self.g_mmax.set_title("Mmax [Nm]")
-            self.g_pmax.set("–")
-            self.g_mmax.set("–")
-            return
-        jp = int(np.nanargmax(d["ps"]))
-        jm = int(np.nanargmax(d["nm"]))
-        self.g_pmax.set_title(f"Pmax @ {d['n'][jp]:,.0f}".replace(",", "."))
-        self.g_mmax.set_title(f"Mmax @ {d['n'][jm]:,.0f}".replace(",", "."))
-        self.g_pmax.set(f"{d['ps'][jp]:.1f}")
-        self.g_mmax.set(f"{d['nm'][jm]:.1f}")
-
-    def _cursor_left(self):
-        self._cursor_inside = False
-        self._update_max_display()
-        for g in [g for _n, g in self.gauges.values()] + list(self.ecu_gauges.values()):
-            g.set_highlight(False)
-        self._show_gauge_texts(self._live_vals)
-        self._show_ecu_live()
-
-    # ---- Anzeigen: Texte aus Werten, live oder am Cursor
-    def _gauge_texts(self, n_calc, n_meas, v_kmh, egt1, egt2, afr, rate, ratio=None, ratio_ecu=None) -> Dict[str, str]:
-        lam_mode = self.page_settings.lambda_radio.isChecked()
-        fin = lambda x: x is not None and np.isfinite(x)
-        return {
-            "n": f"{n_calc:,.0f}".replace(",", ".") if fin(n_calc) else "–",
-            "ign": f"{n_meas:,.0f}".replace(",", ".") if fin(n_meas) else "–",
-            "v": f"{v_kmh:.1f}" if fin(v_kmh) else "–",
-            "egt1": f"{egt1:.0f}" if fin(egt1) and egt1 > 0 else "–",
-            "egt2": f"{egt2:.0f}" if fin(egt2) and egt2 > 0 else "–",
-            "lam": "–" if not fin(afr) or afr <= 0.5 else (f"{afr / 14.7:.3f}" if lam_mode else f"{afr:.2f}"),
-            "rate": f"{rate:.2f}" if fin(rate) and rate > 0 else "–",
-            "ratio": f"{ratio:.3f}" if fin(ratio) and ratio > 0 else "–",
-            "ratio_ecu": f"{ratio_ecu:.3f}" if fin(ratio_ecu) and ratio_ecu > 0 else "–",
-        }
-
-    def _show_gauge_texts(self, vals: Dict[str, str]):
-        for key, text in (vals or {}).items():
-            if key in self.gauges:
-                self.gauges[key][1].set(text)
-
-    def _cursor_values(self, key: str, n_rpm: float) -> Optional[Dict[str, str]]:
-        """Alle Anzeigewerte des Laufs `key` an der Cursor-Drehzahl."""
-        d = self.plot.data.get(key)
-        if d is None or not len(d["n"]) or n_rpm < np.nanmin(d["n"]) or n_rpm > np.nanmax(d["n"]):
-            return None
-        j = int(np.nanargmin(np.abs(d["n"] - n_rpm)))
-        n_calc = float(d["n"][j])
-        if key == LIVE_KEY:
-            r = self.ctrl.result if (self.ctrl.state == DONE and self.ctrl.result) else self.ctrl.live_result
-            if r is None:
-                return None
-            idx = r.start_index + j
-            if idx >= len(self.ctrl.frames):
-                return None
-            f, p = self.ctrl.frames[idx], self.ctrl.params
-            n_roll = f.roll_hz * 60.0 / p.inkr
-            n_ign = f.ign_hz * 60.0 / p.imp
-            rpm = self.plot.data[key].get(EXTRA_PREFIX + "RPMValue")
-            ecu_rpm = float(rpm[j]) if rpm is not None and j < len(rpm) else None
-            return self._gauge_texts(n_calc, n_ign, n_roll / 60.0 * p.roll_circ * 3.6,
-                                     f.egt1, f.egt2, f.afr, f.rate, n_ign / n_roll if n_roll > 1 else None,
-                                     ecu_rpm / n_roll if ecu_rpm is not None and n_roll > 1 else None)
-        e = self._entry(int(key))
-        if e is None or e[1] is None:
-            return None
-        _run, res, ch, _p = e
-        idx = res.start_index + j
-        at = lambda name: float(ch[name].values[idx]) if name in ch and idx < len(ch[name].values) else None
-        return self._gauge_texts(n_calc, at("Drehzahl Zündung"), at("Geschwindigkeit"), at("EGT 1"), at("EGT 2"),
-                                 at("AFR"), at("Messfrequenz"), at("Übersetzung gefiltert"),
-                                 at("Übersetzung ECU/Rolle gefiltert"))
-
-    def _lambda_mode_changed(self, lam: bool):
-        self.plot.set_lambda_mode(lam)
-        self.g_lam.set_title("Lambda [λ]" if lam else "AFR")
-        self._redraw_runs()
 
     def _update_buttons(self):
         busy = self.ctrl is not None and self.ctrl.state in ACTIVE
@@ -1300,6 +950,8 @@ class MainWindow(QtWidgets.QMainWindow):
             sp.setEnabled(not busy)
         self.vehicle_combo.setEnabled(not busy)
         self.setup_combo.setEnabled(not busy)
+        self.setup_zeile.setEnabled(not busy)
+        self.b_ref.setEnabled(not busy)
 
     def _persist(self):
         s = self.page_settings
@@ -1327,6 +979,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.vehicle_combo.setCurrentIndex(max(0, i))
         self.vehicle_combo.blockSignals(False)
         self._reload_setup_combo(sid)
+        self._fahrzeug_ansicht_laden()
 
     def _reload_setup_combo(self, sid=None):
         self.setup_combo.blockSignals(True)
@@ -1339,11 +992,12 @@ class MainWindow(QtWidgets.QMainWindow):
         i = self.setup_combo.findData(sid)
         self.setup_combo.setCurrentIndex(max(0, i))
         self.setup_combo.blockSignals(False)
+        self._setup_zeile_laden()
 
     def _vehicle_combo_changed(self, _i):
         self._reload_setup_combo()
-        if self.run_filter.currentIndex():
-            self._reload_runs()
+        self._fahrzeug_ansicht_laden()
+        self._reload_runs()                # gesperrte Plaetze je Fahrzeug
 
     def _db_changed(self):
         """Fahrzeug/Setup irgendwo bearbeitet -> alle Ansichten aktualisieren."""
@@ -1361,7 +1015,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if rid in self.cache:
             return self.cache.get(rid)
         row = self.db.run(rid)
-        if row is None:
+        if row is None or row.ist_mittelwert:      # Mittelwerte nur ueber mittelwert.laden (MessenMixin._mittelwert)
             return None
         try:
             run = wait_in_thread(lambda: storage.load_any(row.path))
@@ -1402,138 +1056,11 @@ class MainWindow(QtWidgets.QMainWindow):
             d = f"{d[8:10]}.{d[5:7]}.{d[2:4]} {d[11:]}"
         return f"{d}  {row.name}" if row.quelle == "LabVIEW" else d
 
-    def _show_cursor_table(self, on: bool):
-        self.cursor_table.setVisible(on)
-        if hasattr(self, "cursor_cols_btn"):
-            self.cursor_cols_btn.setVisible(on)
-        self.cursor_toggle.setArrowType(QtCore.Qt.DownArrow if on else QtCore.Qt.RightArrow)
-        self.cursor_toggle.setText("Werte am Cursor" + ("" if on else "  (ausgeblendet – klicken zum Einblenden)"))
-        if self.settings.get("cursor_table", True) != on:
-            self.settings["cursor_table"] = on
-            save_settings(self.settings)
-
-    def _fit_cursor_table(self):
-        """Cursor-Tabelle genau so hoch wie ihr Inhalt (mind. eine Zeile), Rest bekommt das Diagramm."""
-        t = self.cursor_table
-        rows = max(1, t.rowCount())
-        t.setFixedHeight(t.horizontalHeader().height() + rows * t.verticalHeader().defaultSectionSize()
-                         + 2 * t.frameWidth() + 1)
-
-    def _reload_runs(self):
-        self._cursor_names = None
-        f = self.run_filter.currentIndex()
-        vid = self.vehicle_combo.currentData() if f == 1 else None
-        sid = self.setup_combo.currentData() if f == 2 else None
-        if f == 0:
-            rows = self.db.runs()
-        elif vid or sid:
-            rows = self.db.runs(vehicle_id=vid, setup_id=sid)
-        else:
-            rows = []
-        vehicles = {r["id"]: r["name"] for r in self.db.vehicles()}
-        self.run_tree.blockSignals(True)
-        self.run_tree.clear()
-        for row in rows:
-            dauer = row.quelle == "Dauermessung"
-            it = QtWidgets.QTreeWidgetItem([
-                self._run_label(row), "Dauer" if dauer else f"{row.p_max:.1f}", "" if dauer else f"{row.n_pmax:.0f}",
-                "" if dauer else f"{row.m_max:.1f}", self._fault_cell(row), f"{row.rate:.0f}",
-                " ".join(x for x in (vehicles.get(row.vehicle_id, ""), row.notiz) if x)])
-            if row.fehler:
-                it.setToolTip(4, "Fehleranteil (Messfehler Rolle/Zündung): " + fault_text(row.fehler))
-                if max(row.fehler.values()) >= 1.0:
-                    it.setForeground(4, QtGui.QBrush(QtGui.QColor(farben.FEHLER)))
-            it.setData(0, QtCore.Qt.UserRole, row.id)
-            it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
-            it.setCheckState(0, QtCore.Qt.Checked if row.sichtbar else QtCore.Qt.Unchecked)
-            it.setIcon(0, color_icon(self._run_color(row)))
-            it.setToolTip(0, f"{self._run_label(row)}\n{row.quelle}: {row.path}")
-            self.run_tree.addTopLevelItem(it)
-        self.run_tree.blockSignals(False)
-        # Spaltenbreiten automatisch – ausser der Benutzer hat seine gespeichert (beim Beenden).
-        # Spalte "Lauf" hoechstens so breit wie Datum + Uhrzeit (LabVIEW-Namen abgeschnitten, voll im Tooltip)
-        if not (self.settings.get("fenster") or {}).get("laufliste_spalten"):
-            for c in range(1, 6):
-                self.run_tree.resizeColumnToContents(c)
-            self.run_tree.setColumnWidth(0, min(self.run_tree.sizeHintForColumn(0),
-                                                self.run_tree.fontMetrics().horizontalAdvance("00.00.00 00:00") + 64))
-        self._redraw_runs()
-        self.viewer.reload()
-
-    def _redraw_runs(self):
-        for key in list(self.plot.items):
-            if key != LIVE_KEY:
-                self.plot.remove(key)
-        for row in self.db.runs():
-            if not row.sichtbar:
-                continue
-            e = self._entry(row.id)
-            if e is None or e[1] is None:
-                continue
-            _run, res, ch, _p = e
-            seg = res.segment
-            egt2 = ch["EGT 2"].values[seg] if "EGT 2" in ch else None
-            self.plot.set_curves(str(row.id), res.n, res.ps, res.nm, lambda_from_afr(res.afr), res.egt, egt2,
-                                 color=self._run_color(row), width=2.0, rescale=False,
-                                 extra=self._ecu_extra_run(_run, res))
-        if not self.plot.frozen and self.plot.data:
-            self.plot.auto_scale()
-        self._cursor_moved(self._cursor_n)
-        self._update_max_display()
-
-    def _run_item_changed(self, it, col):
-        if col == 0:
-            self.db.update_run(it.data(0, QtCore.Qt.UserRole), sichtbar=it.checkState(0) == QtCore.Qt.Checked)
-            self._redraw_runs()
-
-    def _current_run_id(self) -> Optional[int]:
-        it = self.run_tree.currentItem()
-        return it.data(0, QtCore.Qt.UserRole) if it else None
-
     def _open_in_viewer(self, rid):
         if rid is None:
             return
         self.tabs.setCurrentWidget(self.viewer)
         self.viewer.show_run(rid)
-
-    def _run_context_menu(self, pos):
-        it = self.run_tree.itemAt(pos)
-        if it is None:
-            return
-        rid = it.data(0, QtCore.Qt.UserRole)
-        m = QtWidgets.QMenu(self)
-        a_view = m.addAction("In Auswertung öffnen")
-        a_note = m.addAction("Notiz bearbeiten …")
-        a_color = m.addAction("Farbe ändern …")
-        a_assign = m.addAction("Aktuellem Fahrzeug/Setup zuordnen")
-        a_params = m.addAction("Mit aktuellen Einstellungen neu rechnen")
-        m.addSeparator()
-        a_csv = m.addAction("CSV-Export …")
-        a_del = m.addAction("Löschen …")
-        act = m.exec(self.run_tree.viewport().mapToGlobal(pos))
-        row = self.db.run(rid)
-        if act == a_view:
-            self._open_in_viewer(rid)
-        elif act == a_note:
-            text, ok = QtWidgets.QInputDialog.getText(self, "Notiz", "Notiz zum Lauf:", text=row.notiz)
-            if ok:
-                self.db.update_run(rid, notiz=text)
-                self._reload_runs()
-        elif act == a_color:
-            c = QtWidgets.QColorDialog.getColor(QtGui.QColor(self._run_color(row)), self)
-            if c.isValid():
-                self.db.update_run(rid, farbe=c.name())
-                self._reload_runs()
-        elif act == a_assign:
-            self.db.update_run(rid, vehicle_id=self.vehicle_combo.currentData(),
-                               setup_id=self.setup_combo.currentData())
-            self._reload_runs()
-        elif act == a_params:
-            self._recalc_run(rid)
-        elif act == a_csv:
-            self.on_csv(rid)
-        elif act == a_del:
-            self.on_delete()
 
     def _recalc_run(self, rid: int):
         e = self._entry(rid)
@@ -1549,60 +1076,6 @@ class MainWindow(QtWidgets.QMainWindow):
             r = e[1]
             self.db.update_run(rid, p_max=r.p_max, n_pmax=r.n_pmax, m_max=r.m_max, n_mmax=r.n_mmax, ka=r.ka)
         self._reload_runs()
-
-    # ------------------------------------------------------------------ Cursor
-    def _cursor_moved(self, n_rpm: float):
-        self._cursor_n = n_rpm
-        self._cursor_inside = self.plot._cursor_inside if hasattr(self.plot, "_cursor_inside") else False
-        self._update_max_display()
-        if self._cursor_names is None:                     # nicht je Mausbewegung in die Datenbank
-            self._cursor_names = {str(r.id): (self._run_label(r), self._run_color(r)) for r in self.db.runs() if r.sichtbar}
-            self._cursor_names[LIVE_KEY] = ("laufende Messung", theme.farbe("live_curve"))
-        names = self._cursor_names
-        lam_mode = self.page_settings.lambda_radio.isChecked()
-        # Spalten: n, PS, Nm, dann die gewaehlten (Menue "Spalten …" an der Cursor-Tabelle)
-        known = {k for k, _l, _u in self._lower_candidates()}
-        cols = [k for k in self._cursor_cols() if k in known]
-
-        def title(k):
-            label, unit = self.plot.lower_title(k) if not k.startswith(EXTRA_PREFIX) or k in self.plot.lower_labels \
-                else next(((lab + " (ECU)", u) for n, lab, u in self.plot.overlays if EXTRA_PREFIX + n == k), (k, ""))
-            return f"{label} [{unit}]" if unit and unit != "λ" else ("λ" if unit == "λ" else label)
-
-        def fmt(k, x):
-            if x is None or not np.isfinite(x):
-                return ""
-            if k == "lam":
-                return "" if x <= 0 else (f"{x:.3f}" if lam_mode else f"{x * 14.7:.2f}")
-            if k in ("egt1", "egt2"):
-                return f"{x:.0f}" if x > 0 else ""
-            return fmt_value(x)
-
-        rows = []
-        for key in self.plot.data:
-            v = self.plot.values_at(key, n_rpm)
-            label, color = names.get(key, (key, theme.farbe("live_curve")))
-            if v is None:
-                rows.append((color, label, "", "", "") + ("",) * len(cols))
-                continue
-            rows.append((color, label, f"{v['n']:.0f}", f"{v['ps']:.2f}", f"{v['nm']:.2f}")
-                        + tuple(fmt(k, v.get(k)) for k in cols))
-        t = self.cursor_table
-        if t.columnCount() != 5 + len(cols):
-            t.setColumnCount(5 + len(cols))
-        for i, text in enumerate(["", "Lauf", "n [1/min]", "PS", "Nm"] + [title(k) for k in cols]):
-            t.setHorizontalHeaderItem(i, QtWidgets.QTableWidgetItem(text))
-        t.setRowCount(len(rows))
-        self._fit_cursor_table()
-        for r, vals in enumerate(rows):
-            it = QtWidgets.QTableWidgetItem()
-            it.setBackground(QtGui.QColor(vals[0]))
-            t.setItem(r, 0, it)
-            for c, text in enumerate(vals[1:], start=1):
-                cell = QtWidgets.QTableWidgetItem(text)
-                if c >= 2:
-                    cell.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-                t.setItem(r, c, cell)
 
     # ------------------------------------------------------------------ Verbindung
     def on_connect(self, port: str = "", quiet: bool = False, lost: bool = False) -> bool:
@@ -1783,6 +1256,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if c:
             self.page_settings.fields["temp_c"].setValue(c[0])
             self.page_settings.fields["p_mbar"].setValue(c[1])
+            self._klima_gelesen(c)
             feuchte = f"   {c[2]:.0f} % rel. Feuchte" if c[2] > 0 else ""       # BMP280: keine Feuchte
             self.result_label.setText(f"Klima: {c[0]:.1f} °C   {c[1]:.1f} mbar{feuchte}")
         else:
@@ -1812,7 +1286,9 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg.exec()
 
     # ------------------------------------------------------------------ Lauf
-    def on_start(self):
+    def on_start(self, *_a, nachfrage: bool = True):
+        """START (F1). nachfrage=False: bei geaendertem Setup nicht fragen (Taste der Zange), die Werte gelten
+        dann nur fuer diesen Lauf."""
         if not self.ctrl or self.ctrl.state in ACTIVE:
             return
         s = self.page_settings
@@ -1821,8 +1297,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if msg:
             QtWidgets.QMessageBox.warning(self, "Einstellungen", msg)
             return
+        if nachfrage and not self._setup_vor_start():
+            return
         self._persist()
         self.tabs.setCurrentIndex(0)
+        self.gas_weg.verbergen()
         self.ctrl.params = p
         self.ctrl.auto_climate = s.climate_auto.isChecked()
         self.ctrl.ausrollen = self.page_kalib.enabled()
@@ -1835,6 +1314,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.ctrl.climate:
             s.fields["temp_c"].setValue(self.ctrl.params.temp_c)
             s.fields["p_mbar"].setValue(self.ctrl.params.p_mbar)
+            self._klima_gelesen(self.ctrl.climate)
         self.result_label.setText(self.ctrl.message)
         self._done_handled = False
         self._update_buttons()
@@ -1883,7 +1363,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """Woher der Ausrollversuch kommt (Lauf, Fahrzeug/Setup)."""
         row = self.db.run(rid) if rid else None
         veh = self.vehicle_combo.currentText() if self.vehicle_combo.currentData() else ""
-        setup = self.setup_combo.currentText() if self.setup_combo.currentData() else ""
+        setup = self.setup_combo.currentText().replace(GEAENDERT, "") if self.setup_combo.currentData() else ""
         if row is not None:
             vehicles = {r["id"]: r["name"] for r in self.db.vehicles()}
             veh = vehicles.get(row.vehicle_id, "")
@@ -1940,10 +1420,12 @@ class MainWindow(QtWidgets.QMainWindow):
         vname = self.vehicle_combo.currentText() if vid else ""
         folder = storage.save_run(self.ctrl, vehicle=vname, firmware=self.firmware, base_dir=self.db.runs_dir())
         r = self.ctrl.result
+        werte, nur_lauf = self._setup_schnappschuss()
         rid = self.db.add_run(folder, "lauf.json", "PyST", os.path.basename(folder),
                               QtCore.QDateTime.currentDateTime().toString(QtCore.Qt.ISODate), r,
                               params=asdict(self.ctrl.params), rate=self._current_rate(), vehicle_id=vid,
-                              setup_id=sid, notiz=self.run_note.text(), farbe="", sichtbar=True)
+                              setup_id=sid, notiz=self.run_note.text(), farbe="", sichtbar=True,
+                              setup_werte=werte, nur_lauf=nur_lauf)
         self.plot.remove(LIVE_KEY)
         self._reload_runs()
         self.plot.auto_scale()
@@ -2167,27 +1649,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._reload_runs()
         self.statusBar().showMessage(f"Dauermessung gespeichert: {folder} – in der Laufliste und Auswertung", 10000)
 
-    def on_hide_all(self):
-        for row in self.db.runs():
-            if row.sichtbar:
-                self.db.update_run(row.id, sichtbar=False)
-        self._reload_runs()
-
-    def on_delete(self):
-        items = self.run_tree.selectedItems()
-        if not items:
-            return
-        ans = QtWidgets.QMessageBox.question(
-            self, "Löschen", f"{len(items)} Lauf/Läufe aus der Datenbank löschen?\n"
-                             "Messdateien im PyST-Datenordner werden mitgelöscht.")
-        if ans != QtWidgets.QMessageBox.Yes:
-            return
-        for it in items:
-            rid = it.data(0, QtCore.Qt.UserRole)
-            self.db.delete_run(rid, delete_files=True)
-            self.cache.pop(rid, None)
-        self._reload_runs()
-
     def on_csv(self, rid: Optional[int] = None):
         rid = rid if rid is not None else self._current_run_id()
         if rid is None:
@@ -2205,8 +1666,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def pdf_rows(self):
         rows = []
         vehicles = {r["id"]: r["name"] for r in self.db.vehicles()}
+        im_diagramm = set(self.diagramm_laeufe())
         for row in self.db.runs():
-            if not row.sichtbar:
+            if not row.sichtbar or row.id not in im_diagramm or row.ist_mittelwert:
                 continue
             setup = self.db.setup(row.setup_id) if row.setup_id else None
             details = ""
@@ -2262,7 +1724,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _tick(self):
         if waiting():                                      # Verbindung ist gerade mit einer Abfrage beschaeftigt
             return
-        self._show_ecu_live()
+        self._kacheln_takt()
         if self.link is not None:
             for ev in self.link.drain_events():            # Ereignisse der Basis: Marker, Zange, Steckdosen
                 if ev.kind == "ZTASTE":                    # Bedienung, gehört nicht in Lauf oder Aufzeichnung
@@ -2286,28 +1748,13 @@ class MainWindow(QtWidgets.QMainWindow):
             f = new[-1]
             ecu_rpm = self.page_rusefi.live("RPMValue")
             self.ratio_mess.probe(lv.n_meas, lv.n_roll, ecu_rpm)
-            self._live_vals = self._gauge_texts(
-                lv.n_calc, lv.n_meas, lv.v_kmh, f.egt1, f.egt2, f.afr, lv.rate,
-                lv.n_meas / lv.n_roll if lv.n_roll > 1 else None,
-                ecu_rpm / lv.n_roll if ecu_rpm is not None and lv.n_roll > 1 else None)
-            if not self._cursor_inside:
-                self._show_gauge_texts(self._live_vals)
+            self._live_werte(lv, f, ecu_rpm)
             if abs(lv.rate - self._shown_rate) > 0.5:
                 self._shown_rate = lv.rate
                 self.page_settings.update_filter_label(lv.rate)
-        self.g_lost.set(str(self.link.lost if self.link else 0))
 
         st = self.ctrl.state
-        if st == WAIT:
-            self._set_status("GO – Vollgas!", "#7ed67e")
-        elif st == RUN:
-            if self.ctrl.gas_off():
-                self._set_status("GAS WEG – KUPPLUNG ZIEHEN!" if self.ctrl.ausrollen else "GAS WEG!", "#ff5555")
-            else:
-                self._set_status(f"Messung … {lv.n_calc:,.0f} 1/min".replace(",", "."), "#ffe08a")
-        elif st == COAST:
-            self._set_status(f"KUPPLUNG ZIEHEN – ausrollen lassen … {lv.n_calc:,.0f} 1/min".replace(",", "."),
-                             "#9fc9ff")
+        self._laufzustand_zeigen(st, lv)
         if st in (WAIT, RUN) and time.time() > self._plot_due:
             self._plot_due = time.time() + 0.05
             self._draw_live()
@@ -2369,7 +1816,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.page_tasten.led(tasten.LED_OK)                # vor dem Start: Klima lesen hält die Antwort sonst auf
         self.band.zeige("Neuer Lauf gestartet", farben.GUT, 3.0)
-        self.on_start()
+        self.on_start(nachfrage=False)
 
     def _taste_ratio(self):
         grund = self._taste_sperre()
@@ -2571,7 +2018,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "geometrie": b64(self.saveGeometry()),
             "messen_teilung": b64(self.measure_split.saveState()),
             "auswertung_teilung": b64(self.viewer.split.saveState()),
-            "laufliste_spalten": [self.run_tree.columnWidth(c) for c in range(self.run_tree.columnCount())],
+            "laeufe_spalten": [self.run_tree.columnWidth(c) for c in range(self.run_tree.columnCount())],
             "seite": self.current_page_key(),
         }
 
@@ -2597,7 +2044,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.measure_split.restoreState(ba(f["messen_teilung"]))
             if f.get("auswertung_teilung"):
                 self.viewer.split.restoreState(ba(f["auswertung_teilung"]))
-            for c, wd in enumerate(f.get("laufliste_spalten", [])[:self.run_tree.columnCount()]):
+            for c, wd in enumerate(f.get("laeufe_spalten", [])[:self.run_tree.columnCount()]):
                 if wd > 0:
                     self.run_tree.setColumnWidth(c, wd)
             key = f.get("seite") if f.get("seite") in self.seiten else self.alte_seite(f)
@@ -2608,6 +2055,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def closeEvent(self, ev):
         self.save_window_layout()
+        self.settings["laeufe_leiste"] = self.laeufe_leiste.zustand()
         self._persist()
         self.page_oszi.close_page()
         self.page_hw.close_page()
