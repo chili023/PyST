@@ -8,9 +8,9 @@ rusEFI-Anbindung und später eine aktiv geregelte Wirbelstrombremse (WSB).
 | 1 | [Vergleichstest und Zündsignal-Diagnose](01_Test_und_Zuendsignal.md) | Prüfstand | vorbereitet |
 | 2 | [Messverfahren in der Firmware verbessern (jetzige Hardware)](02_Firmware_Messung.md) | `PST-STM32-Firmware` | geplant |
 | 3 | [Binärprotokoll v2 mit Kanalbeschreibung](03_Protokoll_v2.md) | Firmware + `PyST` | geplant |
-| 4 | Neue Messplatine (v3) | Hardware | Konzept |
-| 5 | CAN-Sensormodule und WSB-Leistungsteil – Vorbereitung | neues Projekt | Schnittstellen festlegen |
-| 5a | Zahnriementrieb Rolle → Schenck W130 | Mechanik | Vorauslegung |
+| 4 | Neue Messplatine (v3) – Unterlagen privat | Hardware | Konzept |
+| 5 | CAN-Sensormodule und WSB-Leistungsteil – Vorbereitung (Unterlagen privat) | neues Projekt | Schnittstellen festlegen |
+| 5a | Zahnriementrieb Rolle → Schenck W130 (Unterlagen privat) | Mechanik | Vorauslegung |
 
 ## Was bis jetzt fertig ist
 
@@ -18,10 +18,6 @@ rusEFI-Anbindung und später eine aktiv geregelte Wirbelstrombremse (WSB).
   STM-LabVIEW 0.2.0 automatisch, exakte Perioden-Messung (11 ns), Sperrzeit und Doppelimpulsfilter,
   Autostopp, Watchdog, BME280/BMP280, 2× MAX6675. Zwei Varianten: Standard (Doppelimpulsfilter 25 %)
   und `nucleo_f446re_dp70` (70 %). Host-Tests für Frequenzberechnung und Protokoll.
-- **Arduino-Mega-Sketch 3.1.0**: Normalmodus byte-identisch zu 3.0.0 (LabVIEW 3.2.1), aber jede Periode
-  gemessen (3.0.0: jede zweite), 0 Hz nach Timeout, Pull-ups am richtigen Port, I²C-Timeout für AFR.
-  Neu: Oszi-/Diagnosemodus [PST-Diag 1](04_PST_Diag_1.md) (D-Telegramm, Flanken-Burst mit Trigger,
-  Einstellungen per `#SET`/`#SAVE` im EEPROM). Host-Tests und AVR-Simulator-Tests; am echten Mega noch zu prüfen.
 - **PyST** (Python/Qt, Mac/Linux/Windows): rechnet nachweislich wie LabVIEW 3.2.1 (6 echte Läufe:
   gleiche Pmax auf 0,1 PS, gleiche n(Pmax)), Datenbank für Fahrzeuge/Setups/Läufe, Auswerter wie
   MegaLogViewer, Setup-Vergleich, PDF/CSV, Import von LabVIEW-XML, Simulator mit echtem Lauf 161802.
