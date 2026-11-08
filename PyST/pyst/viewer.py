@@ -1,43 +1,42 @@
 """
-Auswerter im Stil von MegaLogViewer.
+Auswerter im Stil von MegaLogViewer (Reiter Auswertung, Entwurf v3 vom 08.11.2026).
 
-Laufauswahl: Fahrzeug waehlen -> dessen Laeufe (nach Datum oder nach Setup gruppiert) -> "Hinzufuegen".
-Danach weitere Fahrzeuge/Laeufe dazunehmen. Fahrzeug- und Setup-Daten lassen sich direkt bearbeiten.
-
-Anzeige:
-- bis zu 4 Felder uebereinander, gemeinsame X-Achse (Zeit oder Motordrehzahl)
-- beliebige Kanaele je Feld; jeder Kanal wird fuer sich auf die Feldhoehe skaliert (wie MLV),
-  Kanaele gleicher Einheit teilen sich eine Skala; echte Werte in der Wertetabelle
-- ein Lauf: Farbe je Kanal. Mehrere Laeufe: Farbe je Lauf, Linienart je Kanal
-- Cursor mit Maus oder Pfeiltasten (Schritt = ein Telegramm des ersten Laufs)
-- Setup-Vergleich: Setup-Eintraege der gewaehlten Laeufe nebeneinander, Unterschiede markiert
+Aufbau:
+- Kopfzeile: X-Achse, Felder, nur Kurvenbereich, Layout (Speichern / Speichern unter … / Löschen),
+  rechts Importieren …, PDF-Bericht …, CSV-Export …
+- links die SeitenLeiste „Läufe & Kanäle“ (32-px-Streifen, Overlay nach 300 ms, Anpinnen, Zustand gespeichert):
+  Läufe auswählen (Fahrzeug -> Läufe nach Datum oder Setup, auch Mittelwerte) -> „Hinzufügen“, In der Auswertung,
+  Kanäle je Feld. Fahrzeug- und Setup-Daten lassen sich direkt bearbeiten.
+- Mitte: Laufleiste „ANGEZEIGTE LÄUFE“ (laufleiste.py) und darunter bis zu 4 Felder übereinander mit gemeinsamer
+  X-Achse (Zeit oder Motordrehzahl). Jeder Kanal wird für sich auf die Feldhöhe skaliert (wie MLV), Kanäle gleicher
+  Einheit teilen sich eine Skala. Ein Lauf: Farbe je Kanal. Mehrere Läufe: Farbe je Lauf, Linienart je Kanal.
+  Mittelwert-Läufe: eigene Farbe (avg_color), dicke Linie, Band min–max bzw. ± σ halbtransparent.
+- rechts Reiter „Werte am Cursor“ (cursorwerte.py: Kacheln mit den Werten aller angezeigten Läufe) und
+  „Setup-Vergleich“ (Setup-Einträge nebeneinander, Unterschiede markiert).
+- Cursor mit Maus oder Pfeiltasten (Schritt = ein Telegramm des ersten angezeigten Laufs).
+- „Mittelwert bilden …“ (mittelwert_dialog.py) aus den markierten Läufen; Mittelwerte haben keine Rohdaten
+  (CSV-Export liefert die gemittelten Kurven, Ausrollversuch/Kanäle des Hauptfensters bekommen sie nicht).
 """
-from typing import Callable, Dict, List, Optional
+import json
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .db import SETUP_FIELDS, Database
+from . import mittelwert as mw
 from . import physics
 from . import theme
+from .channels import Channel
+from .cursorwerte import CursorSpalte, KachelDaten, bereich_runden, dez_fuer, wert_bei
+from .db import SETUP_FIELDS, Database
 from .dialogs import EditDialog
-import json
-
-from .plots import run_color
-from .widgets import GaugeBar
-
-# Anzeigen am Cursor: (Schluessel, Titel, Einheit, Kanal, Nachkommastellen)
-VIEW_GAUGES = [
-    ("ps", "Leistung", "PS", "Leistung", 1), ("nm", "Drehmoment", "Nm", "Drehmoment", 1),
-    ("n", "Motor (Rolle × i)", "1/min", "Drehzahl Motor", 0), ("ign", "Motor (Zündung)", "1/min", "Drehzahl Zündung", 0),
-    ("v", "Rolle", "km/h", "Geschwindigkeit", 1), ("egt1", "EGT 1", "°C", "EGT 1", 0), ("egt2", "EGT 2", "°C", "EGT 2", 0),
-    ("lam", "Lambda", "λ", "Lambda", 3), ("tps", "TPS (ECU)", "%", "TPS (ECU)", 1),
-    ("ratio", "Übersetzung", "", "Übersetzung gefiltert", 2),
-    ("ratio_ecu", "Übersetzung ECU/Rolle", "", "Übersetzung ECU/Rolle gefiltert", 3),
-    ("rate", "Messfrequenz", "Hz", "Messfrequenz", 2),
-    ("t", "Zeit", "s", "Zeit", 2),
-]
+from .kacheln import Kanal, SeitenLeiste, farb_icon, zahl
+from .lauf_dialog import LaufSetupDialog
+from .laufleiste import Eintrag, LaufLeiste, datum_text, reihenfolge, schnellwert_zellen, zeit_text
+from .mittelwert_dialog import (BAND_ARTEN, BAND_STANDARD, MittelwertDialog, band_text, fuell_band,
+                                kanaele_aus_mittelwert, zusatz_lesen, zusatz_schreiben)
+from .plots import run_color_basis
 
 PALETTE = ["#c62828", "#1f5fbf", "#2e7d32", "#ef6c00", "#6a1b9a", "#00838f", "#ad1457", "#4e342e",
            "#9e9d24", "#37474f", "#d84315", "#0277bd", "#558b2f", "#8e24aa", "#00695c", "#f9a825"]
@@ -47,100 +46,129 @@ DEFAULT_PANES = [["Drehzahl Motor", "Drehzahl Zündung"], ["Leistung", "Drehmome
                  ["Übersetzung gefiltert", "Übersetzung ECU/Rolle gefiltert", "Übersetzung eingestellt"],
                  ["Lambda", "EGT 1", "EGT 2", "TPS (ECU)"]]
 MAX_PANES = 4
+X_ACHSEN = [("Zeit", "Zeit"), ("Motordrehzahl", "Drehzahl Motor")]     # (Anzeige, Kanal)
+FELD_HOEHEN = [5, 3, 2, 2]                                             # Hoehenverhaeltnis der Felder
+LINIE, LINIE_MW = 2.2, 3.6                                             # Linienbreite Lauf / Mittelwert
+BAND_ALPHA = 70
+# Live-Kanal je Fahrzeug (db.live_plaetze) -> Kanal der Auswertung: Balkenbereich und Zonen der Kacheln
+LIVE_ZU_KANAL = {"egt1": "EGT 1", "egt2": "EGT 2", "lam": "Lambda", "v": "Geschwindigkeit", "n": "Drehzahl Motor",
+                 "ign": "Drehzahl Zündung", "rate": "Messfrequenz"}
+HINWEIS = "Maus = Cursor · ←/→ = ein Telegramm weiter · Mausrad = Zoom · ziehen = verschieben"
 
 
-def _icon(color: str) -> QtGui.QIcon:
-    pm = QtGui.QPixmap(12, 12)
-    pm.fill(QtGui.QColor(color))
-    return QtGui.QIcon(pm)
+# ============================================================================================== reine Funktionen
+def lauf_bezeichnungen(rows: Sequence) -> Dict[int, str]:
+    """Kurzbezeichnung je Lauf fuer Kacheln und Chips: „16:24“, Mittelwert „Ø Ref.“ (mehrere: „Ø Ref. 2“ …);
+    gleiche Uhrzeit an verschiedenen Tagen -> „26.05. 16:24“."""
+    out: Dict[int, str] = {}
+    zeiten = [zeit_text(r) for r in rows if not r.ist_mittelwert]
+    k = 0
+    for r in rows:
+        if r.ist_mittelwert:
+            k += 1
+            out[r.id] = "Ø Ref." if k == 1 else f"Ø Ref. {k}"
+        else:
+            z = zeit_text(r)
+            out[r.id] = f"{datum_text(r)[:6]} {z}" if zeiten.count(z) > 1 else z
+    return out
+
+
+def laufwerte_am_cursor(laeufe: Sequence[tuple], x_at: Optional[float]) -> List[Tuple[str, str, Optional[float]]]:
+    """laeufe: [(Basisfarbe, Bezeichnung, x, y, interpolieren)] -> [(Basisfarbe, Bezeichnung, Wert am Cursor)];
+    Laeufe ohne Daten an der Stelle bekommen None („–“)."""
+    out = []
+    for farbe, bez, x, y, interp in laeufe:
+        v = None if x_at is None else wert_bei(x, y, x_at, interpolieren=interp)
+        out.append((farbe, bez, v))
+    return out
+
+
+class _Teiler(QtWidgets.QSplitter):
+    """Teiler Mitte | rechte Spalte. Ein gespeicherter Stand der alten Auswertung (drei Spalten) wuerde die rechte
+    Spalte riesig machen -> dann die Standardaufteilung."""
+    RECHTS_MAX = 760
+
+    def restoreState(self, state) -> bool:
+        ok = super().restoreState(state)
+        s = self.sizes()
+        if len(s) == 2 and (s[1] > self.RECHTS_MAX or s[1] < 200):
+            self.setSizes([max(600, sum(s) - 400), 400])
+        return ok
 
 
 class LogViewer(QtWidgets.QWidget):
-    db_changed = QtCore.Signal()               # Fahrzeug/Setup bearbeitet -> Hauptfenster aktualisiert
+    db_changed = QtCore.Signal()               # Fahrzeug/Setup/Lauf bearbeitet -> Hauptfenster aktualisiert
 
     def __init__(self, db: Database, load_channels: Callable[[int], Optional[tuple]]):
-        """load_channels(run_id) -> (Kanaele, Kurvenbereich) des Laufs (vom Hauptfenster, mit Cache)."""
+        """load_channels(run_id) -> (Kanaele, Kurvenbereich[, Marker]) des Laufs (vom Hauptfenster, mit Cache).
+        Fuer Mittelwert-Laeufe wird es nicht aufgerufen (keine Rohdaten), die laedt die Auswertung selbst."""
         super().__init__()
         self.db = db
         self.load_channels = load_channels
         self.selected: List[int] = []           # Laeufe in der Auswertung (Reihenfolge = Hinzufuegen)
         self.hidden: set = set()                # in der Auswertung, aber ausgeblendet
-        self.data: Dict[int, tuple] = {}        # run_id -> (Kanaele, Kurvenbereich)
+        self.markiert: set = set()              # Spalte „mark.“ (fuer „Mittelwert bilden …“)
+        self.data: Dict[int, tuple] = {}        # run_id -> (Kanaele, Kurvenbereich[, Marker])
+        self.baender: Dict[int, dict] = {}      # Mittelwert: Kanal -> {"minmax": (u, o), "sigma": (u, o)}
+        self.mw_info: Dict[int, dict] = {}      # Mittelwert: {"res": MittelwertErgebnis, "band": art}
+        self.rows: Dict[int, object] = {}       # run_id -> RunRow (bei jedem Neuladen aufgefrischt)
+        self.bez: Dict[int, str] = {}           # run_id -> „16:24“ / „Ø Ref.“
         self.cursor_idx = 0
         self.color_of: Dict[str, str] = {}
         # Layout: Kanaele je Feld bleiben erhalten, auch wenn ein geladener Lauf einen Kanal nicht hat
         self.pane_channels: List[List[str]] = [list(p) for p in DEFAULT_PANES]
+        self.kachel_wahl: Dict[str, str] = self._meta_json("viewer_kacheln", {})
         self._applying = False
+        self._bereiche: Dict[str, Optional[tuple]] = {}
+        self._live: Optional[list] = None
+        self._ladefehler: Dict[int, str] = {}
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(4, 4, 4, 4)
-        split = QtWidgets.QSplitter()
-        split.addWidget(self._build_left())
+        root.setSpacing(5)
+        root.addLayout(self._build_bar())
 
         center = QtWidgets.QWidget()
         cl = QtWidgets.QVBoxLayout(center)
-        cl.setContentsMargins(0, 0, 0, 0)
-        bar = QtWidgets.QHBoxLayout()
-        self.xaxis = QtWidgets.QComboBox()
-        self.xaxis.addItems(["Zeit", "Drehzahl Motor"])
-        self.panes_spin = QtWidgets.QSpinBox()
-        self.panes_spin.setRange(1, MAX_PANES)
-        self.panes_spin.setValue(4)
-        self.only_seg = QtWidgets.QCheckBox("nur Kurvenbereich")
-        for label, w_ in (("X-Achse", self.xaxis), ("Felder", self.panes_spin)):
-            bar.addWidget(QtWidgets.QLabel(label))
-            bar.addWidget(w_)
-        bar.addWidget(self.only_seg)
-        bar.addStretch(1)
-        bar.addWidget(QtWidgets.QLabel("Layout"))
-        self.layout_combo = QtWidgets.QComboBox()
-        self.layout_combo.setMinimumWidth(160)
-        self.layout_combo.setToolTip("Gespeicherte Auswerte-Layouts (Felder, Kanäle, X-Achse, Anzeigen)")
-        bar.addWidget(self.layout_combo)
-        self.layout_save_btn = QtWidgets.QPushButton("Speichern")
-        self.layout_save_as_btn = QtWidgets.QPushButton("Speichern unter …")
-        self.layout_del_btn = QtWidgets.QPushButton("Löschen")
-        for b in (self.layout_save_btn, self.layout_save_as_btn, self.layout_del_btn):
-            bar.addWidget(b)
-        cl.addLayout(bar)
-        try:
-            hidden = json.loads(self.db.get_meta("viewer_gauges_hidden", '["egt2", "tps", "rate"]'))
-        except ValueError:
-            hidden = []
-        self.gauge_run = QtWidgets.QLabel("")
-        self.gauge_run.setMinimumWidth(90)
-        self.gauge_run.setWordWrap(True)
-        self.gauge_bar = GaugeBar([(k, t, u) for k, t, u, _c, _d in VIEW_GAUGES], hidden,
-                                  lambda h: (self.db.set_meta("viewer_gauges_hidden", json.dumps(sorted(h))),
-                                             self._layout_changed()),
-                                  prefix=self.gauge_run)
-        root.addWidget(self.gauge_bar)                          # volle Breite ueber allem
-        root.addWidget(split, 1)
+        cl.setContentsMargins(4, 0, 0, 0)
+        cl.setSpacing(4)
+        self.leiste = LaufLeiste()
+        cl.addWidget(self.leiste)
         self.glw = pg.GraphicsLayoutWidget()
         self.glw.setBackground(theme.farbe("plot"))
         cl.addWidget(self.glw, 1)
-        hint = QtWidgets.QLabel("Maus = Cursor · ←/→ = ein Telegramm weiter · Mausrad = Zoom · ziehen = verschieben")
-        theme.rolle(hint, "neben")
-        cl.addWidget(hint)
-        split.addWidget(center)
+        self.hint = theme.rolle(QtWidgets.QLabel(HINWEIS), "neben")
+        cl.addWidget(self.hint)
+
+        self.seitenleiste = SeitenLeiste("Läufe & Kanäle", self._build_left(), center, breite=400)
+        self.seitenleiste.set_zustand(self._meta_json("viewer_seitenleiste", {}))
+        self.seitenleiste.angepinnt_geaendert.connect(
+            lambda _an: self.db.set_meta("viewer_seitenleiste", json.dumps(self.seitenleiste.zustand())))
 
         self.right_tabs = QtWidgets.QTabWidget()
-        self.table = QtWidgets.QTableWidget(0, 1)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.cursor = CursorSpalte()
         self.setup_table = QtWidgets.QTableWidget(0, 1)
         self.setup_table.verticalHeader().setVisible(False)
         self.setup_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        self.right_tabs.addTab(self.table, "Werte am Cursor")
+        self.right_tabs.addTab(self.cursor, "Werte am Cursor")
         self.right_tabs.addTab(self.setup_table, "Setup-Vergleich")
-        self.right_tabs.setMinimumWidth(240)
+        self.right_tabs.setMinimumWidth(300)
+        split = _Teiler()
+        split.setChildrenCollapsible(False)
+        split.addWidget(self.seitenleiste)
         split.addWidget(self.right_tabs)
-        split.setStretchFactor(1, 1)
-        split.setSizes([300, 900, 320])
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 0)
+        split.setSizes([1500, 400])
         self.split = split
+        root.addWidget(split, 1)
 
         self.plots: List[pg.PlotItem] = []
         self.lines: List[pg.InfiniteLine] = []
+        self._cursor_timer = QtCore.QTimer(self)
+        self._cursor_timer.setSingleShot(True)
+        self._cursor_timer.setInterval(25)
+        self._cursor_timer.timeout.connect(self._update_cursor)
         theme.bei_wechsel(self, self._thema, sofort=False)
         self.glw.scene().sigMouseMoved.connect(self._mouse_moved)
         for sig in (self.xaxis.currentIndexChanged, self.only_seg.toggled, self.panes_spin.valueChanged):
@@ -149,36 +177,93 @@ class LogViewer(QtWidgets.QWidget):
         self.layout_save_btn.clicked.connect(self._layout_save)
         self.layout_save_as_btn.clicked.connect(self._layout_save_as)
         self.layout_del_btn.clicked.connect(self._layout_delete)
+        self.leiste.sichtbar_geaendert.connect(self._set_sichtbar)
+        self.leiste.markiert_geaendert.connect(self._set_markiert)
+        self.leiste.notiz_geaendert.connect(self._notiz)
+        self.leiste.setup_gewaehlt.connect(self._setup_dialog)
+        self.leiste.quellen_gewaehlt.connect(self._quellen_menue)
+        self.leiste.entfernt.connect(self._entfernen)
+        self.leiste.mittelwert_gewaehlt.connect(self._mittelwert_bilden)
+        self.cursor.kanal_gewaehlt.connect(self._kachel_gewaehlt)
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
-        try:
-            cur = json.loads(self.db.get_meta("viewer_layout", "null"))
-        except ValueError:
-            cur = None
+        cur = self._meta_json("viewer_layout", None)
         if cur:
             self.apply_layout(cur, redraw=False)
         self._fill_layout_combo()
         self.reload()
 
+    def _meta_json(self, key: str, default):
+        try:
+            v = json.loads(self.db.get_meta(key, "null"))
+        except ValueError:
+            return default
+        if v is None or (default is not None and not isinstance(v, type(default))):
+            return default
+        return v
+
+    # ------------------------------------------------------------ Kopfzeile
+    def _build_bar(self) -> QtWidgets.QHBoxLayout:
+        bar = QtWidgets.QHBoxLayout()
+        bar.setSpacing(6)
+        self.xaxis = QtWidgets.QComboBox()
+        for text, kanal in X_ACHSEN:
+            self.xaxis.addItem(text, kanal)
+        self.xaxis.setMinimumWidth(150)
+        self.panes_spin = QtWidgets.QSpinBox()
+        self.panes_spin.setRange(1, MAX_PANES)
+        self.panes_spin.setValue(4)
+        self.only_seg = QtWidgets.QCheckBox("nur Kurvenbereich")
+        for label, w_ in (("X-Achse", self.xaxis), ("Felder", self.panes_spin)):
+            bar.addWidget(QtWidgets.QLabel(label))
+            bar.addWidget(w_)
+        bar.addWidget(self.only_seg)
+        bar.addSpacing(16)
+        bar.addWidget(QtWidgets.QLabel("Layout"))
+        self.layout_combo = QtWidgets.QComboBox()
+        self.layout_combo.setMinimumWidth(270)
+        self.layout_combo.setToolTip("Gespeicherte Auswerte-Layouts (Felder, Kanäle, X-Achse)")
+        bar.addWidget(self.layout_combo)
+        self.layout_save_btn = QtWidgets.QPushButton("Speichern")
+        self.layout_save_as_btn = QtWidgets.QPushButton("Speichern unter …")
+        self.layout_del_btn = QtWidgets.QPushButton("Löschen")
+        for b in (self.layout_save_btn, self.layout_save_as_btn, self.layout_del_btn):
+            bar.addWidget(b)
+        bar.addStretch(1)
+        # Import und Export (vom Hauptfenster verbunden), mit vollem Text
+        self.import_btn = QtWidgets.QPushButton("Importieren …")
+        self.import_btn.setToolTip("LabVIEW-XML oder PyST-Läufe in die Datenbank übernehmen")
+        self.pdf_btn = QtWidgets.QPushButton("PDF-Bericht …")
+        self.pdf_btn.setToolTip("Leistungsdiagramm mit den im Reiter Messen angehakten Läufen und deren Setups")
+        self.csv_knopf = QtWidgets.QPushButton("CSV-Export …")
+        self.csv_knopf.setToolTip("Alle Kanäle des markierten Laufs als CSV (Excel); beim Mittelwert die gemittelten "
+                                  "Kurven")
+        # Das Hauptfenster verbindet csv_btn (exportiert Rohdaten ueber den Lauf-Cache). Der sichtbare Knopf prueft
+        # vorher, ob ein Mittelwert markiert ist – der hat keine Rohdaten und wird hier exportiert.
+        self.csv_btn = QtWidgets.QPushButton("CSV-Export …", self)
+        self.csv_btn.hide()
+        self.csv_knopf.clicked.connect(self._csv)
+        for b in (self.import_btn, self.pdf_btn, self.csv_knopf):
+            b.setMinimumWidth(max(130, b.sizeHint().width()))
+            bar.addWidget(b)
+        return bar
+
     # ------------------------------------------------------------ Layout
     def layout_state(self) -> dict:
-        return {"felder": self.panes_spin.value(), "x": self.xaxis.currentText(),
-                "nur_kurve": self.only_seg.isChecked(), "kanaele": [list(p) for p in self.pane_channels],
-                "anzeigen_aus": sorted(self.gauge_bar.hidden)}
+        return {"felder": self.panes_spin.value(), "x": self.xaxis.currentData(),
+                "nur_kurve": self.only_seg.isChecked(), "kanaele": [list(p) for p in self.pane_channels]}
 
     def apply_layout(self, lay: dict, redraw: bool = True):
         self._applying = True
         try:
             self.panes_spin.setValue(int(lay.get("felder", 4)))
-            i = self.xaxis.findText(lay.get("x", "Zeit"))
+            x = lay.get("x", "Zeit")
+            i = self.xaxis.findData(x)
+            if i < 0:
+                i = self.xaxis.findText(x)
             self.xaxis.setCurrentIndex(max(0, i))
             self.only_seg.setChecked(bool(lay.get("nur_kurve", False)))
             chans = lay.get("kanaele") or DEFAULT_PANES
             self.pane_channels = [list(chans[i]) if i < len(chans) else [] for i in range(MAX_PANES)]
-            if "anzeigen_aus" in lay:
-                hidden = set(lay["anzeigen_aus"])
-                self.gauge_bar.hidden = hidden
-                for key, g in self.gauge_bar.gauges.items():
-                    g.setVisible(key not in hidden)
         finally:
             self._applying = False
         self._layout_changed()
@@ -214,11 +299,17 @@ class LogViewer(QtWidgets.QWidget):
     def _update_layout_dirty(self):
         name = self.layout_combo.currentData() if hasattr(self, "layout_combo") else ""
         saved = self._layouts().get(name) if name else None
-        dirty = bool(name) and saved != self.layout_state()
+        state = self.layout_state()
+        if saved is not None:                  # alte Layouts: X-Achse als Text, Anzeigen der Kachelzeile
+            saved = dict(saved)
+            if self.xaxis.findData(saved.get("x")) < 0 and self.xaxis.findText(str(saved.get("x"))) >= 0:
+                saved["x"] = self.xaxis.itemData(self.xaxis.findText(saved["x"]))
+            saved = {k: saved.get(k) for k in state}
+        dirty = bool(name) and saved != state
         self.layout_save_btn.setEnabled(bool(name) and dirty)
         self.layout_del_btn.setEnabled(bool(name))
         self.layout_combo.setToolTip("Änderungen noch nicht im Layout gespeichert" if dirty else
-                                     "Gespeicherte Auswerte-Layouts (Felder, Kanäle, X-Achse, Anzeigen)")
+                                     "Gespeicherte Auswerte-Layouts (Felder, Kanäle, X-Achse)")
 
     def _layout_chosen(self):
         name = self.layout_combo.currentData()
@@ -273,20 +364,33 @@ class LogViewer(QtWidgets.QWidget):
         self._layout_changed()
         self._redraw()
 
-    def current_run_id(self) -> Optional[int]:
-        """Markierter Lauf: zuerst in "In der Auswertung", sonst in der Auswahlliste, sonst der erste."""
+    def _markierter(self) -> Optional[int]:
+        """Markierter Lauf: zuerst in "In der Auswertung", sonst in der Auswahlliste, sonst der erste (auch
+        Mittelwerte)."""
         it = self.sel_list.currentItem()
         if it is not None:
             return it.data(QtCore.Qt.UserRole)
         it = self.pick_tree.currentItem()
         if it is not None and it.data(0, QtCore.Qt.UserRole) is not None:
             return it.data(0, QtCore.Qt.UserRole)
-        return self.selected[0] if self.selected else None
+        reihe = self._reihe()
+        return reihe[0] if reihe else None
 
-    # ------------------------------------------------------------ Laufauswahl
+    def _ist_mw(self, rid) -> bool:
+        row = self.rows.get(rid) or self.db.run(rid)
+        return bool(row is not None and row.ist_mittelwert)
+
+    def current_run_id(self) -> Optional[int]:
+        """Markierter Lauf mit Rohdaten (fuer CSV-Export und Ausrollversuch des Hauptfensters); Mittelwerte
+        zaehlen nicht – dann der erste angezeigte Lauf mit Rohdaten."""
+        rid = self._markierter()
+        if rid is not None and not self._ist_mw(rid):
+            return rid
+        return next((r for r in self._reihe() if not self._ist_mw(r)), None)
+
+    # ------------------------------------------------------------ Laufauswahl (linke Leiste)
     def _build_left(self) -> QtWidgets.QWidget:
         w = QtWidgets.QWidget()
-        w.setMinimumWidth(300)
         lay = QtWidgets.QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
 
@@ -306,7 +410,7 @@ class LogViewer(QtWidgets.QWidget):
         pl.addWidget(self.pick_tree, 1)
         hb = QtWidgets.QHBoxLayout()
         self.add_btn = QtWidgets.QPushButton("Hinzufügen ↓")
-        self.edit_vehicle_btn = QtWidgets.QPushButton("Bearbeiten …")
+        self.edit_vehicle_btn = QtWidgets.QPushButton("Fahrzeug bearbeiten …")
         self.edit_vehicle_btn.setToolTip("Fahrzeug / Setup des markierten Laufs bearbeiten")
         hb.addWidget(self.add_btn)
         hb.addWidget(self.edit_vehicle_btn)
@@ -328,18 +432,6 @@ class LogViewer(QtWidgets.QWidget):
         sl.addLayout(hb)
         lay.addWidget(sel, 2)
 
-        # Import und Export (vom Hauptfenster verbunden)
-        hb = QtWidgets.QHBoxLayout()
-        self.import_btn = QtWidgets.QPushButton("Importieren …")
-        self.import_btn.setToolTip("LabVIEW-XML oder PyST-Läufe in die Datenbank übernehmen")
-        self.pdf_btn = QtWidgets.QPushButton("PDF-Bericht …")
-        self.pdf_btn.setToolTip("Leistungsdiagramm mit den im Reiter Messen angehakten Läufen und deren Setups")
-        self.csv_btn = QtWidgets.QPushButton("CSV-Export …")
-        self.csv_btn.setToolTip("Alle Kanäle des markierten Laufs als CSV (Excel)")
-        for b in (self.import_btn, self.pdf_btn, self.csv_btn):
-            hb.addWidget(b)
-        lay.addLayout(hb)
-
         self.tabs = QtWidgets.QTabWidget()
         self.lists: List[QtWidgets.QListWidget] = []
         for i in range(MAX_PANES):
@@ -347,7 +439,7 @@ class LogViewer(QtWidgets.QWidget):
             lw.itemChanged.connect(lambda it, i=i: self._pane_changed(i, it))
             self.lists.append(lw)
             self.tabs.addTab(lw, f"Feld {i + 1}")
-        lay.addWidget(QtWidgets.QLabel("<b>Kanäle je Feld</b>"))
+        lay.addWidget(theme.rolle(QtWidgets.QLabel("Kanäle je Feld"), "titel"))
         lay.addWidget(self.tabs, 3)
 
         self.vehicle_combo.currentIndexChanged.connect(lambda _: self._fill_pick())
@@ -373,9 +465,13 @@ class LogViewer(QtWidgets.QWidget):
         i = self.vehicle_combo.findData(cur)
         self.vehicle_combo.setCurrentIndex(i if i >= 0 else 0)
         self.vehicle_combo.blockSignals(False)
-        existing = {r.id for r in self.db.runs()}
+        existing = {r.id for r in self.db.runs(mittelwert=True)}
         self.selected = [rid for rid in self.selected if rid in existing]
         self.data = {rid: d for rid, d in self.data.items() if rid in existing}
+        self.markiert &= existing
+        self._alles()
+
+    def _alles(self):
         self._fill_pick()
         self._fill_selection()
         self._reload_data()
@@ -393,9 +489,19 @@ class LogViewer(QtWidgets.QWidget):
                 names[s["id"]] = s["name"] or "(ohne Namen)"
         return names
 
+    def _basis(self, row) -> str:
+        """Basisfarbe eines Laufs (theme.laufarbe macht sie themengerecht); Mittelwert: avg_color."""
+        if row.ist_mittelwert:
+            return row.farbe or "@avg_color"
+        return run_color_basis(row)
+
+    def _farbe(self, rid: int) -> str:
+        row = self.rows.get(rid) or self.db.run(rid)
+        return theme.laufarbe(self._basis(row)) if row is not None else theme.farbe("text")
+
     def _fill_pick(self):
         vid = self.vehicle_combo.currentData()
-        runs = self.db.runs()                                   # nach Datum absteigend
+        runs = self.db.runs(mittelwert=True)                    # nach Datum absteigend, mit Mittelwerten
         if vid == 0:
             runs = [r for r in runs if not r.vehicle_id]
         elif vid and vid > 0:
@@ -405,12 +511,16 @@ class LogViewer(QtWidgets.QWidget):
         by_setup = self.sort_combo.currentIndex() == 1
         groups: Dict[str, QtWidgets.QTreeWidgetItem] = {}
         for row in runs:
-            it = QtWidgets.QTreeWidgetItem([row.datum.replace("T", " ")[:16],
-                                            "Dauer" if row.quelle == "Dauermessung" else f"{row.p_max:.1f}",
+            dauer = row.art == "dauermessung" or row.quelle == "Dauermessung"
+            it = QtWidgets.QTreeWidgetItem([row.name if row.ist_mittelwert else datum_text(row),
+                                            "Dauer" if dauer else f"{row.p_max:.1f}",
                                             setups.get(row.setup_id, "")])
             it.setData(0, QtCore.Qt.UserRole, row.id)
-            it.setToolTip(0, f"{row.name}\n{row.notiz}" if row.notiz else row.name)
-            it.setIcon(0, _icon(run_color(row)))
+            tip = f"{row.name}\n{row.notiz}" if row.notiz else row.name
+            if row.ist_mittelwert:
+                tip = f"Mittelwert-Lauf vom {datum_text(row)}\n" + tip
+            it.setToolTip(0, tip)
+            it.setIcon(0, farb_icon(self._basis(row), row.ist_mittelwert))
             if row.id in self.selected:
                 f = it.font(0)
                 f.setItalic(True)
@@ -441,24 +551,25 @@ class LogViewer(QtWidgets.QWidget):
                 new += [it.child(k).data(0, QtCore.Qt.UserRole) for k in range(it.childCount())]
             else:
                 new.append(rid)
+        self.add_runs(new)
+
+    def add_runs(self, ids: Sequence[int]):
+        """Laeufe in die Auswertung nehmen (hinten anhaengen, sichtbar)."""
         added = False
-        for rid in new:
-            if rid is not None and rid not in self.selected:
+        for rid in ids:
+            if rid is not None and rid not in self.selected and self.db.run(rid) is not None:
                 self.selected.append(rid)
                 added = True
+            self.hidden.discard(rid)
         if added:
-            self._fill_pick()
-            self._fill_selection()
-            self._reload_data()
+            self._alles()
 
     def show_run(self, rid: int):
         """Von aussen (Doppelklick in der Laufliste): Lauf hinzufuegen und anzeigen."""
         if rid not in self.selected:
             self.selected.insert(0, rid)
         self.hidden.discard(rid)
-        self._fill_pick()
-        self._fill_selection()
-        self._reload_data()
+        self._alles()
 
     def _fill_selection(self):
         vehicles = {r["id"]: r["name"] for r in self.db.vehicles()}
@@ -469,11 +580,12 @@ class LogViewer(QtWidgets.QWidget):
             row = self.db.run(rid)
             if row is None:
                 continue
+            dauer = row.art == "dauermessung" or row.quelle == "Dauermessung"
             text = " · ".join(x for x in (vehicles.get(row.vehicle_id, ""), setups.get(row.setup_id, ""),
-                                          row.datum.replace("T", " ")[:16],
-                                          "Dauermessung" if row.quelle == "Dauermessung" else f"{row.p_max:.1f} PS")
-                            if x)
-            it = QtWidgets.QListWidgetItem(_icon(run_color(row)), text)
+                                          row.name if row.ist_mittelwert else datum_text(row),
+                                          "Dauermessung" if dauer else f"{row.p_max:.1f} PS")
+                              if x)
+            it = QtWidgets.QListWidgetItem(farb_icon(self._basis(row), row.ist_mittelwert), text)
             it.setData(QtCore.Qt.UserRole, rid)
             it.setFlags(it.flags() | QtCore.Qt.ItemIsUserCheckable)
             it.setCheckState(QtCore.Qt.Unchecked if rid in self.hidden else QtCore.Qt.Checked)
@@ -481,27 +593,43 @@ class LogViewer(QtWidgets.QWidget):
         self.sel_list.blockSignals(False)
 
     def _visibility_changed(self, it):
-        rid = it.data(QtCore.Qt.UserRole)
-        if it.checkState() == QtCore.Qt.Checked:
+        self._set_sichtbar(it.data(QtCore.Qt.UserRole), it.checkState() == QtCore.Qt.Checked)
+
+    def _set_sichtbar(self, rid: int, an: bool):
+        if an:
             self.hidden.discard(rid)
         else:
             self.hidden.add(rid)
+        self._fill_selection()
+        self._fill_leiste()
         self._redraw()
+
+    def _set_markiert(self, rid: int, an: bool):
+        if an:
+            self.markiert.add(rid)
+        else:
+            self.markiert.discard(rid)
+        for e in self.leiste.eintraege:                 # Leiste hat ihren Eintrag schon geaendert
+            if e.rid == rid:
+                e.markiert = an
+
+    def _entfernen(self, rid: int):
+        if rid in self.selected:
+            self.selected.remove(rid)
+        self.markiert.discard(rid)
+        self._alles()
 
     def _remove_selected(self):
         for it in self.sel_list.selectedItems():
             rid = it.data(QtCore.Qt.UserRole)
             if rid in self.selected:
                 self.selected.remove(rid)
-        self._fill_pick()
-        self._fill_selection()
-        self._reload_data()
+        self._alles()
 
     def _clear(self):
         self.selected = []
-        self._fill_pick()
-        self._fill_selection()
-        self._reload_data()
+        self.markiert = set()
+        self._alles()
 
     # ------------------------------------------------------------ Bearbeiten
     def _edit(self, vid, sid):
@@ -532,6 +660,7 @@ class LogViewer(QtWidgets.QWidget):
             return
         row = self.db.run(it.data(QtCore.Qt.UserRole))
         m = QtWidgets.QMenu(self)
+        a_setup = None if row.ist_mittelwert else m.addAction("Setup und Notiz des Laufs …")
         a_edit = m.addAction("Fahrzeug / Setup bearbeiten …")
         assign = m.addMenu("Setup zuordnen")
         setup_actions = {}
@@ -543,7 +672,9 @@ class LogViewer(QtWidgets.QWidget):
         act = m.exec(self.sel_list.viewport().mapToGlobal(pos))
         if act is None:
             return
-        if act == a_edit:
+        if act == a_setup:
+            self._setup_dialog(row.id)
+        elif act == a_edit:
             self._edit(row.vehicle_id, row.setup_id)
         elif act in setup_actions:
             self.db.update_run(row.id, setup_id=setup_actions[act])
@@ -556,24 +687,185 @@ class LogViewer(QtWidgets.QWidget):
                 self.db_changed.emit()
                 self.reload()
         elif act == a_remove:
-            self.selected.remove(row.id)
-            self._fill_pick()
-            self._fill_selection()
-            self._reload_data()
+            self._entfernen(row.id)
+
+    def _notiz(self, rid: int, text: str):
+        self.db.update_run(rid, notiz=text)
+        if rid in self.rows:
+            self.rows[rid].notiz = text
+        self._fill_setup_table()
+        self.db_changed.emit()
+
+    def _vorher(self, rid: int):
+        """Lauf in der Zeile darueber (Vergleich im Setup-Dialog)."""
+        reihe = self._reihe()
+        i = reihe.index(rid) if rid in reihe else -1
+        return self.rows.get(reihe[i - 1]) if i > 0 else None
+
+    def _setup_dialog(self, rid: int):
+        row = self.db.run(rid)
+        if row is None or row.ist_mittelwert:
+            return
+        dlg = LaufSetupDialog(self.db, row, self._vorher(rid), self)
+        if dlg.exec() == QtWidgets.QDialog.Accepted and dlg.geaendert:
+            self.db_changed.emit()
+            self.reload()
+
+    # ------------------------------------------------------------ Mittelwert
+    def _mittelwert_bilden(self):
+        ids = [rid for rid in self._reihe() if rid in self.markiert and rid in self.data and not self._ist_mw(rid)]
+        if len(ids) < mw.MIN_LAEUFE:
+            QtWidgets.QMessageBox.information(self, "Mittelwert bilden", "Bitte mindestens 2 Läufe in der Spalte "
+                                              "„mark.“ markieren.")
+            return
+        quellen = [(self.rows[rid], self.data[rid][0], self.data[rid][1], self._basis(self.rows[rid])) for rid in ids]
+        vid = next((self.rows[r].vehicle_id for r in ids if self.rows[r].vehicle_id), None)
+        dlg = MittelwertDialog(self.db, quellen, self.db.schnellwert_plaetze(vid), self)
+        if dlg.exec() == QtWidgets.QDialog.Accepted and dlg.rid:
+            self.mittelwert_uebernehmen(dlg.rid, ids)
+
+    def mittelwert_uebernehmen(self, rid: int, quellen: Sequence[int] = ()):
+        """Neuer Mittelwert-Lauf: oben in die Auswertung, Markierung der Quellen weg."""
+        self.markiert -= set(quellen)
+        if rid not in self.selected:
+            self.selected.insert(0, rid)
+        self.hidden.discard(rid)
+        self.db_changed.emit()
+        self.reload()
+
+    def _band_setzen(self, rid: int, art: str):
+        info = self.mw_info.setdefault(rid, {})
+        info["band"] = art
+        row = self.rows.get(rid)
+        if row is not None:
+            zusatz_schreiben(row.ordner, band=art)
+        self._fill_leiste()
+        self._redraw()
+
+    def _quellen_tip(self, row) -> str:
+        info = self.mw_info.get(row.id, {})
+        res = info.get("res")
+        namen = []
+        for q in row.quellen:
+            r = self.db.run(q)
+            namen.append(zeit_text(r) if r is not None else f"Lauf {q} (gelöscht)")
+        t = "Quellen: " + (", ".join(namen) or "–")
+        if res is not None:
+            t += f" – Raster {zahl(res.raster)} 1/min, oben {zahl(res.oben_weg)} 1/min weg"
+        return t + f", Band {band_text(info.get('band', BAND_STANDARD))}"
+
+    def _quellen_menue(self, rid: int, knopf=None):
+        row = self.rows.get(rid) or self.db.run(rid)
+        if row is None:
+            return
+        m = QtWidgets.QMenu(self)
+        m.setToolTipsVisible(True)
+        kopf = m.addAction("Quellläufe – Klick holt den Lauf in die Auswertung")
+        kopf.setEnabled(False)
+        for q in row.quellen:
+            r = self.db.run(q)
+            if r is None:
+                a = m.addAction(f"Lauf {q} (gelöscht)")
+                a.setEnabled(False)
+                continue
+            a = m.addAction(farb_icon(self._basis(r)), f"{datum_text(r)} · {zahl(r.p_max, 1)} PS"
+                            + ("  ✓" if q in self.selected else ""))
+            a.triggered.connect(lambda _c=False, q=q: self.add_runs([q]))
+        m.addSeparator()
+        kopf = m.addAction("Streuband im Diagramm")
+        kopf.setEnabled(False)
+        grp = QtGui.QActionGroup(m)
+        aktuell = self.mw_info.get(rid, {}).get("band", BAND_STANDARD)
+        for art, text in BAND_ARTEN:
+            a = m.addAction(text)
+            a.setCheckable(True)
+            a.setChecked(art == aktuell)
+            grp.addAction(a)
+            a.triggered.connect(lambda _c=False, art=art: self._band_setzen(rid, art))
+        res = self.mw_info.get(rid, {}).get("res")
+        if res is not None:
+            m.addSeparator()
+            a = m.addAction(f"Raster {zahl(res.raster)} 1/min · oben {zahl(res.oben_weg)} 1/min weg · "
+                            f"gemittelt {zahl(res.n[0] if len(res.n) else 0)}–{zahl(res.n[-1] if len(res.n) else 0)}"
+                            " 1/min")
+            a.setEnabled(False)
+        if knopf is not None:
+            m.exec(knopf.mapToGlobal(QtCore.QPoint(0, knopf.height())))
+        return m
+
+    # ------------------------------------------------------------ Export
+    def _csv(self):
+        rid = self._markierter()
+        if rid is None or not self._ist_mw(rid):
+            self.csv_btn.click()                       # Rohdaten ueber das Hauptfenster
+            return
+        if rid not in self.data:
+            return
+        row = self.rows.get(rid) or self.db.run(rid)
+        QtWidgets.QMessageBox.information(
+            self, "CSV-Export", f"„{row.name}“ ist ein Mittelwert-Lauf ohne Rohdaten (Telegramme).\nExportiert werden "
+                                "die gemittelten Kurven auf dem Drehzahlraster, dazu min, max und σ je Kanal.")
+        import os
+        path, flt = QtWidgets.QFileDialog.getSaveFileName(
+            self, "CSV-Export", os.path.join(os.path.expanduser("~"), f"{row.name.replace('·', '-')}.csv"),
+            "CSV für Excel deutsch (*.csv);;CSV international, Dezimalpunkt (*.csv)")
+        if path:
+            from .report import export_csv
+            export_csv(path, self.mittelwert_kanaele(rid), decimal_comma="deutsch" in flt)
+
+    def mittelwert_kanaele(self, rid: int) -> Dict[str, Channel]:
+        """Kanaele eines Mittelwerts mit min/max/σ als eigene Spalten (CSV-Export)."""
+        ch = self.data[rid][0]
+        out: Dict[str, Channel] = {}
+        for name, c in ch.items():
+            out[name] = c
+            b = self.baender.get(rid, {}).get(name)
+            if b:
+                mn, mx = b.get("minmax") or (None, None)
+                su, so = b.get("sigma") or (None, None)
+                if mn is not None:
+                    out[f"{name} min"] = Channel(mn, c.unit)
+                    out[f"{name} max"] = Channel(mx, c.unit)
+                if su is not None:
+                    out[f"{name} σ"] = Channel((so - su) / 2.0, c.unit)
+        return out
 
     # ------------------------------------------------------------ Daten
+    def _load(self, rid: int) -> Optional[tuple]:
+        row = self.rows.get(rid) or self.db.run(rid)
+        if row is None:
+            return None
+        if not row.ist_mittelwert:
+            return self.load_channels(rid)
+        try:
+            res = mw.laden(row)
+        except (OSError, ValueError) as exc:
+            self._ladefehler[rid] = str(exc)
+            return None
+        z = zusatz_lesen(row.ordner)
+        ch, baender = kanaele_aus_mittelwert(res, z.get("einheiten"))
+        self.baender[rid] = baender
+        self.mw_info[rid] = {"res": res, "band": z.get("band", BAND_STANDARD)}
+        return ch, None, []
+
     def _reload_data(self):
+        self.rows = {rid: r for rid in self.selected for r in [self.db.run(rid)] if r is not None}
         for rid in self.selected:
-            if rid not in self.data:
-                d = self.load_channels(rid)
+            if rid not in self.data and rid in self.rows:
+                d = self._load(rid)
                 if d is not None:
                     self.data[rid] = d
         self._fill_lists()
+        self._fill_leiste()
         self._redraw()
         self._fill_setup_table()
 
+    def _reihe(self) -> List[int]:
+        """Laeufe der Auswertung in Anzeigereihenfolge (Mittelwerte oben, dann alt -> neu)."""
+        return [r.id for r in reihenfolge([self.rows[rid] for rid in self.selected if rid in self.rows])]
+
     def _runs_shown(self) -> List[int]:
-        return [rid for rid in self.selected if rid not in self.hidden and rid in self.data]
+        return [rid for rid in self._reihe() if rid not in self.hidden and rid in self.data]
 
     def _fill_lists(self):
         names: List[str] = []
@@ -594,6 +886,42 @@ class LogViewer(QtWidgets.QWidget):
             lw.blockSignals(False)
         for n in names:
             self.color_of.setdefault(n, PALETTE[len(self.color_of) % len(PALETTE)])
+        self._alle_namen = names
+
+    def _fill_leiste(self):
+        reihe = self._reihe()
+        rows = [self.rows[rid] for rid in reihe]
+        self.bez = lauf_bezeichnungen(rows)
+        vid = next((r.vehicle_id for r in rows if r.vehicle_id), None)
+        felder = self.db.schnellwert_plaetze(vid)
+        setups = self._setup_names()
+        zellen = schnellwert_zellen([self.db.lauf_setup(r) for r in rows], felder)
+        eintraege = []
+        for r, z in zip(rows, zellen):
+            dauer = r.art == "dauermessung" or r.quelle == "Dauermessung"
+            tip = r.name + (f"\n{r.notiz}" if r.notiz else "")
+            if r.id in self._ladefehler:
+                tip += f"\nLässt sich nicht laden: {self._ladefehler[r.id]}"
+            eintraege.append(Eintrag(
+                rid=r.id, farbe=self._basis(r), mittelwert=r.ist_mittelwert,
+                lauf=r.name if r.ist_mittelwert else datum_text(r), kurz=self.bez.get(r.id, ""),
+                setup=setups.get(r.setup_id, ""), zellen=z,
+                pmax="Dauermessung" if dauer else f"<b>{zahl(r.p_max, 1)}</b> PS @ {zahl(r.n_pmax)}",
+                mmax="" if dauer else f"<b>{zahl(r.m_max, 1)}</b> Nm", notiz=r.notiz,
+                sichtbar=r.id not in self.hidden, markiert=r.id in self.markiert, tooltip=tip,
+                quellen_tip=self._quellen_tip(r) if r.ist_mittelwert else ""))
+        vehicles = {v["id"]: v["name"] for v in self.db.vehicles()}
+        vnamen = list(dict.fromkeys(vehicles[r.vehicle_id] for r in rows if r.vehicle_id in vehicles))
+        info = ""
+        if vnamen:
+            info = f"· Fahrzeug{'e' if len(vnamen) > 1 else ''}: {', '.join(vnamen)} "
+        info += "· gelb = Setup-Wert anders als im Lauf darüber"
+        self.leiste.set_daten(eintraege, felder, info)
+        shown = self._runs_shown()
+        n = len([r for r in reihe if r not in self.hidden])
+        self.seitenleiste.set_streifen_text(f"Läufe & Kanäle  ({n} angezeigt)")
+        self.seitenleiste.set_zusatz(f"{n} angezeigt")
+        self.seitenleiste.set_streifen_farben([self._basis(self.rows[r]) for r in shown])
 
     # ------------------------------------------------------------ Zeichnen
     def _selected_channels(self, pane: int) -> List[str]:
@@ -604,9 +932,12 @@ class LogViewer(QtWidgets.QWidget):
         seg = self.data[rid][1]
         return seg if (self.only_seg.isChecked() and seg is not None) else slice(None)
 
+    def _x_key(self) -> str:
+        return self.xaxis.currentData() or "Zeit"
+
     def _x(self, rid) -> Optional[np.ndarray]:
         ch = self.data[rid][0]
-        key = "Zeit" if self.xaxis.currentText() == "Zeit" else "Drehzahl Motor"
+        key = self._x_key()
         c = ch.get(key)
         if c is None:
             return None
@@ -643,15 +974,26 @@ class LogViewer(QtWidgets.QWidget):
     def _thema(self, _thema: str):
         self.glw.setBackground(theme.farbe("plot"))
         if getattr(self, "plots", None) is not None:
+            self._fill_pick()
+            self._fill_selection()
             self._redraw()
             self._fill_setup_table()
+
+    def _band(self, rid: int, name: str):
+        art = self.mw_info.get(rid, {}).get("band", BAND_STANDARD)
+        if not art:
+            return None
+        return self.baender.get(rid, {}).get(name, {}).get(art)
 
     def _redraw(self):
         self.glw.clear()
         self.plots, self.lines = [], []
+        self._bereiche, self._live = {}, None
         runs = self._runs_shown()
         multi = len(runs) > 1
-        colors = {rid: run_color(self.db.run(rid)) for rid in runs}
+        colors = {rid: self._farbe(rid) for rid in runs}
+        # Mittelwerte zuletzt zeichnen (liegen oben)
+        reihe = [r for r in runs if not self._ist_mw(r)] + [r for r in runs if self._ist_mw(r)]
         prev = None
         n_panes = self.panes_spin.value()
         for p in range(n_panes):
@@ -659,7 +1001,7 @@ class LogViewer(QtWidgets.QWidget):
             theme.plotitem_stil(pi)
             pi.setMenuEnabled(False)
             pi.hideButtons()
-            pi.showGrid(x=True, y=False, alpha=0.35)
+            pi.showGrid(x=True, y=True, alpha=0.35)
             pi.getAxis("left").setStyle(showValues=False)
             pi.getAxis("left").setWidth(12)
             for ax in ("top", "right"):                         # geschlossener Rahmen
@@ -679,7 +1021,7 @@ class LogViewer(QtWidgets.QWidget):
                 title = "  ".join(f"{STYLE_MARK[i % 4]} {n}" for i, n in enumerate(names))
             else:
                 title = "  ".join(f"<span style='color:{self._kfarbe(n)}'>{n}</span>" for n in names)
-            pi.setTitle(title, size="10pt", color=theme.farbe("text"))
+            pi.setTitle(f"<b>{title}</b>" if title else "", size="10pt", color=theme.farbe("text"))
             ranges = {}                                         # gleiche Einheit -> gemeinsame Skala
             for n in names:
                 r = self._range(n, runs)
@@ -693,17 +1035,24 @@ class LogViewer(QtWidgets.QWidget):
                 if rng is None:
                     continue
                 lo, hi = rng
-                for rid in runs:
+                for rid in reihe:
                     c = self.data[rid][0].get(n)
                     x = self._x(rid)
                     if c is None or x is None:
                         continue
-                    y = (c.values[self._slice(rid)] - lo) / (hi - lo)
+                    ist_mw = self._ist_mw(rid)
                     color = colors[rid] if multi else self._kfarbe(n)
+                    if ist_mw:
+                        b = self._band(rid, n)
+                        if b is not None:
+                            fuell_band(pi, x, (b[0] - lo) / (hi - lo), (b[1] - lo) / (hi - lo), colors[rid],
+                                       BAND_ALPHA)
+                    y = (c.values[self._slice(rid)] - lo) / (hi - lo)
                     style = STYLES[ci % 4] if multi else QtCore.Qt.SolidLine
-                    pi.plot(x, y, pen=pg.mkPen(color, width=1.6, style=style), connect="finite")
+                    pi.plot(x, y, pen=pg.mkPen(color, width=LINIE_MW if ist_mw else LINIE, style=style),
+                            connect="finite")
             # Marker der Dauermessung (Text nur im obersten Feld)
-            if self.xaxis.currentText() == "Zeit" and not self.only_seg.isChecked():
+            if self._x_key() == "Zeit" and not self.only_seg.isChecked():
                 for rid in runs:
                     d = self.data[rid]
                     for t, text in (d[2] if len(d) > 2 else []):
@@ -711,13 +1060,20 @@ class LogViewer(QtWidgets.QWidget):
                                                    label=text if p == 0 else None,
                                                    labelOpts={"position": 0.92, "color": theme.farbe("ok_fg")}),
                                    ignoreBounds=True)
-            line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen(theme.farbe("cursor"), width=1))
+            line = pg.InfiniteLine(angle=90, movable=False,
+                                   pen=pg.mkPen(theme.farbe("cursor"), width=1.2, style=QtCore.Qt.DashLine))
             pi.addItem(line, ignoreBounds=True)
             self.plots.append(pi)
             self.lines.append(line)
+        for p, f in enumerate(FELD_HOEHEN[:n_panes]):          # oberes Feld groesser (Entwurf: 5 : 3 : 2)
+            self.glw.ci.layout.setRowStretchFactor(p, f)
         if self.plots:
-            self.plots[-1].setLabel("bottom", "Zeit [s]" if self.xaxis.currentText() == "Zeit"
-                                    else "Motordrehzahl [1/min]")
+            self.plots[-1].setLabel("bottom", "Zeit [s]" if self._x_key() == "Zeit" else "Motordrehzahl [1/min]",
+                                    color=theme.farbe("plot_axis"))
+        hinweis = HINWEIS
+        if self._x_key() == "Zeit" and any(self._ist_mw(r) for r in runs):
+            hinweis += " · Ø-Läufe gibt es nur über der Motordrehzahl (X-Achse umstellen)"
+        self.hint.setText(hinweis)
         self._place_cursor()
 
     # ------------------------------------------------------------ Cursor
@@ -728,25 +1084,37 @@ class LogViewer(QtWidgets.QWidget):
                 return
 
     def _primary(self) -> Optional[int]:
-        runs = self._runs_shown()
-        return runs[0] if runs else None
+        """Lauf, an dessen Telegrammen der Cursor springt: der erste angezeigte mit Rohdaten, sonst ein Mittelwert."""
+        runs = [r for r in self._runs_shown() if self._x(r) is not None]
+        echte = [r for r in runs if not self._ist_mw(r)]
+        return (echte or runs or [None])[0]
 
     def _set_cursor_x(self, x: float):
         rid = self._primary()
         xa = self._x(rid) if rid is not None else None
-        if xa is None or not len(xa):
+        if xa is None or not len(xa) or not np.isfinite(xa).any():
             return
         self.cursor_idx = int(np.nanargmin(np.abs(xa - x)))
         self._place_cursor()
+
+    def cursor_x(self) -> Optional[float]:
+        rid = self._primary()
+        xa = self._x(rid) if rid is not None else None
+        if xa is None or not len(xa):
+            return None
+        v = float(xa[max(0, min(len(xa) - 1, self.cursor_idx))])
+        return v if np.isfinite(v) else None
 
     def _place_cursor(self):
         rid = self._primary()
         xa = self._x(rid) if rid is not None else None
         if xa is not None and len(xa):
             self.cursor_idx = max(0, min(len(xa) - 1, self.cursor_idx))
-            for line in self.lines:
-                line.setPos(float(xa[self.cursor_idx]))
-        self._update_table()
+            x = float(xa[self.cursor_idx])
+            if np.isfinite(x):
+                for line in self.lines:
+                    line.setPos(x)
+        self._cursor_timer.start()
 
     def keyPressEvent(self, ev: QtGui.QKeyEvent):
         if ev.key() in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Right):
@@ -755,99 +1123,116 @@ class LogViewer(QtWidgets.QWidget):
         else:
             super().keyPressEvent(ev)
 
-    def _value(self, rid: int, name: str, x_at: float, primary: bool) -> str:
-        c = self.data[rid][0].get(name)
-        x = self._x(rid)
-        if c is None or x is None or not len(x):
-            return ""
-        j = self.cursor_idx if primary else int(np.nanargmin(np.abs(x - x_at)))
-        j = min(j, len(x) - 1)
-        v = c.values[self._slice(rid)][j]
-        if not np.isfinite(v):
-            return "–"
-        dec = 3 if c.unit == "λ" else (2 if abs(v) < 100 else 0)
-        return f"{v:.{dec}f} {c.unit}"
-
-    def _update_table(self):
-        runs = self._runs_shown()
-        names = ["Zeit"]
+    def _kachel_kanaele(self) -> List[Tuple[str, str]]:
+        """[(Standard, gewaehlt)]: Standard = Kanaele der Felder (ohne Doppelte), gewaehlt per Titel ▾."""
+        std: List[str] = []
         for p in range(self.panes_spin.value()):
             for n in self._selected_channels(p):
-                if n not in names:
-                    names.append(n)
-        self.table.setColumnCount(1 + len(runs))
-        self.table.setHorizontalHeaderLabels(["Kanal"] + [self.db.run(rid).datum.replace("T", " ")[5:16]
-                                                         for rid in runs])
-        for k, rid in enumerate(runs):
-            self.table.horizontalHeaderItem(k + 1).setForeground(QtGui.QColor(run_color(self.db.run(rid))))
-        self.table.setRowCount(len(names))
-        x_at = 0.0
-        if runs:
-            xa = self._x(runs[0])
-            if xa is not None and len(xa) > self.cursor_idx:
-                x_at = float(xa[self.cursor_idx])
-        self._update_gauges(runs)
-        for r, n in enumerate(names):
-            it = QtWidgets.QTableWidgetItem(n)
-            if len(runs) <= 1:
-                it.setForeground(QtGui.QColor(self._kfarbe(n)))
-            self.table.setItem(r, 0, it)
-            for k, rid in enumerate(runs):
-                self.table.setItem(r, k + 1, QtWidgets.QTableWidgetItem(self._value(rid, n, x_at, k == 0)))
-        self.table.resizeColumnToContents(0)
-        for k in range(len(runs)):
-            self.table.setColumnWidth(k + 1, 105)
+                if n not in std:
+                    std.append(n)
+        return [(n, self.kachel_wahl.get(n, n)) for n in std]
 
-    def _update_gauges(self, runs):
-        """Anzeigenleiste: Werte des ersten sichtbaren Laufs am Cursor."""
-        if not runs:
-            self.gauge_run.setText("")
-            for key in self.gauge_bar.keys():
-                self.gauge_bar.set(key, "–")
-            return
-        rid = runs[0]
-        row = self.db.run(rid)
-        self.gauge_run.setText(f"<span style='color:{run_color(row)}'>■</span> {row.datum.replace('T', ' ')[5:16]}")
-        ch = self.data[rid][0]
-        sl = self._slice(rid)
-        for key, _title, unit, name, dec in VIEW_GAUGES:
-            c = ch.get(name)
-            if c is None:
-                self.gauge_bar.set(key, "–")
-                continue
-            vals = c.values[sl]
-            if not len(vals):
-                self.gauge_bar.set(key, "–")
-                continue
-            v = vals[min(self.cursor_idx, len(vals) - 1)]
-            if name == "Zeit":
-                v = v - vals[0]
-            ok = np.isfinite(v) and not (name.startswith("EGT") and v <= 0)
-            if not ok:
-                text = "–"
-            elif dec == 0 and unit == "1/min":
-                text = f"{v:,.0f}".replace(",", ".")          # wie im Reiter Messen: 9.972
+    def _kachel_gewaehlt(self, i: int, kanal: str):
+        paare = self._kachel_kanaele()
+        if i < len(paare):
+            std = paare[i][0]
+            if kanal == std:
+                self.kachel_wahl.pop(std, None)
             else:
-                text = f"{v:.{dec}f}"
-            self.gauge_bar.set(key, text)
+                self.kachel_wahl[std] = kanal
+            self.db.set_meta("viewer_kacheln", json.dumps(self.kachel_wahl, ensure_ascii=False))
+        self._update_cursor()
+
+    def _balken(self, name: str, runs: List[int]) -> Tuple[float, float, list]:
+        """Balkenbereich und Zonen einer Kachel: aus der Live-Belegung des Fahrzeugs (Messen), sonst gerundet aus
+        den angezeigten Daten."""
+        if self._live is None:
+            vid = next((self.rows[r].vehicle_id for r in runs if r in self.rows and self.rows[r].vehicle_id), None)
+            self._live = self.db.live_plaetze(vid)
+        for p in self._live:
+            if LIVE_ZU_KANAL.get(p["kanal"]) == name:
+                return float(p["min"]), float(p["max"]), [tuple(z) for z in p["zonen"]]
+        if name not in self._bereiche:                  # nur der Kurvenbereich (ohne Anlauf und Ausrollen)
+            vals = []
+            for rid in runs:
+                c = self.data[rid][0].get(name)
+                if c is not None:
+                    seg = self.data[rid][1]
+                    v = np.asarray(c.values[seg if seg is not None else slice(None)], float)
+                    vals.append(v[np.isfinite(v)])
+            allv = np.concatenate(vals) if vals else np.zeros(0)
+            self._bereiche[name] = (float(allv.min()), float(allv.max())) if len(allv) else None
+        r = self._bereiche[name]
+        lo, hi = bereich_runden(*r) if r else (0.0, 1.0)
+        return lo, hi, []
+
+    def _update_cursor(self):
+        """Rechte Spalte „Werte am Cursor“ fuellen."""
+        runs = self._runs_shown()
+        prim = self._primary()
+        x_at = self.cursor_x()
+        # X-Achse
+        zeit = self._x_key() == "Zeit"
+        xs = [self._x(r) for r in runs]
+        xs = [x[np.isfinite(x)] for x in xs if x is not None and len(x)]
+        xs = [x for x in xs if len(x)]
+        lo, hi = bereich_runden(min(float(x.min()) for x in xs), max(float(x.max()) for x in xs)) if xs else (0, 1)
+        self.cursor.set_x("Zeit am Cursor" if zeit else "Motordrehzahl am Cursor", "s" if zeit else "1/min", x_at,
+                          lo, hi, 2 if zeit else 0)
+        # Kanaele
+        daten = []
+        for _std, name in self._kachel_kanaele():
+            if not name:
+                daten.append(KachelDaten(""))
+                continue
+            laeufe = []
+            for rid in runs:
+                c = self.data[rid][0].get(name)
+                x = self._x(rid)
+                y = None if c is None else c.values[self._slice(rid)]
+                if rid == prim and y is not None and len(y) and x_at is not None:
+                    v = float(y[min(self.cursor_idx, len(y) - 1)])
+                    laeufe.append((self._basis(self.rows[rid]), self.bez.get(rid, ""), v if np.isfinite(v) else None))
+                else:
+                    laeufe += laufwerte_am_cursor([(self._basis(self.rows[rid]), self.bez.get(rid, ""), x, y,
+                                                    self._ist_mw(rid))], x_at)
+            unit = self._unit(name)
+            blo, bhi, zonen = self._balken(name, runs)
+            daten.append(KachelDaten(name, unit, dez_fuer(unit, bhi - blo), blo, bhi, zonen, laeufe))
+        kanaele = [Kanal(n, n, self._unit(n), "ECU" if n.endswith("(ECU)") else "PST", dez_fuer(self._unit(n)))
+                   for n in getattr(self, "_alle_namen", [])]
+        self.cursor.set_kacheln(daten, kanaele)
+        # Maxima je Lauf
+        maxima = {"p_max": [], "n_pmax": [], "m_max": [], "n_mmax": []}
+        for rid in runs:
+            row = self.rows[rid]
+            dauer = row.art == "dauermessung" or row.quelle == "Dauermessung"
+            for k in maxima:
+                v = getattr(row, k)
+                maxima[k].append((self._basis(row), self.bez.get(rid, ""), None if dauer or not v else float(v)))
+        self.cursor.set_maxima(maxima)
 
     # ------------------------------------------------------------ Setup-Vergleich
     def _fill_setup_table(self):
         vehicles = {r["id"]: r["name"] for r in self.db.vehicles()}
+        setups = self._setup_names()
         rows_data = []
-        for rid in self.selected:
-            row = self.db.run(rid)
+        for rid in self._reihe():
+            row = self.rows.get(rid) or self.db.run(rid)
             if row is None:
                 continue
-            s = (self.db.setup(row.setup_id) if row.setup_id else None) or {}
+            s = self.db.lauf_setup(row)
             p = row.params or {}
-            d = {"Fahrzeug": vehicles.get(row.vehicle_id, ""), "Setup": s.get("name", ""),
-                 "Datum": row.datum.replace("T", " ")[:16], "Pmax": f"{row.p_max:.1f} PS bei {row.n_pmax:.0f}",
+            d = {"Fahrzeug": vehicles.get(row.vehicle_id, ""), "Setup": setups.get(row.setup_id, ""),
+                 "Datum": datum_text(row), "Pmax": f"{row.p_max:.1f} PS bei {row.n_pmax:.0f}",
                  "Mmax": f"{row.m_max:.1f} Nm bei {row.n_mmax:.0f}", "Notiz Lauf": row.notiz}
+            if row.ist_mittelwert:
+                d["Mittelwert aus"] = ", ".join(datum_text(r) for r in (self.db.run(q) for q in row.quellen)
+                                                if r is not None)
             for _g, fields in SETUP_FIELDS:
                 for key, label, _t in fields:
                     d[label] = str(s.get(key, "") or "")
-            if p:
+            if p and not row.ist_mittelwert:
                 d["Übersetzung (Rechnung)"] = f"{p.get('ratio', 0):.3f}"
                 d["Trägheit J"] = f"{p.get('inertia', 0):.2f}"
                 pp = physics.DynoParams(**{k: v for k, v in p.items() if k in physics.DynoParams.__dataclass_fields__})
@@ -861,16 +1246,18 @@ class LogViewer(QtWidgets.QWidget):
                     keys.append(k)
         keys = [k for k in keys if any(d.get(k) for _r, d in rows_data)]
         self.setup_table.setColumnCount(1 + len(rows_data))
-        self.setup_table.setHorizontalHeaderLabels(["Eintrag"] + [r.datum.replace("T", " ")[5:16]
+        self.setup_table.setHorizontalHeaderLabels(["Eintrag"] + [self.bez.get(r.id) or datum_text(r)
                                                                   for r, _ in rows_data])
         for k, (row, _d) in enumerate(rows_data):
-            self.setup_table.horizontalHeaderItem(k + 1).setForeground(QtGui.QColor(run_color(row)))
+            self.setup_table.horizontalHeaderItem(k + 1).setForeground(QtGui.QColor(theme.laufarbe(self._basis(row))))
         self.setup_table.setRowCount(len(keys))
         diff_bg = QtGui.QColor(theme.farbe("changed_bg"))
         diff_fg = QtGui.QColor(theme.farbe("changed_text"))
         for r, key in enumerate(keys):
             vals = [d.get(key, "") for _row, d in rows_data]
-            differs = len(set(vals)) > 1 and key not in ("Datum", "Pmax", "Mmax", "Notiz Lauf")
+            # Mittelwerte ohne Eintrag (Rechnung, Klima …) zaehlen nicht als Unterschied
+            vgl = [v for (row, _d), v in zip(rows_data, vals) if v or not row.ist_mittelwert]
+            differs = len(set(vgl)) > 1 and key not in ("Datum", "Pmax", "Mmax", "Notiz Lauf", "Mittelwert aus")
             it = QtWidgets.QTableWidgetItem(key)
             if differs:
                 f = it.font()
