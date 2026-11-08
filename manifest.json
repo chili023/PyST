@@ -1,0 +1,25 @@
+{
+  "targets": {
+    "basis_esp": {
+      "version": "0.4.0",
+      "file": "pyst-basis-esp-0.4.0.pystfw",
+      "size": 1124480,
+      "sha256": "f7a1751f6d3d1cf465662bb751a798099575bafec0ade817cb54f4ba1ec52fa1",
+      "signature": "6f69802641f7e3f30f665b2621d7d12128458db694304d7c38ded67da38486c82801bee80d8103de4ec075e226815742f0cfc20d52e9ccee41f75ab55d1f8305"
+    },
+    "basis_stm": {
+      "version": "0.4.0",
+      "file": "pyst-basis-0.4.0.pystfw",
+      "size": 91960,
+      "sha256": "c90e3745490ad47f237a6eba6418052b0b40066b8d0a80d5139be221868b5856",
+      "signature": "572c8d3b4d5616bfa83e432dd91759af0ae194276ab70eb0b16b59e4f07e36ce743fe451fb86c645754081a6e044cf798dd0077ebbd3435003e97ed9a3d3940d"
+    },
+    "zange": {
+      "version": "0.4.0",
+      "file": "pyst-zange-0.4.0.pystfw",
+      "size": 692576,
+      "sha256": "15a8ac3cabdc413b23e34e4de4d09d81976704f6adc21b928aeb7703497c696b",
+      "signature": "1d867a8dad8b16c5111196a946fef3694d4d68b2b79dc3b9ee3fe13b6deea600289aad8eea39528e3f47ab0ba3dd0eae6fae4d996692f2d79f413116009fa101"
+    }
+  }
+}
