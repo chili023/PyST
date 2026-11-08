@@ -5,6 +5,10 @@ Datenbank (SQLite): Fahrzeuge, Setups, Laeufe.
   VEHICLE_FIELDS / SETUP_FIELDS fest. Neue Felder brauchen keine Datenbank-Aenderung.
 - Die Messdaten eines Laufs liegen als Dateien in einem Ordner (roh.csv, lauf.json, ...).
   Die Datenbank kennt Ordner, Ergebnis-Kennwerte und Zuordnung zu Fahrzeug/Setup.
+- Je Lauf ein Schnappschuss der Setup-Werte (setup_werte) mit dem Wert davor; Art des Laufs
+  (lauf / dauermessung / mittelwert, Mittelwert-Laeufe siehe mittelwert.py).
+- Je Fahrzeug gespeicherte Ansicht (Tabelle vehicle_prefs, globaler Standard in meta):
+  Schnellwert-Plaetze, Live-Plaetze, gesperrte Plaetze im Messfenster.
 """
 import datetime as _dt
 import json
@@ -102,6 +106,153 @@ def field_label(key: str) -> str:
     return key
 
 
+# Arten eines Laufs (RunRow.art)
+ART_LAUF = "lauf"
+ART_DAUERMESSUNG = "dauermessung"
+ART_MITTELWERT = "mittelwert"
+ARTEN = (ART_LAUF, ART_DAUERMESSUNG, ART_MITTELWERT)
+QUELLE_MITTELWERT = "Mittelwert"
+
+
+def art_aus_quelle(quelle: str) -> str:
+    """Art fuer Laeufe ohne gespeicherte Art (alte Datenbanken)."""
+    if quelle == "Dauermessung":
+        return ART_DAUERMESSUNG
+    if quelle == QUELLE_MITTELWERT:
+        return ART_MITTELWERT
+    return ART_LAUF
+
+
+def wert_text(v: Any) -> str:
+    """Setup-Wert als Text zum Vergleichen und Anzeigen (18.0 -> "18", None -> "")."""
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "ja" if v else "nein"
+    if isinstance(v, float):
+        return str(int(v)) if v.is_integer() else f"{v:g}"
+    return str(v).strip()
+
+
+def setup_schnappschuss(setup: Optional[Dict[str, Any]], felder: List[str],
+                        geaendert: Optional[Dict[str, Any]] = None) -> List[Dict[str, str]]:
+    """Setup-Werte eines Laufs zum Speichern in runs.setup_werte.
+    setup: gespeichertes Setup (db.setup) oder {}; felder: Schluessel aus SETUP_FIELDS (leere werden
+    uebersprungen); geaendert: {feld: neuer_wert} (nur fuer diesen Lauf bzw. noch nicht gespeichert).
+    Ergebnis: [{"feld", "wert", "vorher"}], vorher = Wert im Setup, nur wenn er abweicht (sonst "")."""
+    setup = setup or {}
+    geaendert = geaendert or {}
+    out = []
+    for f in dict.fromkeys(f for f in felder if f):
+        alt = wert_text(setup.get(f))
+        if f in geaendert:
+            neu = wert_text(geaendert[f])
+            out.append({"feld": f, "wert": neu, "vorher": alt if neu != alt else ""})
+        else:
+            out.append({"feld": f, "wert": alt, "vorher": ""})
+    return out
+
+
+def _werte_dict(werte) -> Dict[str, str]:
+    """setup_werte (Liste von {"feld", "wert"}) oder schon ein Dict -> {feld: wert}"""
+    if not werte:
+        return {}
+    if isinstance(werte, dict):
+        return {k: wert_text(v) for k, v in werte.items()}
+    return {e["feld"]: wert_text(e.get("wert")) for e in werte if isinstance(e, dict) and e.get("feld")}
+
+
+def schnellwert_abweichungen(vorher_lauf_werte, werte) -> Dict[str, str]:
+    """Fuer die Laufleiste ("140 ↑ 135"): je Feld, das sich gegenueber dem Lauf davor geaendert hat,
+    der alte Wert. Beide Argumente: setup_werte-Liste oder {feld: wert}. Felder, die einer der beiden
+    Laeufe nicht kennt, zaehlen nicht als Abweichung."""
+    alt, neu = _werte_dict(vorher_lauf_werte), _werte_dict(werte)
+    return {f: alt[f] for f, w in neu.items() if f in alt and alt[f] != w}
+
+
+def schnellwert_pfeil(neu: Any, alt: Any) -> str:
+    """Pfeil fuer die Laufleiste: "↑" / "↓" bei Zahlen (Komma erlaubt), sonst "→"; "" wenn gleich."""
+    neu, alt = wert_text(neu), wert_text(alt)
+    if neu == alt:
+        return ""
+    try:
+        a, b = float(neu.replace(",", ".")), float(alt.replace(",", "."))
+    except ValueError:
+        return "→"
+    return "↑" if a > b else ("↓" if a < b else "→")
+
+
+# ------------------------------------------------------------ Ansicht je Fahrzeug
+SCHNELLWERT_ANZAHL = 3
+SCHNELLWERT_STANDARD = ["hauptduese", "clip", "zzp"]
+
+LIVE_ANZAHL = 5
+LIVE_STUFEN = ("ok", "warn", "err", "cold")
+ECU_PREFIX = "ecu:"          # Live-Kanal einer ECU: "ecu:" + rusEFI-Kanalname (z.B. "ecu:coolant", "ecu:MAPValue")
+# Live-Kanaele des Messboards (Schluessel wie gui.gauges) -> (Name, Einheit); "" = Platz leer lassen
+LIVE_KANAELE = {
+    "n": ("Motor (Rolle × i)", "1/min"),
+    "ign": ("Motor (Zündung)", "1/min"),
+    "v": ("Rolle", "km/h"),
+    "egt1": ("EGT 1", "°C"),
+    "egt2": ("EGT 2", "°C"),
+    "lam": ("Lambda", "λ"),
+    "ratio": ("Übersetzung Zündung/Rolle", ""),
+    "ratio_ecu": ("Übersetzung ECU/Rolle", ""),
+    "rate": ("Messfrequenz", "Hz"),
+}
+LIVE_STANDARD = [
+    {"kanal": "egt1", "min": 200.0, "max": 1000.0,
+     "zonen": [[200.0, 850.0, "ok"], [850.0, 900.0, "warn"], [900.0, 1000.0, "err"]]},
+    {"kanal": ECU_PREFIX + "coolant", "min": 0.0, "max": 130.0,
+     "zonen": [[0.0, 60.0, "cold"], [60.0, 100.0, "ok"], [100.0, 110.0, "warn"], [110.0, 130.0, "err"]]},
+    {"kanal": "lam", "min": 0.7, "max": 1.3,
+     "zonen": [[0.7, 0.85, "warn"], [0.85, 0.95, "ok"], [0.95, 1.0, "warn"], [1.0, 1.3, "err"]]},
+    {"kanal": "v", "min": 0.0, "max": 200.0, "zonen": []},
+    {"kanal": "", "min": 0.0, "max": 100.0, "zonen": []},
+]
+
+MESSPLAETZE = 5              # Laeufe im Messfenster (gesperrte + rollierende)
+
+
+def live_kanal_ok(kanal: str) -> bool:
+    return kanal == "" or kanal in LIVE_KANAELE or (kanal.startswith(ECU_PREFIX) and len(kanal) > len(ECU_PREFIX))
+
+
+def _live_platz(p: Any, standard: Dict[str, Any]) -> Dict[str, Any]:
+    """Einen gespeicherten Live-Platz pruefen; Unbrauchbares durch den Standard ersetzen."""
+    if not isinstance(p, dict):
+        p = standard
+    kanal = p.get("kanal", "")
+    kanal = kanal if isinstance(kanal, str) and live_kanal_ok(kanal) else standard["kanal"]
+    try:
+        lo, hi = float(p.get("min", standard["min"])), float(p.get("max", standard["max"]))
+    except (TypeError, ValueError):
+        lo, hi = standard["min"], standard["max"]
+    if not hi > lo:
+        lo, hi = float(standard["min"]), float(standard["max"])
+    zonen = []
+    for z in p.get("zonen") or []:
+        try:
+            von, bis, stufe = float(z[0]), float(z[1]), str(z[2])
+        except (TypeError, ValueError, IndexError, KeyError):
+            continue
+        if stufe in LIVE_STUFEN and bis > von:
+            zonen.append([von, bis, stufe])
+    return {"kanal": kanal, "min": lo, "max": hi, "zonen": zonen}
+
+
+def messplaetze(alle_lauf_ids: List[int], gesperrt: List[int], plaetze: int = MESSPLAETZE):
+    """Belegung des Messfensters: (gesperrte, rollierende).
+    alle_lauf_ids: Laeufe neueste zuerst; gesperrt: Lauf-IDs mit Schloss (auch Mittelwert-IDs, muessen nicht
+    in alle_lauf_ids stehen). Gesperrte bleiben (hoechstens plaetze, Reihenfolge bleibt), die uebrigen
+    Plaetze fuellen die neuesten nicht gesperrten Laeufe."""
+    fest = list(dict.fromkeys(gesperrt))[:max(0, plaetze)]
+    frei = max(0, plaetze - len(fest))
+    rollierend = [i for i in dict.fromkeys(alle_lauf_ids) if i not in fest][:frei]
+    return fest, rollierend
+
+
 def base_dir() -> str:
     """Datenordner ~/PyST (Datenordner von Vorversionen werden beim ersten Aufruf uebernommen)."""
     home = os.path.expanduser("~")
@@ -170,11 +321,25 @@ class RunRow:
     sichtbar: bool
     params: Dict[str, Any] = field(default_factory=dict)
     fehler: Optional[Dict[str, float]] = None      # Fehleranteile in % (channels.fault_summary)
+    # Setup-Schnappschuss [{"feld", "wert", "vorher"}] (setup_schnappschuss), leer = keiner gespeichert
+    setup_werte: List[Dict[str, str]] = field(default_factory=list)
+    nur_lauf: bool = False                         # Setup nur fuer diesen Lauf geaendert (nicht gespeichert)
+    art: str = ART_LAUF                            # ART_LAUF | ART_DAUERMESSUNG | ART_MITTELWERT
+    quellen: List[int] = field(default_factory=list)   # nur Mittelwert: Lauf-IDs der Quellen
 
     @property
     def path(self) -> str:
-        """Datei/Ordner fuer storage.load_any()"""
+        """Datei/Ordner fuer storage.load_any() (Mittelwert: mittelwert.laden())"""
         return os.path.join(self.ordner, self.datei) if self.datei else self.ordner
+
+    @property
+    def werte(self) -> Dict[str, str]:
+        """Setup-Schnappschuss als {feld: wert}"""
+        return _werte_dict(self.setup_werte)
+
+    @property
+    def ist_mittelwert(self) -> bool:
+        return self.art == ART_MITTELWERT
 
 
 SCHEMA = """
@@ -190,7 +355,19 @@ CREATE TABLE IF NOT EXISTS runs(
     p_max REAL, n_pmax REAL, m_max REAL, n_mmax REAL, ka REAL, rate REAL,
     params TEXT, notiz TEXT, farbe TEXT, sichtbar INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS vehicle_prefs(
+    vehicle_id INTEGER PRIMARY KEY REFERENCES vehicles(id) ON DELETE CASCADE, data TEXT);
 """
+
+# Spalten, die nach dem ersten Schema dazugekommen sind (Migration per ALTER TABLE)
+RUN_COLUMNS = [
+    ("fehler", "TEXT"),                    # v3 (PyST 1.3): Fehleranteile je Lauf (JSON, leer = noch nicht berechnet)
+    ("setup_werte", "TEXT"),               # v4: Setup-Schnappschuss (JSON-Liste)
+    ("nur_lauf", "INTEGER DEFAULT 0"),     # v4: Setup nur fuer diesen Lauf geaendert
+    ("art", "TEXT"),                       # v4: lauf / dauermessung / mittelwert (leer = aus quelle)
+    ("quellen", "TEXT"),                   # v4: Mittelwert: Lauf-IDs der Quellen (JSON-Liste)
+]
+VPREF_META = "vpref:"        # globaler Standard der Fahrzeug-Ansicht: meta-Schluessel = VPREF_META + key
 
 
 class Database:
@@ -211,11 +388,12 @@ class Database:
             q = ",".join("?" * len(OLD_AUTO_COLORS))
             self.con.execute(f"UPDATE runs SET farbe='' WHERE farbe IN ({q})", OLD_AUTO_COLORS)
             self.set_meta("colors_v2", "1")
-        # v3 (PyST 1.3): Fehleranteile je Lauf (JSON, leer = noch nicht berechnet)
+        # v3/v4: neue Spalten in runs (alte Zeilen bekommen NULL bzw. den Standard)
         cols = {r["name"] for r in self.con.execute("PRAGMA table_info(runs)")}
-        if "fehler" not in cols:
-            self.con.execute("ALTER TABLE runs ADD COLUMN fehler TEXT")
-            self.con.commit()
+        for name, typ in RUN_COLUMNS:
+            if name not in cols:
+                self.con.execute(f"ALTER TABLE runs ADD COLUMN {name} {typ}")
+        self.con.commit()
 
     def runs_dir(self) -> str:
         d = os.path.join(os.path.dirname(self.path), "messungen")
@@ -295,14 +473,25 @@ class Database:
                       m_max=r["m_max"] or 0.0, n_mmax=r["n_mmax"] or 0.0, ka=r["ka"] or 0.0,
                       rate=r["rate"] or 0.0, notiz=r["notiz"] or "", farbe=r["farbe"] or "",
                       sichtbar=bool(r["sichtbar"]), params=json.loads(r["params"] or "{}"),
-                      fehler=json.loads(r["fehler"]) if r["fehler"] else None)
+                      fehler=json.loads(r["fehler"]) if r["fehler"] else None,
+                      setup_werte=_json_list(r["setup_werte"]), nur_lauf=bool(r["nur_lauf"]),
+                      art=r["art"] or art_aus_quelle(r["quelle"] or ""),
+                      quellen=[int(i) for i in _json_list(r["quellen"])])
 
-    def runs(self, vehicle_id: Optional[int] = None, setup_id: Optional[int] = None) -> List[RunRow]:
-        q, args = "SELECT * FROM runs", []
+    def runs(self, vehicle_id: Optional[int] = None, setup_id: Optional[int] = None,
+             mittelwert: bool = False) -> List[RunRow]:
+        """Laeufe neueste zuerst. Mittelwert-Laeufe (Ordner ohne Rohdaten, storage.load_any geht dort nicht) nur
+        mit mittelwert=True."""
+        q, cond, args = "SELECT * FROM runs", [], []
         if setup_id:
-            q, args = q + " WHERE setup_id=?", [setup_id]
+            cond, args = ["setup_id=?"], [setup_id]
         elif vehicle_id:
-            q, args = q + " WHERE vehicle_id=?", [vehicle_id]
+            cond, args = ["vehicle_id=?"], [vehicle_id]
+        if not mittelwert:
+            cond.append("COALESCE(art, '') != ? AND COALESCE(quelle, '') != ?")
+            args += [ART_MITTELWERT, QUELLE_MITTELWERT]
+        if cond:
+            q += " WHERE " + " AND ".join(cond)
         return [self._row(r) for r in self.con.execute(q + " ORDER BY datum DESC", args)]
 
     def run(self, rid: int) -> Optional[RunRow]:
@@ -311,14 +500,23 @@ class Database:
 
     def add_run(self, ordner: str, datei: str, quelle: str, name: str, datum: str, result=None,
                 params: Optional[Dict[str, Any]] = None, rate: float = 0.0, vehicle_id=None, setup_id=None,
-                notiz: str = "", farbe: str = "", sichtbar: bool = True) -> int:
+                notiz: str = "", farbe: str = "", sichtbar: bool = True,
+                setup_werte: Optional[List[Dict[str, str]]] = None, nur_lauf: bool = False, art: str = "",
+                quellen: Optional[List[int]] = None) -> int:
+        """art leer = aus quelle ("Dauermessung" -> dauermessung, sonst lauf)."""
         vals = (0.0, 0.0, 0.0, 0.0, 0.0) if result is None else \
             (result.p_max, result.n_pmax, result.m_max, result.n_mmax, result.ka)
+        art = art or art_aus_quelle(quelle)
+        if art not in ARTEN:
+            raise ValueError(f"unbekannte Art des Laufs: {art}")
         rid = self.con.execute(
             "INSERT INTO runs(datum, name, quelle, ordner, datei, vehicle_id, setup_id, p_max, n_pmax, m_max,"
-            " n_mmax, ka, rate, params, notiz, farbe, sichtbar) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " n_mmax, ka, rate, params, notiz, farbe, sichtbar, setup_werte, nur_lauf, art, quellen)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (datum, name, quelle, ordner, datei, vehicle_id, setup_id, *vals, rate,
-             json.dumps(params or {}), notiz, farbe, int(sichtbar))).lastrowid
+             json.dumps(params or {}), notiz, farbe, int(sichtbar),
+             json.dumps(list(setup_werte or []), ensure_ascii=False), int(bool(nur_lauf)), art,
+             json.dumps([int(i) for i in quellen or []]))).lastrowid
         self.con.commit()
         return rid
 
@@ -329,11 +527,26 @@ class Database:
             kw["params"] = json.dumps(kw["params"])
         if "sichtbar" in kw:
             kw["sichtbar"] = int(kw["sichtbar"])
+        if "nur_lauf" in kw:
+            kw["nur_lauf"] = int(bool(kw["nur_lauf"]))
         if "fehler" in kw and kw["fehler"] is not None:
             kw["fehler"] = json.dumps(kw["fehler"])
+        if "setup_werte" in kw:
+            kw["setup_werte"] = json.dumps(list(kw["setup_werte"] or []), ensure_ascii=False)
+        if "quellen" in kw:
+            kw["quellen"] = json.dumps([int(i) for i in kw["quellen"] or []])
+        if "art" in kw and kw["art"] not in ARTEN:
+            raise ValueError(f"unbekannte Art des Laufs: {kw['art']}")
         cols = ", ".join(f"{k}=?" for k in kw)
         self.con.execute(f"UPDATE runs SET {cols} WHERE id=?", (*kw.values(), rid))
         self.con.commit()
+
+    def lauf_setup(self, row: RunRow) -> Dict[str, Any]:
+        """Setup, mit dem der Lauf gefahren wurde: gespeichertes Setup, ueberschrieben vom Schnappschuss des
+        Laufs (nur_lauf-Aenderungen). {} ohne beides. Zum Vergleichen (mittelwert.setup_abweichungen)."""
+        s = dict(self.setup(row.setup_id) or {}) if row.setup_id else {}
+        s.update(row.werte)
+        return s
 
     def delete_run(self, rid: int, delete_files: bool = False):
         r = self.run(rid)
@@ -460,9 +673,12 @@ class Database:
                 next((f for f in os.listdir(target) if f.lower().endswith(".xml")), "lauf.json")
             p = run["params"]
             res = None if run.get("kind") == "dauermessung" else storage.recompute(run, p)
+            werte = e.get("setup_werte")
+            werte = [w for w in werte if isinstance(w, dict) and w.get("feld")] if isinstance(werte, list) else []
             rid = self.add_run(target, datei, quelle, e.get("name", run["name"]), datum, res, params=p.__dict__,
                                rate=physics.sample_rate(run["dt"]), vehicle_id=vid, setup_id=sid,
-                               notiz=e.get("notiz", ""), farbe=e.get("farbe", ""), sichtbar=False)
+                               notiz=e.get("notiz", ""), farbe=e.get("farbe", ""), sichtbar=False,
+                               setup_werte=werte, nur_lauf=bool(e.get("nur_lauf", False)))
             if e.get("fehler"):
                 self.update_run(rid, fehler=e["fehler"])
             ids.append(rid)
@@ -476,3 +692,104 @@ class Database:
     def set_meta(self, key: str, value: str):
         self.con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES(?,?)", (key, value))
         self.con.commit()
+
+    # ------------------------------------------------------------ Ansicht je Fahrzeug
+    def _vprefs(self, vid: int) -> Dict[str, Any]:
+        r = self.con.execute("SELECT data FROM vehicle_prefs WHERE vehicle_id=?", (vid,)).fetchone()
+        try:
+            d = json.loads(r["data"] or "{}") if r else {}
+        except ValueError:
+            d = {}
+        return d if isinstance(d, dict) else {}
+
+    def vehicle_pref(self, vid: Optional[int], key: str, default: Any = None) -> Any:
+        """Gespeicherte Einstellung je Fahrzeug (JSON-Wert). Hat das Fahrzeug keine, gilt der globale Standard
+        (vid None, in meta), sonst default."""
+        if vid:
+            d = self._vprefs(vid)
+            if key in d:
+                return d[key]
+        raw = self.get_meta(VPREF_META + key)
+        if raw:
+            try:
+                return json.loads(raw)
+            except ValueError:
+                pass
+        return default
+
+    def set_vehicle_pref(self, vid: Optional[int], key: str, value: Any) -> bool:
+        """Einstellung je Fahrzeug (vid None = globaler Standard) speichern; value None loescht sie (dann gilt
+        wieder der globale Standard). False, wenn es das Fahrzeug nicht (mehr) gibt."""
+        if not vid:
+            if value is None:
+                self.con.execute("DELETE FROM meta WHERE key=?", (VPREF_META + key,))
+                self.con.commit()
+            else:
+                self.set_meta(VPREF_META + key, json.dumps(value, ensure_ascii=False))
+            return True
+        if self.con.execute("SELECT 1 FROM vehicles WHERE id=?", (vid,)).fetchone() is None:
+            return False
+        d = self._vprefs(vid)
+        if value is None:
+            d.pop(key, None)
+        else:
+            d[key] = value
+        self.con.execute("INSERT OR REPLACE INTO vehicle_prefs(vehicle_id, data) VALUES(?,?)",
+                         (vid, json.dumps(d, ensure_ascii=False)))
+        self.con.commit()
+        return True
+
+    def schnellwert_plaetze(self, vid: Optional[int]) -> List[str]:
+        """Die 3 Setup-Felder der Schnellwert-Zeile (Messen) und der Laufleiste (Auswertung); "" = Platz leer."""
+        keys = self.vehicle_pref(vid, "schnellwerte", None)
+        if not isinstance(keys, list):
+            keys = SCHNELLWERT_STANDARD
+        known = set(all_setup_keys())
+        keys = [k if isinstance(k, str) and k in known else "" for k in keys]
+        return (keys + [""] * SCHNELLWERT_ANZAHL)[:SCHNELLWERT_ANZAHL]
+
+    def set_schnellwert_plaetze(self, vid: Optional[int], keys: List[str]) -> bool:
+        known = set(all_setup_keys())
+        keys = [k if k in known else "" for k in list(keys)[:SCHNELLWERT_ANZAHL]]
+        return self.set_vehicle_pref(vid, "schnellwerte", (keys + [""] * SCHNELLWERT_ANZAHL)[:SCHNELLWERT_ANZAHL])
+
+    def live_plaetze(self, vid: Optional[int]) -> List[Dict[str, Any]]:
+        """Die 5 Live-Plaetze (Messen): [{"kanal", "min", "max", "zonen": [[von, bis, stufe], ...]}],
+        kanal: Schluessel aus LIVE_KANAELE, ECU_PREFIX + rusEFI-Kanal oder "" (leer); stufe aus LIVE_STUFEN."""
+        raw = self.vehicle_pref(vid, "live", None)
+        raw = raw if isinstance(raw, list) else []
+        return [_live_platz(raw[i] if i < len(raw) else LIVE_STANDARD[i], LIVE_STANDARD[i])
+                for i in range(LIVE_ANZAHL)]
+
+    def set_live_plaetze(self, vid: Optional[int], plaetze: List[Dict[str, Any]]) -> bool:
+        p = list(plaetze)[:LIVE_ANZAHL]
+        p += LIVE_STANDARD[len(p):]
+        return self.set_vehicle_pref(vid, "live", [_live_platz(x, LIVE_STANDARD[i]) for i, x in enumerate(p)])
+
+    def gesperrte_plaetze(self, vid: Optional[int]) -> List[int]:
+        """Lauf-IDs mit Schloss im Messfenster (auch Mittelwerte), hoechstens MESSPLAETZE, Reihenfolge wie
+        gespeichert. Geloeschte Laeufe fallen heraus."""
+        ids = self.vehicle_pref(vid, "gesperrt", [])
+        out: List[int] = []
+        for i in ids if isinstance(ids, list) else []:
+            try:
+                i = int(i)
+            except (TypeError, ValueError):
+                continue
+            if i not in out and self.con.execute("SELECT 1 FROM runs WHERE id=?", (i,)).fetchone():
+                out.append(i)
+        return out[:MESSPLAETZE]
+
+    def set_gesperrte_plaetze(self, vid: Optional[int], ids: List[int]) -> bool:
+        return self.set_vehicle_pref(vid, "gesperrt", list(dict.fromkeys(int(i) for i in ids))[:MESSPLAETZE])
+
+
+def _json_list(text) -> list:
+    """JSON-Liste aus einer Spalte (NULL, leer oder kaputt -> [])"""
+    if not text:
+        return []
+    try:
+        v = json.loads(text)
+    except ValueError:
+        return []
+    return v if isinstance(v, list) else []
