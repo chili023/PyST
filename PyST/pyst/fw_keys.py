@@ -14,7 +14,9 @@ from typing import Dict
 from .bootproto import FORMAT_PLAIN, UpdateFile
 
 # key_id -> oeffentlicher Ed25519-Schluessel als 64 Hex-Zeichen. Nur oeffentliche Schluessel, nie ein Testschluessel.
-KNOWN_KEYS: Dict[int, str] = {}
+KNOWN_KEYS: Dict[int, str] = {
+    2: "e89869c2a26bd9ae9019db56ad98d82c0e16d7d2996052f00d047984336e663b",   # Auslieferung, angelegt 08.11.2026
+}
 
 NO_LIBRARY = ("Paket „cryptography“ fehlt, PyST kann die Signatur nicht prüfen: pip install -r requirements.txt "
               "(oder den Ordner .venv löschen, das Startskript richtet ihn neu ein).")
