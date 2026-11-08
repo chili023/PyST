@@ -182,7 +182,7 @@ optionaler Sollfrequenz, „Log prüfen“ und bei der Zange per USB „Ein Blit
 kopieren“ legt das Ergebnis als Text in die Zwischenablage.
 
 **Einstellungen › Firmware:** flasht Zange (USB-C: Update-Datei über `#UPD`, Erstflash per esptool), Basis-STM32 (USB über den
-Bootloader der Basis), Basis-ESP (über die ESP-Brücke),
+Bootloader der Basis), Basis-ESP (USB: Update-Datei über `#ESPUPD` und den STM, Erstflash per esptool über die ESP-Brücke),
 den Lambda-Controller F042 (über die Basis per CAN) und für die Erstprogrammierung den STM32 per ST-Link an J10. Die Firmware der eigenen Hardware liegt nicht in diesem
 Repository: Man wählt die Datei oder den Ordner des Builds, PyST prüft, ob sie zum Ziel passt.
 
@@ -216,8 +216,23 @@ Motor per USB anschließen:** Sie ist dann galvanisch mit dem PC verbunden.
 OTA-Daten, App). Ihn braucht jede Zange einmal für 0.4.0, weil sich der Bootloader ändert (App-Rollback), danach geht es
 mit der Update-Datei weiter. Ein bis PyST 1.4 unter „Zange“ eingetragener Build-Ordner wandert von selbst in diese Zeile.
 
+„Basis-ESP per USB (Update-Datei)“ nimmt eine `.pystfw` für das Ziel `basis-esp32c3` (Basis-Firmware ab 0.4.0 mit
+`espupd=1` in `#CAP`, Basis-ESP ab 0.4.0), auch über „Herunterladen“ (Manifest-Eintrag `basis_esp`). Der Weg ist derselbe wie
+bei der Zange, nur mit dem Präfix `ESPUPD` und über den Messport der Basis (USB-CDC wie die normale Verbindung, nicht der
+Brückenport): Der STM reicht jede Zeile an den ESP weiter, PyST wartet bei BEGIN und END bis 12 s, sonst 5 s auf die Antwort
+und schickt vorher keine neue Zeile. Über WLAN lehnt die Basis ab (`nur_usb`), PyST sucht ohnehin nur den USB-Port. Nach
+`#ESPUPD BOOT` startet nur der ESP neu, die Verbindung bleibt: PyST fragt `#NET`, bis `esp=1`, `esp_neustarts` gestiegen ist
+und `esp_fw` die neue Version zeigt, dann `#ESPUPD INFO`, bis die neue Firmware nach 30 s mit stehendem Link `ota=gueltig`
+meldet (PyST wartet bis 60 s). Startet der ESP vorher neu, kehrt er zur alten Firmware zurück. Fehler 20: Die Basis misst
+(Ausgabe, Burst, Aufnahme der Zange; PyST beendet vorher nur die eigene Ausgabe mit `#RUN 0`), 30: ESP antwortet nicht
+(Brücke aktiv?), 31: Antwort zu spät (PyST wiederholt), 32: ESP neu gestartet (auf BOOT normal), 33: Basis-ESP vor 0.4.0.
+
+„Basis-ESP Erstflash per Brücke (Build-Ordner)“ ist der bisherige esptool-Weg über die ESP-Brücke (PyST schaltet sie mit
+`#ESP BRIDGE 1` ein). Ihn braucht jede neue Platine und jeder Basis-ESP vor 0.4.0 einmal, danach geht es mit der
+Update-Datei weiter. Ein bis PyST 1.4 unter „Basis ESP“ eingetragener Build-Ordner wandert von selbst in diese Zeile.
+
 Eine neue Basis: erst per ST-Link die Gesamtdatei `pyst-basis-gesamt.bin` (Bootloader + Anwendung, an 0x08000000), dann den
-ESP. Die ST-Link-Zeile lehnt die Anwendung allein ab, weil sie ab 0x08008000 gelinkt ist. ST-Link braucht `st-flash` (Mac
+Basis-ESP per Erstflash über die Brücke. Die ST-Link-Zeile lehnt die Anwendung allein ab, weil sie ab 0x08008000 gelinkt ist. ST-Link braucht `st-flash` (Mac
 `brew install stlink`, Linux `apt install stlink-tools`), `esptool` kommt mit `requirements.txt`.
 
 ### Firmware-Updates der Basis
@@ -247,11 +262,16 @@ bis 30 s), und löscht erst danach den Zwischenspeicher. Eine abgelehnte Datei z
 vorhandene Firmware wieder. Den Klartext sieht nur der Bootloader, am Ende der Übertragung vergleicht er dessen SHA-256 mit dem
 Kopf. PyST kann den Inhalt nicht nachrechnen, die Signatur am PC belegt nur den Kopf der Datei.
 
-„Rückfall gesperrt“ heißt: Die Datei hat einen kleineren Rollback-Zähler als die Firmware auf der Basis. Für die Zange gilt
-dasselbe Format 2 mit Ziel `zange-c3`, `load_addr` 0 und einem eigenen, von der Schlüsseldatei abgeleiteten AES-Schlüssel;
-die Regeln für Signatur und Download sind gleich, Inhalt und Rollback prüft die Zange. Downloads für `basis_esp`
-(`basis-esp32c3`) prüft PyST ebenso, geflasht wird der Basis-ESP aber weiter über die ESP-Brücke. Der Lambda-Controller ist
-davon nicht betroffen.
+„Rückfall gesperrt“ heißt: Die Datei hat einen kleineren Rollback-Zähler als die Firmware auf der Basis. Für Zange und
+Basis-ESP gilt dasselbe Format 2 mit Ziel `zange-c3` bzw. `basis-esp32c3`, `load_addr` 0 und je einem eigenen, von der
+Schlüsseldatei abgeleiteten AES-Schlüssel; die Regeln für Signatur und Download sind gleich, Inhalt und Rollback prüft das
+Gerät selbst. Der Lambda-Controller ist davon nicht betroffen.
+
+**Zange und Basis-ESP: einmal Erstflash, danach Update-Datei.** Beide brauchen einmal den ganzen Build per esptool
+(„Zange Erstflash per esptool“ bzw. „Basis-ESP Erstflash per Brücke“) mit 0.4.0 oder neuer, weil erst damit Bootloader,
+Partitionen und App-Rollback stimmen. Danach kommen Updates nur noch als `.pystfw` über USB („Zange per USB“ bzw. „Basis-ESP
+per USB“), signiert und verschlüsselt, mit Probezeit nach dem Neustart (Zange 15 s, Basis-ESP 30 s mit Link). Ältere Firmware
+meldet PyST mit diesem Hinweis (Zange: kein `upd=1`, Basis-ESP: Fehler 33).
 
 **Statusleiste:** „● Zange verbunden“ (grün), „● Zange nicht verbunden“ (rot) oder „● Zange per USB“ (orange).
 
@@ -447,7 +467,7 @@ pyst/ausrollen.py Ausrollversuch: Erkennung, Fit des Verlustmoments, Prüfungen 
 pyst/kalib_page.py Reiter „Kalibrierung“
 pyst/storage.py   Speichern/Laden (CSV, JSON, LabVIEW-XML, .pyst, Terminal-Mitschnitte)
 pyst/lvxml.py     LabVIEW-Datenspeicher lesen/schreiben
-pyst/sim.py       Simulator (Firmware + Motor + Rolle, PyST-Basis mit Zange, Zange per USB, Fake-Zange für das Update ZangeUpdSimDevice)
+pyst/sim.py       Simulator (Firmware + Motor + Rolle, PyST-Basis mit Zange, Zange per USB, Fake-Zange für das Update ZangeUpdSimDevice, Fake-Basis für das ESP-Update BasisEspUpdSimDevice)
 pyst/basis.py     PyST-Basis: Parser und Befehle (#ZANGE, #NET, #DOSE, #PAIR, #LOG, #LAMBDA, E;…, L;…)
 pyst/plugs.py     WLAN-Steckdosen (Shelly/Tasmota/ESPHome per HTTP, Automatik, Simulator)
 pyst/zange.py     Log der Zange -> Dauermessung
@@ -455,7 +475,7 @@ pyst/mdns.py      einfaches mDNS (Basis und Steckdosen im Netz finden)
 pyst/hw_page.py   Unterreiter „Zange · Netz · Steckdosen“
 pyst/tasten.py    Tasten-Setup der Zange, Neuer Lauf und Übersetzung (ohne Oberfläche); tasten_page.py Unterreiter „Tasten“
 pyst/pruef.py     Prüfungen für die Inbetriebnahme mit #STAT (ohne Oberfläche); pruef_page.py Unterreiter „Prüfen“
-pyst/flash.py     Firmware flashen: Prüfung, Befehlszeilen, USB-Update Basis und Zange (#UPD), F042 per CAN; flash_page.py Unterreiter „Firmware“
+pyst/flash.py     Firmware flashen: Prüfung, Befehlszeilen, USB-Update Basis, Zange (#UPD) und Basis-ESP (#ESPUPD, gemeinsamer Ablauf UpdFlasher), F042 per CAN; flash_page.py Unterreiter „Firmware“
 pyst/bootproto.py Bootloader der Basis: Rahmen, Update-Datei Format 1 und 2, auch für die ESP-Ziele (Simulator: sim.py BootSimDevice, BootSim2Device)
 pyst/fw_keys.py   Bekannte öffentliche Firmware-Schlüssel, Signaturprüfung am PC
 pyst/gui.py       Oberfläche (PySide6 + pyqtgraph)

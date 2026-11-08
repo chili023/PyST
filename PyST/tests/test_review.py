@@ -476,7 +476,7 @@ class FlashSeiteEsp(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def starte(self, antwort, key=flash.BASIS_ESP):
+    def starte(self, antwort, key=flash.BASIS_ESP_BRIDGE):
         with mock.patch.object(self.qt.QMessageBox, "question", self.calls.frage):
             self.calls.frage.return_value = antwort
             self.page.start(key)
@@ -496,6 +496,9 @@ class FlashSeiteEsp(unittest.TestCase):
 
     def test_zange_braucht_keine_bruecke(self):
         self.assertEqual(self.starte(self.qt.QMessageBox.Yes, flash.ZANGE_ESPTOOL), ["frage", "run"])
+
+    def test_basis_esp_per_datei_ohne_bruecke(self):
+        self.assertEqual(self.starte(self.qt.QMessageBox.Yes, flash.BASIS_ESP), ["frage", "run_usb"])
 
 
 class Abhaengigkeiten(unittest.TestCase):

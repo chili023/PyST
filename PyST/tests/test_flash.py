@@ -74,13 +74,13 @@ class Bilder(unittest.TestCase):
 
     def test_adressen_kommen_aus_dem_build(self):
         esp_build(self.d, "basis-esp32c3", "0x10000", "0x17000")
-        img = flash.load_image(flash.BASIS_ESP, self.d)
+        img = flash.load_image(flash.BASIS_ESP_BRIDGE, self.d)
         self.assertEqual([a for a, _ in img.files], [0x0, 0x10000, 0x17000, 0x20000])
 
     def test_falsche_firmware_wird_abgelehnt(self):
         esp_build(self.d, "pyst-zange")
         with self.assertRaisesRegex(flash.FlashError, "Falsche Firmware"):
-            flash.load_image(flash.BASIS_ESP, self.d)
+            flash.load_image(flash.BASIS_ESP_BRIDGE, self.d)
         with self.assertRaisesRegex(flash.FlashError, "Falsche Firmware"):
             flash.load_image(flash.BASIS_STLINK, self.d)      # ESP-Abbild auf dem STM32
         esp_build(self.d, "basis-esp32c3")
@@ -202,14 +202,15 @@ class Versionen(unittest.TestCase):
             esp_build(d, "basis-esp32c3", "0x10000", "0x17000")
             with open(os.path.join(d, "firmware.bin"), "wb") as fh:
                 fh.write(b"\xe9" + bytes(40) + b"basis-esp 0.3.2\0")
-            self.assertEqual(flash.image_version(flash.load_image(flash.BASIS_ESP, d)), "0.3.2")
+            self.assertEqual(flash.image_version(flash.load_image(flash.BASIS_ESP_BRIDGE, d)), "0.3.2")
 
     def test_vom_geraet(self):
         lk = link.DynoLink("SIM:basis")
         try:
             lk.info()
             v = flash.device_versions(lk)
-            self.assertEqual((v[flash.BASIS_STM], v[flash.BASIS_ESP], v[flash.ZANGE]), ("0.3.0", "0.3.0", "0.3.0"))
+            self.assertEqual((v[flash.BASIS_STM], v[flash.BASIS_ESP], v[flash.BASIS_ESP_BRIDGE], v[flash.ZANGE]),
+                             ("0.3.0", "0.3.0", "0.3.0", "0.3.0"))
         finally:
             lk.close()
         lk = link.DynoLink("SIM:zange")
@@ -665,7 +666,7 @@ class FlashSeite(unittest.TestCase):
 
     def test_ziele(self):
         self.assertEqual(set(self.page.rows), {flash.ZANGE, flash.ZANGE_ESPTOOL, flash.BASIS_STM, flash.BASIS_STLINK, flash.BASIS_ESP,
-                                               flash.LAMBDA_F042})
+                                               flash.BASIS_ESP_BRIDGE, flash.LAMBDA_F042})
         self.assertEqual(flash.TARGETS[flash.LAMBDA_F042].name, "Lambda (F042) per CAN")
 
     def test_erfolg(self):

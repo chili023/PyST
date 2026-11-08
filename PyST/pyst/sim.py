@@ -1850,10 +1850,17 @@ class ZangeUpdSimDevice:
       stable_s    Probezeit nach dem Update (Vorgabe 0.2 s, im Geraet 15 s)
       crash       neue Firmware stuerzt beim Start ab: Bootloader nimmt die alte
       unplug_at   Kabel weg, sobald next diesen Wert erreicht
-      begin_s     Dauer der Signaturpruefung"""
+      begin_s     Dauer der Signaturpruefung
+    Praefix, Ziel, Projekt und Partitionsgroesse sind Klassenattribute: BasisEspUpdSimDevice nimmt denselben Kern."""
     RESET_S = 0.05
+    P = "UPD"
+    TARGET = b"zange-c3"
+    PROJECT = b"pyst-zange"                                  # esp_app_desc_t.project_name
     MAX = 0x140000
     IDLE_S = 30.0
+    ERR_TEXT = {2: "zustand", 3: "luecke", 4: "kopf", 5: "ziel", 6: "format", 7: "laenge", 8: "flash", 9: "pruefung",
+                10: "befehl", 11: "signatur", 12: "rollback", 20: "messung", 21: "akku", 30: "kein_esp", 31: "zeit",
+                32: "neustart", 33: "esp_alt"}
 
     def __init__(self, public: bytes, aes: bytes, version: str = "0.4.0", rollback: int = 1, key_id: int = 0,
                  **faults):
@@ -1952,10 +1959,8 @@ class ZangeUpdSimDevice:
             port.put(reply)
 
     def _err(self, code: int) -> str:
-        text = {2: "zustand", 3: "luecke", 4: "kopf", 5: "ziel", 6: "format", 7: "laenge", 8: "flash", 9: "pruefung",
-                10: "befehl", 11: "signatur", 12: "rollback", 20: "messung", 21: "akku"}.get(code, "fehler")
         nxt = f";next={self.next}" if self.state == "empfang" else ""
-        return f"#ERR;UPD;{code};{text}{nxt}"
+        return f"#ERR;{self.P};{code};{self.ERR_TEXT.get(code, 'fehler')}{nxt}"
 
     def _drop(self):
         self.state, self.next, self.plain = "frei", 0, bytearray()
@@ -1965,7 +1970,8 @@ class ZangeUpdSimDevice:
         self.last = time.time()
         if sub == "INFO" and len(a) == 1:
             rb = "" if self.faults.get("no_rollback") else f";rollback={self.rollback}"
-            return (f"#UPD;INFO;fw={self.version};ziel=zange-c3;board=rev31{rb};key={self.key_id};part={self.running};"
+            return (f"#{self.P};INFO;fw={self.version};ziel={self.TARGET.decode()};board=rev31{rb};key={self.key_id};"
+                    f"part={self.running};"
                     f"boot={self.boot_part};ota={self._ota_state()};max={self.MAX};block=256;sitzung={self.state};"
                     f"next={self.next}")
         if sub == "BEGIN" and len(a) == 2:
@@ -1978,12 +1984,12 @@ class ZangeUpdSimDevice:
             if self.state == "fertig":
                 self.boot_part = self.running
             self._drop()
-            return "#UPD;OK;ABORT"
+            return f"#{self.P};OK;ABORT"
         if sub == "BOOT" and len(a) == 1:
             if self.state != "fertig":
                 return self._err(2)
             threading.Timer(0.01, self._reset).start()
-            return "#UPD;OK;BOOT"
+            return f"#{self.P};OK;BOOT"
         return self._err(10)
 
     @staticmethod
@@ -2007,7 +2013,7 @@ class ZangeUpdSimDevice:
         fmt, _size, flags = struct.unpack_from("<HHI", h, 8)
         if fmt != b.FORMAT_SIGNED or flags != b.FLAGS_SIGNED_ENCRYPTED or h[76] != 1 or h[77] != 1:
             return self._err(6)
-        if h[16:32].split(b"\0")[0] != b"zange-c3" or h[32:40].split(b"\0")[0] != b"rev31" or h[56:60] != bytes(4):
+        if h[16:32].split(b"\0")[0] != self.TARGET or h[32:40].split(b"\0")[0] != b"rev31" or h[56:60] != bytes(4):
             return self._err(5)
         ilen, plen = struct.unpack_from("<I", h, 60)[0], struct.unpack_from("<I", h, 68)[0]
         if ilen != plen or not 0 < ilen <= self.MAX or ilen % 16:
@@ -2029,7 +2035,7 @@ class ZangeUpdSimDevice:
             self.boot_part = self.running
         self.state, self.hdr, self.next, self.plain = "empfang", h, 0, bytearray()
         time.sleep(self.faults.get("begin_s", 0))
-        return f"#UPD;OK;BEGIN;next=0;len={ilen};block=256"
+        return f"#{self.P};OK;BEGIN;next=0;len={ilen};block=256"
 
     def _data(self, off_text: str, text: str) -> Optional[str]:
         if self.state != "empfang":
@@ -2041,7 +2047,7 @@ class ZangeUpdSimDevice:
         if not 1 <= len(d) <= 256:
             return self._err(7)
         if off + len(d) <= self.next:
-            return f"#UPD;OK;DATA;next={self.next}"         # Wiederholung, nicht neu geschrieben
+            return f"#{self.P};OK;DATA;next={self.next}"         # Wiederholung, nicht neu geschrieben
         if off != self.next:
             return self._err(3)
         if off + len(d) > ilen:
@@ -2057,13 +2063,13 @@ class ZangeUpdSimDevice:
             self.faults["unplugged"] = True
             self.gen += 1
             return None
-        return f"#UPD;OK;DATA;next={self.next}"
+        return f"#{self.P};OK;DATA;next={self.next}"
 
     def _end(self) -> str:
         h = self.hdr
         version = h[40:56].split(b"\0")[0].decode()
         if self.state == "fertig":
-            return f"#UPD;OK;END;version={version}"
+            return f"#{self.P};OK;END;version={version}"
         if self.state != "empfang":
             return self._err(2)
         if self.next != struct.unpack_from("<I", h, 60)[0]:
@@ -2072,7 +2078,7 @@ class ZangeUpdSimDevice:
         if zlib.crc32(img) != struct.unpack_from("<I", h, 64)[0] or hashlib.sha256(img).digest() != h[164:196]:
             self._drop()
             return self._err(9)
-        if img[0x50:0x70].split(b"\0")[0] != b"pyst-zange":    # esp_app_desc_t.project_name
+        if img[0x50:0x70].split(b"\0")[0] != self.PROJECT:
             self._drop()
             return self._err(5)
         if img[0x30:0x50].split(b"\0")[0].decode("ascii", "replace") != version:
@@ -2082,7 +2088,126 @@ class ZangeUpdSimDevice:
         self.parts[other] = (version, struct.unpack_from("<I", h, 80)[0])
         self.boot_part = other
         self.state = "fertig"
-        return f"#UPD;OK;END;version={version}"
+        return f"#{self.P};OK;END;version={version}"
+
+
+class BasisEspUpdSimDevice(ZangeUpdSimDevice):
+    """Fake-Basis fuer das Update des Basis-ESP ohne Hardware. STM-Seite nach basis-g473/src/core/proto_espupd.c und
+    espctl.c: '#CAP;…;espupd=1', '#RUN', '#NET' (esp, esp_fw, esp_neustarts), Sperre 20 waehrend einer Ausgabe oder
+    Aufnahme (bei DATA bricht der STM die Sitzung im ESP still ab), eigene Codes 30 … 33, nur_usb ueber TCP. Dahinter der
+    ESP-Kern wie bei der Fake-Zange (Ziel und Projekt basis-esp32c3, ota_0/ota_1 je 0x180000). Nach BOOT startet nur der
+    ESP neu, der USB-Port der Basis bleibt offen; ist er wieder da, zaehlt esp_neustarts eins hoch.
+    faults (zusaetzlich zu denen der Fake-Zange ausser no_upd und gate):
+      run          Ausgabe laeuft beim Start ('#RUN 0' beendet sie)
+      messung      Burst-Aufnahme oder Zange-REC laeuft (bleibt nach '#RUN 0'): BEGIN und DATA -> 20
+      messung_at   die Aufnahme beginnt, sobald DATA diesen Offset erreicht
+      no_espupd    Basis-Firmware vor 0.4.0: kein espupd=1, #ESPUPD unbekannt
+      esp_alt      Basis-ESP vor 0.4.0 -> 33 esp_alt
+      no_esp       kein Lebenszeichen vom ESP (oder Bruecke aktiv) -> 30 kein_esp, #NET esp=0
+      tcp          Verbindung ueber TCP -> #ERR;ESPUPD;nur_usb
+      late         Nummern von ESP-Antworten (ab 1), die zu spaet kommen: ausgefuehrt, der STM meldet 31 zeit
+      boot_32      der ESP startet vor der Antwort auf BOOT neu -> 32 neustart
+      restart_at   der ESP startet neu, sobald DATA diesen Offset erreicht -> 32, Sitzung weg, alte Firmware bleibt
+      esp_reset_s  Dauer des ESP-Neustarts bis zum ersten HELLO (Vorgabe 0.3 s)"""
+    P = "ESPUPD"
+    TARGET = b"basis-esp32c3"
+    PROJECT = b"basis-esp32c3"
+    MAX = 0x180000
+    STM_FW = "PyST-Basis 0.4.0"
+
+    def __init__(self, public: bytes, aes: bytes, version: str = "0.4.0", rollback: int = 1, key_id: int = 0,
+                 **faults):
+        super().__init__(public, aes, version, rollback, key_id, **faults)
+        self.neustarts = 3
+        self.streaming = bool(faults.get("run"))
+        self.recording = bool(faults.get("messung"))
+        self.esp_count = 0
+
+    def _name(self) -> str:
+        return f"/dev/ttyACM-BSIM{self.gen}"
+
+    def on_bus(self) -> bool:
+        self._tick()
+        return not self.faults.get("unplugged")
+
+    def _tick(self):
+        if self.back_at and time.time() >= self.back_at:     # erstes HELLO mit kleinerer Betriebszeit
+            self.back_at = 0.0
+            boots = self.boots
+            self._boot()
+            self.neustarts += self.boots - boots              # Absturz der neuen: zwei Neustarts
+
+    def esp_alive(self) -> bool:
+        self._tick()
+        return not self.back_at and not self.faults.get("no_esp")
+
+    def _reset(self):
+        """Nur der ESP startet neu; der STM und sein USB-Port bleiben."""
+        self.back_at = time.time() + self.faults.get("esp_reset_s", 0.3)
+        self.state = "frei"
+
+    def net_line(self) -> str:
+        alive = self.esp_alive()
+        fw = "-" if self.faults.get("no_esp") else f"basis-esp {self.version} h37"
+        return (f"#NET;mode=AP;kanal=6;ssid=PyST-SIM;ip=192.168.4.1;clients=0;rssi=;tcp=0;err=0;esp={int(alive)};"
+                f"esp_fw={fw};esp_neustarts={self.neustarts}")
+
+    def line(self, port: ZangeUpdSimPort, text: str):
+        self.lines.append(text)
+        w = text.split()
+        if not w:
+            return
+        cmd = w[0].upper()
+        if cmd in ("#?", "?"):
+            upd = "" if self.faults.get("no_espupd") else ";espupd=1"
+            port.put(f"#CAP;proto=1;fw={self.STM_FW};tick_ns=6.25;ch=I,R;burst_max=2000;modes=N,D;set=1;hw=rev31;"
+                     f"ign=zange{upd}")
+        elif cmd == "#RUN":
+            self.streaming = len(w) > 1 and w[1] != "0"
+            port.put(f"#OK;RUN;{w[1] if len(w) > 1 else '?'}")
+        elif cmd == "#NET" and len(w) == 1:
+            port.put(self.net_line())
+        elif cmd == "#ESPUPD":
+            reply = self._stm(w[1:])
+            if reply is not None:
+                self._send(port, reply)
+        else:
+            port.put("#ERR;?;unbekannt")
+
+    def _stm(self, a: List[str]) -> Optional[str]:
+        """Was der STM mit einer #ESPUPD-Zeile macht: selbst ablehnen oder an den ESP geben und dessen Antwort melden."""
+        if self.faults.get("no_espupd"):
+            return "#ERR;?;ESPUPD"
+        if self.faults.get("tcp"):
+            return "#ERR;ESPUPD;nur_usb"
+        sub = a[0].upper() if a else ""
+        if sub == "DATA" and len(a) == 3 and a[1].isdigit() and int(a[1]) >= self.faults.get("messung_at", 1 << 30):
+            self.recording = True
+        if sub in ("BEGIN", "DATA") and (self.streaming or self.recording):
+            if sub == "DATA":
+                self._drop()                                 # Messung hat Vorrang: Sitzung im ESP still weg
+            return self._err(20)
+        if not self.esp_alive():
+            return self._err(30)
+        if self.faults.get("esp_alt"):
+            return self._err(33)
+        if sub == "BOOT" and self.faults.get("boot_32") and self.state == "fertig":
+            self._reset()                                    # Neustart kam vor der Antwort
+            return self._err(32)
+        if self.state == "empfang" and time.time() - self.last > self.IDLE_S:
+            self.state = "verfallen"
+        reply = self._upd(a)
+        if reply is None:
+            return None                                      # Kabel weg
+        self.esp_count += 1
+        if sub == "DATA" and self.next >= self.faults.get("restart_at", 1 << 30):
+            self.faults.pop("restart_at")
+            self._drop()
+            self._reset()
+            return self._err(32)
+        if self.esp_count in self.faults.get("late", ()):
+            return self._err(31)
+        return reply
 
 
 class LambdaSimPort(BasisSimSerial):

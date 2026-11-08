@@ -28,6 +28,8 @@ def target_aes(target: str, aes: bytes = TESTSCHLUESSEL_AES) -> bytes:
 
 
 ZANGE_AES = target_aes(bp.TARGET_ZANGE)
+BASIS_ESP_AES = target_aes(bp.TARGET_BASIS_ESP)
+ESP_PROJECT = {bp.TARGET_ZANGE: b"pyst-zange", bp.TARGET_BASIS_ESP: b"basis-esp32c3"}      # project_name im Abbild
 
 
 def public_key(seed: bytes = TESTSCHLUESSEL_ED25519) -> bytes:
@@ -118,7 +120,7 @@ def esp_update(version: str = "0.4.1", size: int = 8192, rollback: int = 1, targ
                key_id: int = TESTSCHLUESSEL_ID, seed: bytes = TESTSCHLUESSEL_ED25519, aes: bytes = b"",
                plain: bytes = b"", patch=None) -> bytes:
     """.pystfw fuer ein ESP-Ziel wie tools/pyst_image.py update --target: load_addr 0, Schluessel des Ziels."""
-    img = plain or esp_image(version, size)
+    img = plain or esp_image(version, size, ESP_PROJECT.get(target, b"pyst-zange"))
     nonce = os.urandom(16)
     payload = encrypt(img, nonce, aes or target_aes(target))
     h = bytearray(bp.UPD_LEN)
