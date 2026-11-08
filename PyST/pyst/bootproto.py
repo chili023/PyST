@@ -5,6 +5,8 @@ Rahmen wie der ESP-Link: COBS(typ seq daten crc16) 0x00, CRC-16/CCITT-FALSE uebe
 Jeder Befehl bekommt eine Antwort BL_RESP mit derselben seq: [befehl u8][status u8][wert u32][text].
 Datei: 256 Byte Kopf + Nutzdaten. Format 1: Abbild im Klartext, unsigniert. Format 2 (Bootloader 2.0.0): Ed25519-signiert,
 Nutzdaten AES-256-CTR, Spezifikation docs/STUFE2.md der Firmware. Hier nur die formale Pruefung, die Signatur prueft fw_keys.py.
+Dasselbe Format 2 nutzen die ESP-Ziele (Zange zange-c3, Basis-ESP basis-esp32c3): load_addr 0, Laenge Vielfaches von 16,
+Nutzdaten mit dem Schluessel des Ziels verschluesselt. Den kennt nur das Geraet, der PC prueft Kopf, CRC und Signatur.
 """
 import struct
 import zlib
@@ -43,6 +45,10 @@ SIG_OFS, SIG_END = 100, 164                             # signature[64]
 RESERVED_OFS = 196                                      # reserved[32..87], in Format 2 Null
 TARGET = "basis-g473"
 BOARD = "rev31"
+TARGET_ZANGE, TARGET_BASIS_ESP = "zange-c3", "basis-esp32c3"
+ESP_MAX = {TARGET_ZANGE: 0x140000, TARGET_BASIS_ESP: 0x180000}      # Groesse von ota_0/ota_1 (partitions.csv)
+ESP_ALIGN = 16
+DEVICE_NAME = {TARGET: "Basis", TARGET_ZANGE: "Zange", TARGET_BASIS_ESP: "Basis-ESP"}
 
 
 def crc16(data: bytes) -> int:
@@ -170,13 +176,17 @@ class UpdateFile:
         return f"Format {self.format}, Schlüssel {self.key_id}, Rollback {self.rollback}"
 
     @classmethod
-    def parse(cls, data: bytes) -> "UpdateFile":
-        """Vollstaendige Pruefung; ValueError mit Klartext. Format 2 ist verschluesselt: Vektortabelle und Abbild-Kopf
-        sieht erst der Bootloader."""
+    def parse(cls, data: bytes, target: str = TARGET) -> "UpdateFile":
+        """Vollstaendige Pruefung fuer das erwartete Ziel; ValueError mit Klartext. Format 2 ist verschluesselt:
+        Vektortabelle bzw. ESP-Abbild sieht erst das Geraet."""
+        esp = target in ESP_MAX
+        name = DEVICE_NAME.get(target, target)
         if data[:1] == b"\xe9":
-            raise ValueError("Falsche Firmware: Das ist ein ESP-Abbild, kein STM32.")
+            raise ValueError("Falsche Firmware: Das ist ein rohes ESP-Abbild (firmware.bin), keine Update-Datei. Für die "
+                             f"{name} die .pystfw wählen, den Build-Ordner nur beim Erstflash." if esp
+                             else "Falsche Firmware: Das ist ein ESP-Abbild, kein STM32.")
         if data[:8] != UPD_MAGIC or len(data) < UPD_LEN:
-            raise ValueError("Falsche Firmware: Das ist keine Update-Datei (.pystfw) für die Basis.")
+            raise ValueError(f"Falsche Firmware: Das ist keine Update-Datei (.pystfw) für die {name}.")
         h = data[:UPD_LEN]
         fmt, size, flags = struct.unpack_from("<HHI", h, 8)
         if zlib.crc32(h[:252]) != struct.unpack_from("<I", h, 252)[0] or size != UPD_LEN:
@@ -185,18 +195,26 @@ class UpdateFile:
             _check_format2(h, flags)
         elif fmt != FORMAT_PLAIN or flags:
             raise ValueError("Update-Datei ist zu neu: Dieses PyST kennt das Format nicht.")
-        target, board, version = _text(h[16:32]), _text(h[32:40]), _text(h[40:56])
-        if target != TARGET or board != BOARD:
-            raise ValueError(f"Falsche Firmware: Die Datei ist für {target} {board}, nicht für {TARGET} {BOARD}.")
+        got, board, version = _text(h[16:32]), _text(h[32:40]), _text(h[40:56])
+        if got != target or board != BOARD:
+            other = DEVICE_NAME.get(got)
+            raise ValueError(f"Falsche Firmware: Die Datei ist für {got} {board}" + (f" ({other})" if other else "")
+                             + f", nicht für {target} {BOARD} ({name}).")
+        if esp and fmt != FORMAT_SIGNED:
+            raise ValueError(f"Update-Datei ungültig: Für die {name} gibt es nur signierte Dateien (Format 2).")
         load, ilen, icrc, plen, pcrc = struct.unpack_from("<IIIII", h, 56)
         payload = data[UPD_LEN:]
-        if load != APP_BASE or plen != ilen or plen != len(payload) or not 0 < ilen <= APP_MAX or ilen % 8:
+        if esp:
+            bad = load != 0 or not 0 < ilen <= ESP_MAX[target] or ilen % ESP_ALIGN
+        else:
+            bad = load != APP_BASE or not 0 < ilen <= APP_MAX or ilen % 8
+        if bad or plen != ilen or plen != len(payload):
             raise ValueError("Update-Datei beschädigt (Längen).")
         if zlib.crc32(payload) != pcrc:
             raise ValueError("Update-Datei beschädigt (Prüfsumme).")
         if fmt == FORMAT_SIGNED:
-            return cls(h, payload, target, board, version, ilen, icrc, fmt, h[78], struct.unpack_from("<I", h, 80)[0])
+            return cls(h, payload, got, board, version, ilen, icrc, fmt, h[78], struct.unpack_from("<I", h, 80)[0])
         sp, pc = struct.unpack_from("<II", payload)
         if not (RAM[0] < sp <= RAM[1] and pc & 1 and APP_BASE <= pc < APP_BASE + ilen):
             raise ValueError("Falsche Firmware: Die Vektortabelle passt nicht zur Basis-Anwendung.")
-        return cls(h, payload, target, board, version, ilen, icrc)
+        return cls(h, payload, got, board, version, ilen, icrc)

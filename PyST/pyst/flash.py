@@ -1,13 +1,15 @@
 """
-Firmware flashen: Zange (ESP32-C3 per USB), Basis-STM32 (per USB ueber den eigenen Bootloader, reines Python; fuer die
+Firmware flashen: Zange (ESP32-C3 per USB: Update-Datei ueber #UPD, Erstflash mit esptool), Basis-STM32 (per USB ueber den eigenen Bootloader, reines Python; fuer die
 Erstprogrammierung ST-Link an J10), Basis-ESP (ueber die ESP-Bruecke), Lambda-Controller F042 (rusEFI-Wideband, ueber die
 Basis per CAN, LambdaFlasher).
 
 Dieses Repository enthaelt keine Firmware der eigenen Hardware (PyST-HW ist nicht oeffentlich): man waehlt einen
 Ordner mit dem Build. Vor dem Flashen wird geprueft, ob der Build zum Ziel passt, damit keine Zangen-Firmware auf dem
 Basis-ESP landet (beides ESP32-C3). Die Adressen stammen aus dem Build (flasher_args.json), nicht aus diesem Code.
-Hier Pruefen, Befehlszeilen bauen und der Ablauf des USB-Updates (UsbFlasher); esptool und st-flash startet flash_page.py.
+Hier Pruefen, Befehlszeilen bauen und der Ablauf der USB-Updates (UsbFlasher Basis, ZangeFlasher Zange); esptool und
+st-flash startet flash_page.py.
 """
+import base64
 import glob
 import hashlib
 import importlib.util
@@ -38,6 +40,11 @@ from .auth import refusal_text
 from .link import BASIS_USB_ID, is_esp_bridge
 
 ZANGE, BASIS_STM, BASIS_STLINK, BASIS_ESP, LAMBDA_F042 = "zange", "basis_stm", "basis_stlink", "basis_esp", "lambda_f042"
+ZANGE_ESPTOOL = "zange_esptool"           # Erstflash und Entwickler: Build-Ordner mit esptool
+# Ziel im Kopf der Update-Datei (tools/pyst_image.py), Schluessel wie im Manifest (update.FILE_TARGETS)
+FILE_TARGET = {BASIS_STM: bp.TARGET, ZANGE: bp.TARGET_ZANGE}
+NO_USB_AT_ENGINE = ("Nie am laufenden Motor per USB: Die Zange ist dann galvanisch mit dem PC verbunden, Zündspannung "
+                    "kann PC und Zange zerstören.")
 STM_FLASH_ADDR = 0x08000000
 STM_FLASH_MAX = 512 * 1024
 STM_SRAM = (0x20000000, 0x20020000)       # 128 KB
@@ -73,9 +80,15 @@ class Target:
 
 
 TARGETS = {
-    ZANGE: Target(ZANGE, "Zange", "pyst-zange", 921600,
-                  "Akku drin, USB-C an der Zange, T1 bis zum Ende halten. Bleibt die Zange nicht im Download-Modus: "
-                  "zuerst T2, dann T1 drücken und beide halten; danach neu einschalten."),
+    ZANGE: Target(ZANGE, "Zange per USB (Update-Datei)", "pyst-zange", 0,
+                  "Update-Datei (.pystfw) wählen. Zange eingeschaltet, Akku drin, USB-C am PC, Zange vom Zündkabel "
+                  "genommen. Keine Aufnahme, kein Blitzmodus, Basis aus. Nach dem Neustart prüft die Zange die neue "
+                  "Firmware 15 s: so lange nicht ausschalten, sonst kehrt sie zur alten zurück. Ab Zangen-Firmware "
+                  "0.4.0, ältere Zangen einmal per Erstflash. " + NO_USB_AT_ENGINE),
+    ZANGE_ESPTOOL: Target(ZANGE_ESPTOOL, "Zange Erstflash per esptool (Build-Ordner)", "pyst-zange", 921600,
+                          "Für neue Zangen und einmal für 0.4.0 (neuer Bootloader): Ordner mit dem Build wählen. Akku "
+                          "drin, USB-C an der Zange, T1 bis zum Ende halten. Bleibt die Zange nicht im Download-Modus: "
+                          "zuerst T2, dann T1 drücken und beide halten; danach neu einschalten. " + NO_USB_AT_ENGINE),
     BASIS_STM: Target(BASIS_STM, "Basis STM32", "", 0,
                       "12 V an, USB-C an J20, nur eine Basis anstecken. Update-Datei (.pystfw) wählen. Einstellungen "
                       "bleiben erhalten. Fällt der Strom aus, setzt die Basis beim nächsten Start selbst fort."),
@@ -133,7 +146,7 @@ def _esp_build_dir(folder: str) -> str:
 
 
 _VERSION = re.compile(r"\d+\.\d+\.\d+")
-_IMAGE_VERSION = {ZANGE: rb"fw=PyST-Zange (\d+\.\d+\.\d+)", BASIS_ESP: rb"basis-esp (\d+\.\d+\.\d+)"}
+_IMAGE_VERSION = {ZANGE_ESPTOOL: rb"fw=PyST-Zange (\d+\.\d+\.\d+)", BASIS_ESP: rb"basis-esp (\d+\.\d+\.\d+)"}
 
 
 def version_matches(version: str, text: str) -> bool:
@@ -143,7 +156,7 @@ def version_matches(version: str, text: str) -> bool:
 
 def image_version(image: Image) -> str:
     """Firmware-Version der gewählten Datei; leer, wenn sie sich nicht auslesen lässt (Gesamtdatei, Lambda)."""
-    if image.target == BASIS_STM:
+    if image.update is not None:              # Update-Datei: Version steht im Kopf
         return image.version
     if image.target == BASIS_STLINK:          # Gesamtdatei: Version steht in der Update-Datei daneben
         try:
@@ -169,6 +182,7 @@ def device_versions(link) -> dict:
 
     if link.is_zange_usb:
         put(ZANGE, link.caps.get("fw", ""))
+        put(ZANGE_ESPTOOL, link.caps.get("fw", ""))
     elif link.is_basis:
         put(BASIS_STM, link.caps.get("fw", ""))
         put(BASIS_STLINK, link.caps.get("fw", ""))
@@ -177,6 +191,7 @@ def device_versions(link) -> dict:
         for z in link.zangen_status():
             if z.id:
                 put(ZANGE, z.fw)
+                put(ZANGE_ESPTOOL, z.fw)
                 break
     return out
 
@@ -236,16 +251,27 @@ def _find_file(folder: str, names: Tuple[str, ...], missing: str) -> str:
     raise FlashError(missing)
 
 
-def load_update_image(folder: str) -> Image:
+def is_esp_build(folder: str) -> bool:
+    try:
+        _esp_build_dir(folder)
+        return True
+    except (FlashError, OSError):
+        return False
+
+
+def load_update_image(folder: str, target: str = BASIS_STM) -> Image:
+    """Update-Datei (.pystfw) fuer Basis-STM oder Zange: formal, Ziel im Kopf und Signatur (fw_keys.check_local).
+    Den Inhalt prueft erst das Geraet."""
     path = _find_file(folder, ("*.pystfw",), "Keine Update-Datei (.pystfw) gefunden.")
     with open(path, "rb") as fh:
         data = fh.read()
     try:
-        upd = bp.UpdateFile.parse(data)
+        upd = bp.UpdateFile.parse(data, FILE_TARGET[target])
         warning = fw_keys.check_local(upd)
     except ValueError as exc:
         raise FlashError(str(exc))
-    return Image(BASIS_STM, os.path.dirname(path), "PyST-Basis", upd.version, main=path, update=upd, warning=warning)
+    project = "PyST-Zange" if target == ZANGE else "PyST-Basis"
+    return Image(target, os.path.dirname(path), project, upd.version, main=path, update=upd, warning=warning)
 
 
 def load_stm_image(folder: str) -> Image:
@@ -310,8 +336,8 @@ def load_image(target: str, folder: str) -> Image:
         raise FlashError("Noch kein Ordner gewählt.")
     if target == LAMBDA_F042:
         return load_lambda_image(folder)
-    if target == BASIS_STM:
-        return load_update_image(folder)
+    if target in FILE_TARGET:
+        return load_update_image(folder, target)
     if target == BASIS_STLINK:
         return load_stm_image(folder)
     return load_esp_image(target, folder)
@@ -377,15 +403,15 @@ def basis_port() -> Optional[str]:
 
 
 def target_port(target: str) -> Optional[str]:
-    return {ZANGE: zange_port, BASIS_ESP: bridge_port, BASIS_STM: basis_port,
+    return {ZANGE: zange_port, ZANGE_ESPTOOL: zange_port, BASIS_ESP: bridge_port, BASIS_STM: basis_port,
             LAMBDA_F042: basis_port}.get(target, lambda: None)()
 
 
 def build_command(target: str, folder: str, port: Optional[str]) -> Tuple[Image, List[str]]:
     """Alle Pruefungen; -> (Abbild, Befehlszeile) oder FlashError mit Klartext."""
     image = load_image(target, folder)
-    if target in (BASIS_STM, LAMBDA_F042):
-        return image, []                  # kein externes Werkzeug: UsbFlasher, LambdaFlasher
+    if target in (BASIS_STM, ZANGE, LAMBDA_F042):
+        return image, []                  # kein externes Werkzeug: UsbFlasher, ZangeFlasher, LambdaFlasher
     if target == BASIS_STLINK:
         tool = find_stflash()
         if tool is None:
@@ -395,7 +421,7 @@ def build_command(target: str, folder: str, port: Optional[str]) -> Tuple[Image,
     if tool is None:
         raise FlashError("esptool nicht gefunden (pip install -r requirements.txt).")
     if not port:
-        raise FlashError("Zange nicht am USB gefunden (303A:1001)." if target == ZANGE
+        raise FlashError("Zange nicht am USB gefunden (303A:1001)." if target == ZANGE_ESPTOOL
                          else "ESP-Brücke der Basis nicht gefunden: STM32-Firmware geflasht und USB-C an J20?")
     return image, esp_command(tool, port, image)
 
@@ -717,6 +743,296 @@ class UsbFlasher:
             time.sleep(0.2)
         raise FlashError("Anwendung meldet sich nicht zurück. Basis einmal stromlos machen; beginnt sie von selbst "
                          "zu kopieren, abwarten.")
+
+
+# ---------------------------------------------------------------------------------------------- Zange per USB (#UPD)
+ZANGE_UPD_TEXT = {
+    bp.BL_E_STATE: "Ablauf gestört (oder die Zange prüft gerade noch eine neue Firmware, 15 s nach dem Start)",
+    bp.BL_E_OFFSET: "Lücke in den Daten",
+    bp.BL_E_HEADER: "Dateikopf ungültig",
+    bp.BL_E_TARGET: "Datei passt nicht zu dieser Zange",
+    bp.BL_E_UNSUPPORTED: "Dateiformat zu neu für diese Zangen-Firmware",
+    bp.BL_E_LENGTH: "Länge ungültig, die Datei passt nicht in die Partition der Zange",
+    bp.BL_E_FLASH: "Flash-Fehler in der Zange",
+    bp.BL_E_VERIFY: "Prüfung in der Zange fehlgeschlagen (Inhalt, Prüfsumme oder Version)",
+    bp.BL_E_CMD: "Befehl unbekannt",
+    bp.BL_E_SIGNATURE: "Signatur ungültig: Die Datei stammt nicht von uns oder passt nicht zum Schlüssel der Zange",
+    bp.BL_E_ROLLBACK: "Rückfall gesperrt: Die Datei ist älter, als die Firmware auf der Zange zulässt (Rollback-Wert)",
+    20: "Die Zange misst gerade: Aufnahme oder Blitzmodus läuft, in den letzten 5 s kamen Funken, oder sie ist mit einer "
+        "Basis gekoppelt und synchron. Aufnahme und Blitzmodus beenden, die Zange vom Zündkabel nehmen und die Basis "
+        "ausschalten, dann nochmals",
+    21: "Akku zu schwach für das Update (unter 3,6 V ohne USB-Spannung): Akku laden oder die Zange direkt am PC anstecken",
+}
+ZANGE_UPD_BLOCK = 256                    # FWU_BLOCK_MAX in zange-c3/src/core/fwupd.h
+_UPD_REPLY = ("#UPD;", "#ERR;UPD;")      # alles andere (#ESP-Log, Telegramme) faellt weg
+
+
+def zange_ports() -> List[str]:
+    if list_ports is None:
+        return []
+    return sorted(p.device for p in list_ports.comports() if (p.vid, p.pid) == ZANGE_USB_ID)
+
+
+def upd_error(line: str) -> Tuple[int, str]:
+    """'#ERR;UPD;20;messung;next=0' -> (20, Klartext). 'nicht eingebaut' -> (-1, …)."""
+    parts = line.split(";")
+    code = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else -1
+    if code < 0:
+        return code, "Diese Zangen-Firmware hat kein USB-Update: einmal per Erstflash (esptool) 0.4.0 oder neuer aufspielen"
+    return code, ZANGE_UPD_TEXT.get(code, f"Fehler {code} ({parts[3] if len(parts) > 3 else '?'})")
+
+
+class ZangeFlasher:
+    """Update der Zange ueber USB mit den Textbefehlen #UPD (zange-c3/src/core/proto_upd.h): INFO, BEGIN, DATA in
+    Bloecken zu 256 Byte mit Wiederholung, END, BOOT, danach die neue Version und ihre Freigabe (ota=gueltig) abwarten.
+    Eine Anfrage, eine Antwortzeile; gewertet werden nur Zeilen mit '#UPD;' oder '#ERR;UPD;'. Die Zange prueft
+    Signatur und Inhalt selbst, der PC kennt den AES-Schluessel nicht. run() blockiert (eigener Thread); Ports und
+    Oeffnen ueber `ports` und `opener`, damit Tests die Fake-Zange (sim.ZangeUpdSimDevice) einsetzen koennen."""
+    INFO_S = 1.5
+    BEGIN_S = 15.0            # Ed25519 im Geraet, geschaetzt 1 s
+    REPLY_S = 2.0             # ein Block, Sektor loeschen eingeschlossen
+    END_S = 15.0              # esp_ota_end liest das ganze Abbild
+    RETRIES = 5
+    WAIT_APP_S = 30.0         # Neustart, USB meldet sich neu an
+    STABLE_S = 30.0           # die neue Firmware markiert sich nach 15 s als gueltig
+    BUSY_S = 25.0             # laeuft selbst noch zur Probe (ota=pruefen): so lange auf gueltig warten
+    POLL_S = 1.0
+
+    def __init__(self, update: bp.UpdateFile, ports: Callable[[], List[str]] = zange_ports,
+                 opener: Callable[[str], object] = open_serial, log: Callable[[str], None] = lambda _t: None,
+                 progress: Callable[[int, int], None] = lambda _d, _n: None,
+                 cancelled: Callable[[], bool] = lambda: False):
+        self.update = update
+        self.ports = ports
+        self.opener = opener
+        self.log = log
+        self.progress = progress
+        self.cancelled = cancelled
+        self.ser = None
+        self.buf = b""
+        self.session = False                  # BEGIN angenommen, noch nicht BOOT
+        self.booted = False
+
+    # --- Ablauf
+    def run(self) -> str:
+        u = self.update
+        try:
+            self._open()
+            info = self._check_device()
+            self._begin()
+            self.log(f"Übertrage {u.image_len} Byte in Blöcken zu {ZANGE_UPD_BLOCK} …")
+            self._transfer()
+            self.log("Prüfe in der Zange …")
+            line = self._ask("#UPD END", ("#UPD;OK;END",), self.END_S, retries=2)
+            got = bp.parse_info(line).get("version", "")
+            if got != u.version:
+                self._abort()
+                raise FlashError(f"Falsche Version: Die Zange meldet {got or '?'}, die Datei ist {u.version}.")
+            if self.cancelled():
+                self._abort()                         # stellt die Startpartition zurueck
+                raise FlashCancelled("Abgebrochen, die alte Firmware bleibt.")
+            self.log(f"Geprüft. Zange startet mit {u.version} neu (vorher {info.get('fw', '?')}) …")
+            self._boot()
+            self.booted = True
+            return self._wait_app(info.get("fw", ""))
+        except OSError as exc:                    # SerialException ist ein OSError
+            if self.booted:
+                raise FlashError(f"Verbindung zur Zange verloren: {exc}. Die neue Firmware läuft vielleicht noch zur "
+                                 "Probe: Zange 15 s eingeschaltet lassen, dann die Version prüfen.") from exc
+            raise FlashError(f"Verbindung zur Zange verloren: {exc}. Die alte Firmware bleibt, die Zange verwirft die "
+                             "Sitzung nach 30 s. Nochmals flashen.") from exc
+        finally:
+            self._close()
+
+    # --- Port und Zeilen
+    def _open(self):
+        ports = self.ports()
+        if len(ports) > 1:
+            raise FlashError("Mehrere Zangen am USB, bitte nur eine anstecken.")
+        if not ports:
+            raise FlashError("Zange nicht am USB gefunden (303A:1001): eingeschaltet und USB-C am PC?")
+        self._close()
+        self.ser = self.opener(ports[0])
+        self.buf = b""
+
+    def _close(self):
+        if self.ser is not None:
+            try:
+                self.ser.close()
+            except (OSError, ValueError):
+                pass
+            self.ser = None
+
+    def _send(self, line: str):
+        self.ser.write(line.encode("ascii") + b"\r\n")
+
+    def _lines(self) -> List[str]:
+        self.buf += self.ser.read(self.ser.in_waiting or 1)       # kehrt beim ersten Byte zurueck
+        *done, self.buf = self.buf.split(b"\n")
+        return [raw.decode("latin-1").strip() for raw in done]
+
+    def _wait(self, wanted: Tuple[str, ...], seconds: float) -> Optional[str]:
+        end = time.time() + seconds
+        while time.time() < end:
+            for line in self._lines():
+                if line.startswith(wanted):
+                    return line
+        return None
+
+    def _ask(self, cmd: str, ok: Tuple[str, ...], seconds: float, retries: int = 1) -> str:
+        """Befehl, Antwort mit einem der Anfaenge oder #ERR;UPD; (FlashError). Ohne Antwort noch einmal."""
+        for _ in range(retries + 1):
+            self._send(cmd)
+            line = self._wait(ok + ("#ERR;UPD;",), seconds)
+            if line is None:
+                continue
+            if line.startswith("#ERR;UPD;"):
+                code, text = upd_error(line)
+                if code == 20 or code == 21 or code == -1:
+                    raise FlashError(text + ".")
+                raise FlashError(f"{cmd.split()[1]}: {text}.")
+            return line
+        raise FlashError(f"Zange antwortet nicht auf {cmd.split()[1]}.")
+
+    # --- Pruefen vor der Uebertragung
+    def _check_device(self) -> dict:
+        self.ser.reset_input_buffer()
+        self._send("#RUN 0")                      # eigene Telegramme beenden: mit laufender Ausgabe kein BEGIN
+        self._send("#?")
+        line = self._wait(("#CAP",), self.INFO_S)
+        if line is None:
+            self._send("#?")
+            line = self._wait(("#CAP",), self.INFO_S)
+        if line is None:
+            raise FlashError("Keine Antwort von der Zange.")
+        caps = bp.parse_info(line)
+        if caps.get("upd") != "1":
+            raise FlashError(f"Diese Zangen-Firmware ({caps.get('fw', '?')}) hat kein USB-Update: einmal per „Zange "
+                             "Erstflash“ (esptool, Build-Ordner) 0.4.0 oder neuer aufspielen.")
+        info = self._info()
+        end = time.time() + self.BUSY_S
+        while info.get("ota") == "pruefen" and time.time() < end:
+            if self.cancelled():
+                raise FlashCancelled("Abgebrochen, nichts übertragen.")
+            self.log("Die Zange prüft noch ihre eigene neue Firmware (15 s nach dem Start), warte …")
+            time.sleep(self.POLL_S)
+            info = self._info()
+        self.log(f"Zange: {info.get('fw', '?')}, Schlüssel {info.get('key', '?')}, Rollback {info.get('rollback', '?')}, "
+                 f"läuft aus {info.get('part', '?')} ({info.get('ota', '?')}).")
+        problem = self._fit(info)
+        if problem:
+            raise FlashError(problem)
+        return info
+
+    def _info(self) -> dict:
+        return bp.parse_info(self._ask("#UPD INFO", ("#UPD;INFO",), self.INFO_S, retries=2))
+
+    def _fit(self, info: dict) -> str:
+        u = self.update
+        if info.get("ota") == "pruefen":
+            return "Die Zange gibt ihre eigene neue Firmware nicht frei. Zange aus- und einschalten, 15 s warten, nochmals."
+        if info.get("ziel", u.target) != u.target or info.get("board", u.board) != u.board:
+            return f"Falsche Firmware: Die Zange ist {info.get('ziel')} {info.get('board')}, die Datei für {u.target} {u.board}."
+        key = info.get("key", "")
+        if key.isdigit() and int(key) != u.key_id:
+            return f"Die Datei ist mit Schlüssel {u.key_id} signiert, die Zange hat Schlüssel {key}."
+        rb = info.get("rollback", "")
+        if rb.isdigit() and u.rollback < int(rb):
+            return f"{ZANGE_UPD_TEXT[bp.BL_E_ROLLBACK]}: Datei {u.rollback}, Zange {rb}."
+        size = info.get("max", "")
+        if size.isdigit() and u.image_len > int(size):
+            return f"Die Datei ({u.image_len} Byte) ist größer als die Partition der Zange ({size} Byte)."
+        return ""
+
+    # --- Uebertragung
+    def _begin(self):
+        if self.cancelled():
+            raise FlashCancelled("Abgebrochen, nichts übertragen.")
+        self.log("Zange prüft die Signatur …")
+        hdr = base64.b64encode(self.update.header).decode("ascii")
+        self._ask(f"#UPD BEGIN {hdr}", ("#UPD;OK;BEGIN",), self.BEGIN_S, retries=1)
+        self.session = True
+
+    def _transfer(self):
+        u = self.update
+        off, tries = 0, 0
+        while off < u.image_len:
+            if self.cancelled():
+                self._abort()
+                raise FlashCancelled("Abgebrochen, die alte Firmware bleibt.")
+            block = u.payload[off:off + ZANGE_UPD_BLOCK]
+            self._send(f"#UPD DATA {off} {base64.b64encode(block).decode('ascii')}")
+            line = self._wait(("#UPD;OK;DATA", "#ERR;UPD;"), self.REPLY_S)
+            nxt = bp.parse_info(line).get("next", "") if line else ""
+            if line is not None and line.startswith("#ERR;UPD;"):
+                code, text = upd_error(line)
+                if code != bp.BL_E_OFFSET or not nxt.isdigit():
+                    self.session = False              # die Zange hat die Sitzung verworfen
+                    raise FlashError(f"Block {off}: {text}." if code not in (20, 21, -1) else text + ".")
+                self.log(f"Zange erwartet {nxt}, mache dort weiter.")
+            if nxt.isdigit() and 0 <= int(nxt) <= u.image_len and int(nxt) > off:
+                off, tries = int(nxt), 0
+                self.progress(off, u.image_len)
+                continue
+            if nxt.isdigit() and int(nxt) <= u.image_len:
+                off = int(nxt)                        # Zange ist zurueck: dort weiter
+            tries += 1                                # keine Antwort oder kein Fortschritt: denselben Block nochmals
+            if tries > self.RETRIES:
+                self._abort()
+                raise FlashError(f"Zange nimmt Block {off} nicht an. Die alte Firmware bleibt, nochmals flashen.")
+
+    def _abort(self):
+        """Sitzung in der Zange verwerfen; ohne Antwort verfaellt sie dort nach 30 s von selbst."""
+        if not self.session or self.ser is None:
+            return
+        self.session = False
+        try:
+            self._send("#UPD ABORT")
+            self._wait(("#UPD;OK;ABORT",), self.INFO_S)
+        except OSError:
+            pass
+
+    def _boot(self):
+        self._send("#UPD BOOT")
+        try:
+            line = self._wait(("#UPD;OK;BOOT", "#ERR;UPD;"), self.INFO_S)
+        except OSError:                           # meldet sich gleich nach der Antwort ab
+            line = None
+        if line is not None and line.startswith("#ERR"):
+            raise FlashError(f"Neustart: {upd_error(line)[1]}.")
+        self.session = False
+        self._close()
+
+    def _wait_app(self, old: str) -> str:
+        u = self.update
+        time.sleep(0.5)
+        end = time.time() + self.WAIT_APP_S
+        caps = None
+        while time.time() < end and caps is None:
+            try:
+                self._open()
+                self.ser.reset_input_buffer()
+                self._send("#?")
+                line = self._wait(("#CAP",), self.INFO_S)
+                caps = bp.parse_info(line) if line else None
+            except (OSError, FlashError):
+                self._close()
+                time.sleep(0.2)
+        if caps is None:
+            raise FlashError("Zange meldet sich nach dem Neustart nicht. Einschalten, USB prüfen; startet sie mit der "
+                             "alten Firmware, hat sie die neue verworfen.")
+        if not version_matches(u.version, caps.get("fw", "")):
+            raise FlashError(f"Die Zange läuft mit {caps.get('fw', '?')}, nicht mit {u.version}: Sie ist zur alten "
+                             "Firmware zurückgekehrt (Neustart in den ersten 15 s oder Startfehler).")
+        self.log(f"Zange läuft mit {caps.get('fw')}. Sie prüft die neue Firmware 15 s: nicht ausschalten …")
+        end = time.time() + self.STABLE_S
+        while time.time() < end:
+            if self._info().get("ota") == "gueltig":
+                self.log(f"Neue Firmware als gültig markiert (vorher {old or '?'}).")
+                return u.version
+            time.sleep(self.POLL_S)
+        raise FlashError(f"{u.version} läuft, ist aber nach {self.STABLE_S:.0f} s nicht als gültig markiert. Zange "
+                         "eingeschaltet lassen; startet sie vorher neu, kehrt sie zur alten Firmware zurück.")
 
 
 # ---------------------------------------------------------------------------------------------- Lambda per CAN

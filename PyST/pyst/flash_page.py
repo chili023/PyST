@@ -31,6 +31,19 @@ class UsbWorker(QtCore.QThread):
             self.done.emit("fehler", str(exc))
 
 
+class ZangeWorker(UsbWorker):
+    """Zange per USB ueber #UPD (flash.ZangeFlasher): Fortschritt, Abbrechen und Ergebnis wie beim Basis-Update."""
+
+    def run(self):
+        f = flash.ZangeFlasher(self.update, log=self.log.emit, progress=self.progress.emit, cancelled=lambda: self.stop)
+        try:
+            self.done.emit("ok", f.run())
+        except FlashCancelled as exc:
+            self.done.emit("abbruch", str(exc))
+        except (FlashError, OSError, ValueError) as exc:
+            self.done.emit("fehler", str(exc))
+
+
 class LambdaWorker(UsbWorker):
     """F042 ueber die Basis per CAN: Fortschritt, Abbrechen und Ergebnis wie beim USB-Update."""
 
@@ -55,7 +68,7 @@ class FlashRow(QtWidgets.QGroupBox):
         self.changed = changed
         lay = QtWidgets.QGridLayout(self)
         self.path = QtWidgets.QLineEdit(folder)
-        self.is_file = target.key in (flash.BASIS_STM, flash.BASIS_STLINK, flash.LAMBDA_F042)
+        self.is_file = target.key in (flash.ZANGE, flash.BASIS_STM, flash.BASIS_STLINK, flash.LAMBDA_F042)
         self.path.setPlaceholderText("Firmware-Datei wählen" if self.is_file else "Ordner mit dem Build wählen")
         b_pick = QtWidgets.QPushButton("Datei …" if self.is_file else "Ordner …")
         self.b_go = QtWidgets.QPushButton("Flashen")
@@ -90,7 +103,7 @@ class FlashRow(QtWidgets.QGroupBox):
     def pick(self):
         title = f"Firmware {self.target.name}"
         if self.is_file:
-            pattern = {flash.BASIS_STM: "Update-Datei (*.pystfw)",
+            pattern = {flash.BASIS_STM: "Update-Datei (*.pystfw)", flash.ZANGE: "Update-Datei (*.pystfw)",
                        flash.LAMBDA_F042: "Wideband-Abbild (*.bin)"}.get(self.target.key, "Gesamtdatei (*.bin)")
             d = QtWidgets.QFileDialog.getOpenFileName(self, title, self.path.text(), pattern)[0]
         else:
@@ -162,10 +175,16 @@ class FlashPage(QtWidgets.QScrollArea):
         self.setWidget(inner)
         root = QtWidgets.QVBoxLayout(inner)
         info = QtWidgets.QLabel("Reihenfolge an einer neuen Basis: erst per ST-Link die Gesamtdatei, dann ESP. Danach "
-                                "geht das Basis-Update über USB und das Update des Lambda-Controllers über die Basis. Eine bestehende Verbindung wird vor dem Flashen getrennt.")
+                                "geht das Basis-Update über USB und das Update des Lambda-Controllers über die Basis. "
+                                "Zange: einmal per Erstflash (esptool, ab 0.4.0), danach mit der Update-Datei über USB. "
+                                "Eine bestehende Verbindung wird vor dem Flashen getrennt. "
+                                + flash.NO_USB_AT_ENGINE)
         info.setWordWrap(True)
         root.addWidget(info)
         folders: Dict[str, str] = settings.setdefault("flash_ordner", {})
+        old = folders.get(flash.ZANGE, "")
+        if old and flash.ZANGE_ESPTOOL not in folders and flash.is_esp_build(old):
+            folders[flash.ZANGE_ESPTOOL] = folders.pop(flash.ZANGE)      # bis 1.5: Zange hiess der esptool-Weg
         self.rows = {}
         for key, t in flash.TARGETS.items():
             row = FlashRow(t, folders.get(key, ""), self._folder_changed)
@@ -300,14 +319,15 @@ class FlashPage(QtWidgets.QScrollArea):
                 self._status(str(exc), farben.FEHLER)
                 self.flash_done.emit()
                 return
-        if key in (flash.BASIS_STM, flash.LAMBDA_F042):
+        if key in (flash.BASIS_STM, flash.ZANGE, flash.LAMBDA_F042):
             self.run_usb(key, image)
         else:
             self.run(key, cmd)
 
     def run_usb(self, key: str, image):
         self.log.clear()
-        self._status(f"{flash.TARGETS[key].name}: läuft, Basis nicht vom Strom trennen …", farben.WARNUNG)
+        what = "Zange nicht ausschalten, nicht abstecken" if key == flash.ZANGE else "Basis nicht vom Strom trennen"
+        self._status(f"{flash.TARGETS[key].name}: läuft, {what} …", farben.WARNUNG)
         self._set_busy(True)
         is_lambda = key == flash.LAMBDA_F042
         self.bar.setRange(0, len(image.lambda_app) if is_lambda else image.update.image_len)
@@ -315,7 +335,10 @@ class FlashPage(QtWidgets.QScrollArea):
         self.bar.show()
         self.b_cancel.setEnabled(True)
         self.b_cancel.show()
-        self.worker = LambdaWorker(image.lambda_app, self) if is_lambda else UsbWorker(image.update, self)
+        if is_lambda:
+            self.worker = LambdaWorker(image.lambda_app, self)
+        else:
+            self.worker = (ZangeWorker if key == flash.ZANGE else UsbWorker)(image.update, self)
         self.worker.log.connect(self.log.appendPlainText)
         self.worker.progress.connect(lambda done, _n: self.bar.setValue(done))
         self.worker.done.connect(lambda state, text: self._usb_done(key, state, text))
@@ -336,6 +359,8 @@ class FlashPage(QtWidgets.QScrollArea):
         t = flash.TARGETS[key]
         if state == "ok" and key == flash.LAMBDA_F042:
             self._status(f"{t.name}: geflasht, 0x190-Telegramme mit Version {text} kamen wieder.", farben.GUT)
+        elif state == "ok" and key == flash.ZANGE:
+            self._status(f"{t.name}: Version {text} läuft und ist als gültig markiert.", farben.GUT)
         elif state == "ok":
             self._status(f"{t.name}: Version {text} läuft.", farben.GUT)
         elif state == "abbruch" and key == flash.LAMBDA_F042:

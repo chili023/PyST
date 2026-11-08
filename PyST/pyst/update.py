@@ -4,8 +4,8 @@ Nach neuer Software und Firmware suchen, ohne Oberfläche.
 PyST: Version aus `main` des öffentlichen Repositorys, nur Meldung, installiert wird nichts.
 Firmware: `manifest.json` im Branch `firmware`: je Ziel Version, Datei, Größe, SHA-256 und Signatur (128 Hex-Zeichen, wie
 im Kopf der Datei). Fehlt der Branch oder das Netz, liefern die Abfragen None: PyST bleibt still.
-Heruntergeladene Dateien gelten erst nach Prüfung von Größe und SHA-256, die der Basis zusätzlich nach Format, Signatur
-und bekanntem Schlüssel (fw_keys.py); geflasht wird nur auf Knopfdruck.
+Heruntergeladene Dateien gelten erst nach Prüfung von Größe und SHA-256, die signierten (Basis-STM, Zange, Basis-ESP)
+zusätzlich nach Ziel im Kopf, Format, Signatur und bekanntem Schlüssel (fw_keys.py); geflasht wird nur auf Knopfdruck.
 """
 import hashlib
 import http.client
@@ -28,7 +28,9 @@ MANIFEST_NAME = "manifest.json"
 MANIFEST_MAX = 64 * 1024
 FILE_MAX = 8 * 1024 * 1024
 TIMEOUT_S = 4.0
-SIGNED_TARGETS = ("basis_stm",)              # Zange, Basis-ESP und Lambda haben keine signierten Dateien
+# Manifest-Schluessel -> Ziel im Kopf der .pystfw (tools/pyst_image.py: TARGETS). Lambda hat keine signierten Dateien.
+FILE_TARGETS = {"basis_stm": bootproto.TARGET, "zange": bootproto.TARGET_ZANGE, "basis_esp": bootproto.TARGET_BASIS_ESP}
+SIGNED_TARGETS = tuple(FILE_TARGETS)
 _FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _VERSION = re.compile(r"^\d+(\.\d+)*$")
 
@@ -122,11 +124,14 @@ def fetch_manifest(timeout: float = TIMEOUT_S, base: str = FIRMWARE_URL) -> Opti
 
 
 def _check_signed(path: str, entry: Entry) -> None:
-    """Datei der Basis: formal gut, Signatur wie im Manifest, bekannter Schlüssel, Signatur gültig."""
+    """Signierte Datei: formal gut und für das Ziel des Eintrags, Signatur wie im Manifest, bekannter Schlüssel,
+    Signatur gültig. Den Inhalt prüft erst das Gerät (nur es hat den AES-Schlüssel)."""
     with open(path, "rb") as fh:
         data = fh.read()
     try:
-        upd = bootproto.UpdateFile.parse(data)
+        upd = bootproto.UpdateFile.parse(data, FILE_TARGETS[entry.target])
+        if upd.version != entry.version:
+            raise UpdateError(f"{entry.file}: Version im Manifest ({entry.version}) passt nicht zur Datei ({upd.version})")
         if not entry.signature:
             raise UpdateError(f"{entry.file}: Manifest ohne Signatur")
         if entry.signature != upd.signature.hex():

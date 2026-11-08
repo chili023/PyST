@@ -5,6 +5,7 @@ Die Schluessel hier sind TESTSCHLUESSEL: oeffentlich aus festem Text abgeleitet,
 Host-Tests vorbehalten. Sie stehen nie in fw_keys.KNOWN_KEYS und in keinem Bootloader.
 """
 import hashlib
+import hmac
 import os
 import struct
 import zlib
@@ -19,6 +20,14 @@ TESTSCHLUESSEL_ID = 0
 TESTSCHLUESSEL_ED25519 = hashlib.sha256(b"PyST TESTSCHLUESSEL Ed25519, nie fuer echte Firmware").digest()
 TESTSCHLUESSEL_AES = hashlib.sha256(b"PyST TESTSCHLUESSEL AES, nie fuer echte Firmware").digest()
 FREMDER_TESTSCHLUESSEL_ED25519 = hashlib.sha256(b"PyST fremder TESTSCHLUESSEL Ed25519").digest()
+
+
+def target_aes(target: str, aes: bytes = TESTSCHLUESSEL_AES) -> bytes:
+    """ESP-Ziele verschluesseln mit HMAC-SHA256(aes256, "PyST-FW-AES\\0" + Ziel), STUFE2.md „ESP-Ziele“."""
+    return hmac.new(aes, b"PyST-FW-AES\0" + target.encode(), hashlib.sha256).digest()
+
+
+ZANGE_AES = target_aes(bp.TARGET_ZANGE)
 
 
 def public_key(seed: bytes = TESTSCHLUESSEL_ED25519) -> bytes:
@@ -86,6 +95,39 @@ def format2(version: str = "0.4.0", size: int = 20480, rollback: int = 1, key_id
     h[40:40 + len(version)] = version.encode()
     image_crc = struct.unpack_from("<I", img, bp.IMG_HDR_OFS + 16)[0]
     struct.pack_into("<IIIII", h, 56, bp.APP_BASE, len(img), image_crc, len(payload), zlib.crc32(payload))
+    h[76], h[77], h[78] = bp.SIG_ED25519, bp.ENC_AES256_CTR, key_id
+    struct.pack_into("<I", h, 80, rollback)
+    h[84:100] = nonce
+    h[164:196] = hashlib.sha256(img).digest()
+    if patch:
+        patch(h)
+    return seal(h, seed) + payload
+
+
+def esp_image(version: str = "0.4.1", size: int = 8192, project: bytes = b"pyst-zange") -> bytes:
+    """Kuenstliches ESP-Abbild: 0xE9 vorn, esp_app_desc_t an 0x20 (Version an 0x30, Projekt an 0x50), Laenge %16."""
+    img = bytearray(bytes(range(256)) * (size // 256 + 1))[:size]
+    img[0] = 0xE9
+    img[0x20:0x24] = struct.pack("<I", 0xABCD5432)
+    img[0x30:0x50] = version.encode().ljust(32, b"\0")
+    img[0x50:0x70] = project.ljust(32, b"\0")
+    return bytes(img)
+
+
+def esp_update(version: str = "0.4.1", size: int = 8192, rollback: int = 1, target: str = bp.TARGET_ZANGE,
+               key_id: int = TESTSCHLUESSEL_ID, seed: bytes = TESTSCHLUESSEL_ED25519, aes: bytes = b"",
+               plain: bytes = b"", patch=None) -> bytes:
+    """.pystfw fuer ein ESP-Ziel wie tools/pyst_image.py update --target: load_addr 0, Schluessel des Ziels."""
+    img = plain or esp_image(version, size)
+    nonce = os.urandom(16)
+    payload = encrypt(img, nonce, aes or target_aes(target))
+    h = bytearray(bp.UPD_LEN)
+    h[0:8] = bp.UPD_MAGIC
+    struct.pack_into("<HHI", h, 8, bp.FORMAT_SIGNED, bp.UPD_LEN, bp.FLAGS_SIGNED_ENCRYPTED)
+    h[16:16 + len(target)] = target.encode()
+    h[32:32 + len(bp.BOARD)] = bp.BOARD.encode()
+    h[40:40 + len(version)] = version.encode()
+    struct.pack_into("<IIIII", h, 56, 0, len(img), zlib.crc32(img), len(payload), zlib.crc32(payload))
     h[76], h[77], h[78] = bp.SIG_ED25519, bp.ENC_AES256_CTR, key_id
     struct.pack_into("<I", h, 80, rollback)
     h[84:100] = nonce

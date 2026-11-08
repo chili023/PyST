@@ -495,7 +495,7 @@ class FlashSeiteEsp(unittest.TestCase):
         self.assertIn("anhalten", self.page.status.text())
 
     def test_zange_braucht_keine_bruecke(self):
-        self.assertEqual(self.starte(self.qt.QMessageBox.Yes, flash.ZANGE), ["frage", "run"])
+        self.assertEqual(self.starte(self.qt.QMessageBox.Yes, flash.ZANGE_ESPTOOL), ["frage", "run"])
 
 
 class Abhaengigkeiten(unittest.TestCase):

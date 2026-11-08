@@ -1783,6 +1783,308 @@ class BootSim2Device(BootSimDevice):
             self.rollback = self._rollback_of(commit.header)
 
 
+class ZangeUpdSimPort:
+    """USB-Port der Fake-Zange (ZangeUpdSimDevice): Textzeilen. Nach Neustart oder Kabel weg wirft er OSError wie pyserial."""
+
+    def __init__(self, dev: "ZangeUpdSimDevice"):
+        self.dev = dev
+        self.gen = dev.gen
+        self.buf = bytearray()
+        self.line = b""
+        self.lock = threading.Lock()
+
+    def _alive(self):
+        if self.gen != self.dev.gen or not self.dev.on_bus():
+            raise OSError("Gerät abgemeldet")
+
+    @property
+    def in_waiting(self) -> int:
+        self._alive()
+        return len(self.buf)
+
+    def read(self, n: int = 1) -> bytes:
+        self._alive()
+        end = time.time() + 0.05
+        while not self.buf and time.time() < end:
+            time.sleep(0.001)
+        with self.lock:
+            out = bytes(self.buf[:n])
+            del self.buf[:n]
+        return out
+
+    def write(self, data: bytes) -> int:
+        self._alive()
+        self.line += data
+        while b"\n" in self.line:
+            raw, self.line = self.line.split(b"\n", 1)
+            self.dev.line(self, raw.decode("ascii", "replace").strip())
+        return len(data)
+
+    def put(self, text: str):
+        if self.gen == self.dev.gen:
+            with self.lock:
+                self.buf += text.encode("latin-1") + b"\r\n"
+
+    def reset_input_buffer(self):
+        with self.lock:
+            self.buf.clear()
+
+    def close(self):
+        pass
+
+
+class ZangeUpdSimDevice:
+    """Fake-Zange fuer das USB-Update ohne Hardware, nach zange-c3/src/core/fwupd.c, proto_upd.c und src/hw/ota.c:
+    #UPD INFO/BEGIN/DATA/END/ABORT/BOOT, Kopf, Signatur (oeffentlicher Schluessel des Aufrufers), key_id, Rollback,
+    Bloecke mit Wiederholung und Luecke, Entschluesseln mit dem AES-Schluessel des Ziels, CRC und SHA-256, App-Beschreibung
+    (Projekt, Version), Neustart mit App-Rollback: Die neue Firmware laeuft erst zur Probe (ota=pruefen) und gilt nach
+    stable_s; ein Neustart vorher fuehrt zur alten zurueck. In diesem Repository nur mit Testschluesseln.
+    faults:
+      drop        Nummern von #UPD-Antworten, die verloren gehen (Zaehlung ab 1)
+      gate        Code der Sperre (20 Messung, 21 Akku) fuer BEGIN und DATA
+      gate_at     Sperre erst ab diesem DATA-Offset
+      noise       #ESP-Logzeilen vor jeder Antwort
+      no_upd      alte Firmware: kein upd=1 in #CAP, #UPD unbekannt
+      no_rollback INFO ohne rollback= (prueft dann nur das Geraet)
+      pending_s   laeuft beim Start selbst noch so lange zur Probe
+      stable_s    Probezeit nach dem Update (Vorgabe 0.2 s, im Geraet 15 s)
+      crash       neue Firmware stuerzt beim Start ab: Bootloader nimmt die alte
+      unplug_at   Kabel weg, sobald next diesen Wert erreicht
+      begin_s     Dauer der Signaturpruefung"""
+    RESET_S = 0.05
+    MAX = 0x140000
+    IDLE_S = 30.0
+
+    def __init__(self, public: bytes, aes: bytes, version: str = "0.4.0", rollback: int = 1, key_id: int = 0,
+                 **faults):
+        self.public, self.aes, self.key_id, self.faults = public, aes, key_id, faults
+        self.gen = 0
+        self.back_at = 0.0
+        self.parts = {"ota_0": (version, rollback), "ota_1": None}
+        self.running = self.boot_part = "ota_0"
+        self.ota = "pruefen" if "pending_s" in faults else "ohne"      # ohne: Erstflash, kein Eintrag in otadata
+        self.pending_until = time.time() + faults.get("pending_s", 0.0)
+        self.previous = "ota_0"
+        self.state, self.hdr, self.next, self.plain, self.last = "frei", b"", 0, bytearray(), 0.0
+        self.resp_count = 0
+        self.lines: List[str] = []                           # empfangene Zeilen, fuer die Tests
+        self.boots = 0
+
+    # --- USB
+    @property
+    def version(self) -> str:
+        return self.parts[self.running][0]
+
+    @property
+    def rollback(self) -> int:
+        return self.parts[self.running][1]
+
+    def _name(self) -> str:
+        return f"/dev/ttyACM-ZSIM{self.gen}"
+
+    def on_bus(self) -> bool:
+        if self.back_at and time.time() >= self.back_at:
+            self.back_at = 0.0
+            self._boot()
+        return not self.back_at and not self.faults.get("unplugged")
+
+    def ports(self) -> List[str]:
+        return [self._name()] if self.on_bus() else []
+
+    def open(self, port: str) -> ZangeUpdSimPort:
+        if not self.on_bus() or port != self._name():
+            raise OSError(f"{port} gibt es nicht")
+        return ZangeUpdSimPort(self)
+
+    # --- Neustart und Rollback
+    def _ota_state(self) -> str:
+        if self.ota == "pruefen" and time.time() >= self.pending_until:
+            self.ota = "gueltig"                             # ota_poll: nach der Probezeit gueltig
+        return self.ota
+
+    def _reset(self):
+        self.gen += 1
+        self.back_at = time.time() + self.RESET_S
+        self.state = "frei"
+
+    def _boot(self):
+        self.boots += 1
+        if self._ota_state() == "pruefen":                   # vor der Freigabe neu gestartet: zurueck zur alten
+            self.running = self.boot_part = self.previous
+            self.ota = "gueltig"
+            return
+        if self.boot_part != self.running:
+            self.previous, self.running = self.running, self.boot_part
+            self.ota = "pruefen"
+            self.pending_until = time.time() + self.faults.get("stable_s", 0.2)
+            if self.faults.get("crash"):
+                self._boot()                                 # Absturz beim Start, der Bootloader nimmt die alte
+
+    # --- Zeilen
+    def line(self, port: ZangeUpdSimPort, text: str):
+        self.lines.append(text)
+        w = text.split()
+        if not w:
+            return
+        if w[0] in ("#?", "?"):
+            upd = "" if self.faults.get("no_upd") else ";upd=1"
+            port.put(f"#CAP;proto=1;fw=PyST-Zange {self.version};tick_ns=1000;ch=I;burst_max=2000;modes=N,D;set=1;"
+                     f"hw=zange-c3;ign=zange;roll=0;log=1{upd}")
+        elif w[0].upper() == "#RUN":
+            port.put(f"#OK;RUN;{w[1] if len(w) > 1 else '?'}")
+        elif w[0].upper() == "#UPD":
+            if self.faults.get("no_upd"):
+                port.put("#ERR;?;UPD")
+                return
+            if self.state == "empfang" and time.time() - self.last > self.IDLE_S:
+                self.state = "verfallen"
+            reply = self._upd([x for x in w[1:]])
+            if reply is not None:
+                self._send(port, reply)
+        else:
+            port.put("#ERR;?;unbekannt")
+
+    def _send(self, port: ZangeUpdSimPort, reply: str):
+        self.resp_count += 1
+        if self.faults.get("noise"):
+            port.put("#ESP;I;ota;Rauschen zwischen den Antworten")
+        if self.resp_count not in self.faults.get("drop", ()):
+            port.put(reply)
+
+    def _err(self, code: int) -> str:
+        text = {2: "zustand", 3: "luecke", 4: "kopf", 5: "ziel", 6: "format", 7: "laenge", 8: "flash", 9: "pruefung",
+                10: "befehl", 11: "signatur", 12: "rollback", 20: "messung", 21: "akku"}.get(code, "fehler")
+        nxt = f";next={self.next}" if self.state == "empfang" else ""
+        return f"#ERR;UPD;{code};{text}{nxt}"
+
+    def _drop(self):
+        self.state, self.next, self.plain = "frei", 0, bytearray()
+
+    def _upd(self, a: List[str]) -> Optional[str]:
+        sub = a[0].upper() if a else ""
+        self.last = time.time()
+        if sub == "INFO" and len(a) == 1:
+            rb = "" if self.faults.get("no_rollback") else f";rollback={self.rollback}"
+            return (f"#UPD;INFO;fw={self.version};ziel=zange-c3;board=rev31{rb};key={self.key_id};part={self.running};"
+                    f"boot={self.boot_part};ota={self._ota_state()};max={self.MAX};block=256;sitzung={self.state};"
+                    f"next={self.next}")
+        if sub == "BEGIN" and len(a) == 2:
+            return self._begin(a[1])
+        if sub == "DATA" and len(a) == 3:
+            return self._data(a[1], a[2])
+        if sub == "END" and len(a) == 1:
+            return self._end()
+        if sub == "ABORT" and len(a) == 1:
+            if self.state == "fertig":
+                self.boot_part = self.running
+            self._drop()
+            return "#UPD;OK;ABORT"
+        if sub == "BOOT" and len(a) == 1:
+            if self.state != "fertig":
+                return self._err(2)
+            threading.Timer(0.01, self._reset).start()
+            return "#UPD;OK;BOOT"
+        return self._err(10)
+
+    @staticmethod
+    def _b64(text: str) -> Optional[bytes]:
+        import base64
+        import binascii
+        try:
+            return base64.b64decode(text, validate=True)
+        except (binascii.Error, ValueError):
+            return None
+
+    def _begin(self, text: str) -> Optional[str]:
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        b = bootproto
+        h = self._b64(text)
+        if h is None:
+            return self._err(10)
+        if len(h) != b.UPD_LEN or h[:8] != b.UPD_MAGIC or zlib.crc32(h[:252]) != struct.unpack_from("<I", h, 252)[0]:
+            return self._err(4)
+        fmt, _size, flags = struct.unpack_from("<HHI", h, 8)
+        if fmt != b.FORMAT_SIGNED or flags != b.FLAGS_SIGNED_ENCRYPTED or h[76] != 1 or h[77] != 1:
+            return self._err(6)
+        if h[16:32].split(b"\0")[0] != b"zange-c3" or h[32:40].split(b"\0")[0] != b"rev31" or h[56:60] != bytes(4):
+            return self._err(5)
+        ilen, plen = struct.unpack_from("<I", h, 60)[0], struct.unpack_from("<I", h, 68)[0]
+        if ilen != plen or not 0 < ilen <= self.MAX or ilen % 16:
+            return self._err(7)
+        if self.faults.get("gate") and self.faults.get("gate_at") is None:
+            return self._err(self.faults["gate"])
+        upd = b.UpdateFile(h, b"", "", "", "", 0, 0, b.FORMAT_SIGNED)
+        try:
+            if h[78] != self.key_id:
+                raise InvalidSignature()
+            Ed25519PublicKey.from_public_bytes(self.public).verify(upd.signature, upd.signed_data)
+        except InvalidSignature:
+            return self._err(11)
+        if struct.unpack_from("<I", h, 80)[0] < self.rollback:
+            return self._err(12)
+        if self._ota_state() == "pruefen":                   # ESP_ERR_OTA_ROLLBACK_INVALID_STATE
+            return self._err(2)
+        if self.state == "fertig":
+            self.boot_part = self.running
+        self.state, self.hdr, self.next, self.plain = "empfang", h, 0, bytearray()
+        time.sleep(self.faults.get("begin_s", 0))
+        return f"#UPD;OK;BEGIN;next=0;len={ilen};block=256"
+
+    def _data(self, off_text: str, text: str) -> Optional[str]:
+        if self.state != "empfang":
+            return self._err(2)
+        d = self._b64(text)
+        if d is None or not off_text.isdigit():
+            return self._err(10)
+        off, ilen = int(off_text), struct.unpack_from("<I", self.hdr, 60)[0]
+        if not 1 <= len(d) <= 256:
+            return self._err(7)
+        if off + len(d) <= self.next:
+            return f"#UPD;OK;DATA;next={self.next}"         # Wiederholung, nicht neu geschrieben
+        if off != self.next:
+            return self._err(3)
+        if off + len(d) > ilen:
+            self._drop()
+            return self._err(7)
+        gate_at = self.faults.get("gate_at")
+        if gate_at is not None and off >= gate_at:
+            self._drop()
+            return self._err(self.faults.get("gate", 20))
+        self.plain += ctr_decrypt(self.aes, self.hdr[84:100], off, d)
+        self.next = off + len(d)
+        if self.next >= self.faults.get("unplug_at", 1 << 30):
+            self.faults["unplugged"] = True
+            self.gen += 1
+            return None
+        return f"#UPD;OK;DATA;next={self.next}"
+
+    def _end(self) -> str:
+        h = self.hdr
+        version = h[40:56].split(b"\0")[0].decode()
+        if self.state == "fertig":
+            return f"#UPD;OK;END;version={version}"
+        if self.state != "empfang":
+            return self._err(2)
+        if self.next != struct.unpack_from("<I", h, 60)[0]:
+            return self._err(7)
+        img = bytes(self.plain)
+        if zlib.crc32(img) != struct.unpack_from("<I", h, 64)[0] or hashlib.sha256(img).digest() != h[164:196]:
+            self._drop()
+            return self._err(9)
+        if img[0x50:0x70].split(b"\0")[0] != b"pyst-zange":    # esp_app_desc_t.project_name
+            self._drop()
+            return self._err(5)
+        if img[0x30:0x50].split(b"\0")[0].decode("ascii", "replace") != version:
+            self._drop()
+            return self._err(9)
+        other = "ota_1" if self.running == "ota_0" else "ota_0"
+        self.parts[other] = (version, struct.unpack_from("<I", h, 80)[0])
+        self.boot_part = other
+        self.state = "fertig"
+        return f"#UPD;OK;END;version={version}"
+
+
 class LambdaSimPort(BasisSimSerial):
     """Messport der Basis in LambdaSimDevice. Kabel weg: OSError wie pyserial."""
 

@@ -68,7 +68,7 @@ class Bilder(unittest.TestCase):
 
     def test_zange_passt(self):
         esp_build(self.d, "pyst-zange")
-        img = flash.load_image(flash.ZANGE, self.d)
+        img = flash.load_image(flash.ZANGE_ESPTOOL, self.d)
         self.assertEqual([a for a, _ in img.files], [0x0, 0x8000, 0xF000, 0x20000])
         self.assertIn("pyst-zange", img.summary())
 
@@ -85,23 +85,23 @@ class Bilder(unittest.TestCase):
             flash.load_image(flash.BASIS_STLINK, self.d)      # ESP-Abbild auf dem STM32
         esp_build(self.d, "basis-esp32c3")
         with self.assertRaisesRegex(flash.FlashError, "Falsche Firmware"):
-            flash.load_image(flash.ZANGE, self.d)
+            flash.load_image(flash.ZANGE_ESPTOOL, self.d)
 
     def test_projektordner_findet_den_build(self):
         b = os.path.join(self.d, ".pio", "build", "zange_c3")
         os.makedirs(b)
         esp_build(b, "pyst-zange")
-        self.assertEqual(flash.load_image(flash.ZANGE, self.d).folder, b)
+        self.assertEqual(flash.load_image(flash.ZANGE_ESPTOOL, self.d).folder, b)
 
     def test_unvollstaendig_und_leer(self):
         with self.assertRaises(flash.FlashError):
-            flash.load_image(flash.ZANGE, "")
+            flash.load_image(flash.ZANGE_ESPTOOL, "")
         with self.assertRaises(flash.FlashError):
-            flash.load_image(flash.ZANGE, self.d)
+            flash.load_image(flash.ZANGE_ESPTOOL, self.d)
         esp_build(self.d, "pyst-zange")
         os.remove(os.path.join(self.d, "partitions.bin"))
         with self.assertRaisesRegex(flash.FlashError, "partitions.bin"):
-            flash.load_image(flash.ZANGE, self.d)
+            flash.load_image(flash.ZANGE_ESPTOOL, self.d)
 
     def test_stm(self):
         stm_bin(self.d)
@@ -176,12 +176,12 @@ class Bilder(unittest.TestCase):
 
     def test_esp_befehl_und_port(self):
         esp_build(self.d, "pyst-zange")
-        cmd = flash.esp_command(["esptool"], "/dev/x", flash.load_image(flash.ZANGE, self.d))
+        cmd = flash.esp_command(["esptool"], "/dev/x", flash.load_image(flash.ZANGE_ESPTOOL, self.d))
         self.assertEqual(cmd[cmd.index("--port") + 1], "/dev/x")
         self.assertEqual(cmd[cmd.index("--baud") + 1], "921600")
         self.assertIn("0x8000", cmd)
         with self.assertRaisesRegex(flash.FlashError, "nicht am USB"):
-            flash.build_command(flash.ZANGE, self.d, None)
+            flash.build_command(flash.ZANGE_ESPTOOL, self.d, None)
 
 
 class Versionen(unittest.TestCase):
@@ -198,7 +198,7 @@ class Versionen(unittest.TestCase):
             esp_build(d, "pyst-zange")
             with open(os.path.join(d, "firmware.bin"), "wb") as fh:
                 fh.write(b"\xe9" + bytes(40) + b"#CAP;proto=1;fw=PyST-Zange 0.1.1;tick_ns=1000")
-            self.assertEqual(flash.image_version(flash.load_image(flash.ZANGE, d)), "0.1.1")
+            self.assertEqual(flash.image_version(flash.load_image(flash.ZANGE_ESPTOOL, d)), "0.1.1")
             esp_build(d, "basis-esp32c3", "0x10000", "0x17000")
             with open(os.path.join(d, "firmware.bin"), "wb") as fh:
                 fh.write(b"\xe9" + bytes(40) + b"basis-esp 0.3.2\0")
@@ -215,7 +215,7 @@ class Versionen(unittest.TestCase):
         lk = link.DynoLink("SIM:zange")
         try:
             lk.info()
-            self.assertEqual(flash.device_versions(lk), {flash.ZANGE: "0.3.0"})
+            self.assertEqual(flash.device_versions(lk), {flash.ZANGE: "0.3.0", flash.ZANGE_ESPTOOL: "0.3.0"})
         finally:
             lk.close()
 
@@ -664,7 +664,7 @@ class FlashSeite(unittest.TestCase):
         return seen
 
     def test_ziele(self):
-        self.assertEqual(set(self.page.rows), {flash.ZANGE, flash.BASIS_STM, flash.BASIS_STLINK, flash.BASIS_ESP,
+        self.assertEqual(set(self.page.rows), {flash.ZANGE, flash.ZANGE_ESPTOOL, flash.BASIS_STM, flash.BASIS_STLINK, flash.BASIS_ESP,
                                                flash.LAMBDA_F042})
         self.assertEqual(flash.TARGETS[flash.LAMBDA_F042].name, "Lambda (F042) per CAN")
 
