@@ -967,13 +967,14 @@ class GuiZange(unittest.TestCase):
                 hw = w.page_hw
                 w.show_page(hw)
                 hw.start_demo()
-                self.assertTrue(run(5, lambda: "Akku" in w.zange_status.text()))
+                ecu = w.statusleiste.feld("ecu")
+                self.assertTrue(run(5, lambda: "Akku" in w.statusleiste.feld("zange").text()))
                 self.assertTrue(run(5, lambda: len(hw.plugs.states) == 4))
                 self.assertTrue(hw.b_mark.isEnabled())
                 # Lambda: Knopf, Zustand, Statusleiste, Warnung bei 12 V
                 self.assertTrue(run(3, lambda: hw.b_lambda.isEnabled()))
                 self.assertEqual((hw.b_lambda.text(), hw.lam_state.text()), ("Lambda ein", "aus"))
-                self.assertEqual(w.lambda_status.text(), "● Lambda aus")
+                self.assertTrue(run(2, lambda: "Lambda aus" in ecu.text()), ecu.text())
                 w.link.ser.settings["sim_motor"] = "0"
                 w.link.ser.lam_motor_t = 0.0
                 hw.b_lambda.click()
@@ -985,15 +986,15 @@ class GuiZange(unittest.TestCase):
                 self.assertEqual(hw.lam_detail.text(), "von PyST ausgeschaltet")
                 hw.b_lambda.click()
                 self.assertTrue(run(3, lambda: hw.lam_state.text() == "bereit"))
-                self.assertIn("Lambda bereit · aus in", w.lambda_status.text())
+                self.assertTrue(run(2, lambda: "Lambda bereit · aus in" in ecu.text()), ecu.text())
                 self.assertTrue(hw.lam_warn.isHidden())
                 w.link.ser.settings["sim_u12"] = "10.1"
                 self.assertTrue(run(3, lambda: not hw.lam_warn.isHidden()))
-                self.assertIn("12 V zu niedrig", w.lambda_status.text())
+                self.assertTrue(run(2, lambda: "12 V zu niedrig" in ecu.text()), ecu.text())
                 w.link.ser.settings["sim_u12"] = "13.8"
                 w.link.ser.settings["sim_motor"] = "1"
                 self.assertTrue(run(3, lambda: hw.lam_state.text() == "heizt"))
-                self.assertIn("Lambda heizt", w.lambda_status.text())
+                self.assertTrue(run(2, lambda: "Lambda heizt" in ecu.text()), ecu.text())
                 w.link.ser.sim_t4()                                  # T4 lang an der Zange
                 self.assertTrue(run(3, lambda: hw.lam_state.text() == "aus"))
                 self.assertEqual(hw.lam_detail.text(), "an der Zange ausgeschaltet")

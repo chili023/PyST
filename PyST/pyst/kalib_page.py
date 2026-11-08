@@ -12,12 +12,13 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6 import QtCore, QtWidgets
 
-from . import farben, physics
+from . import physics
+from . import theme
 from .ausrollen import AusrollErgebnis, verlust_ps
 from .runner import COAST_N_ENDE, COAST_T_MAX
 
 ANZEIGE = (("ps", "Verlustleistung [PS]"), ("nm", "Verlustmoment an der Rolle [Nm]"))
-FARBE_FIT = "#c62828"
+FARBE_FIT = "#c62828"          # Basisfarben, je Thema in der Helligkeit angepasst (theme.kurvenfarbe)
 FARBE_PUNKTE = "#1f5fbf"
 FARBE_AKTUELL = "#7f7f7f"
 
@@ -75,7 +76,7 @@ class KalibPage(QtWidgets.QScrollArea):
             "Die Aufzeichnung endet bei der eingestellten Drehzahl, nach der Höchstdauer oder mit "
             "„Ausrollen beenden (Esc)“. Ausgeschaltet läuft alles wie bisher.")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: gray;")
+        theme.rolle(hint, "neben")
         gl.addRow(hint)
         lay.addWidget(g)
 
@@ -106,9 +107,9 @@ class KalibPage(QtWidgets.QScrollArea):
         hb.addWidget(self.anzeige)
         hb.addStretch(1)
         pl.addLayout(hb)
-        self.plot = pg.PlotWidget(background="w")
+        self.plot = pg.PlotWidget(background=theme.farbe("plot"))
         self.plot.setMenuEnabled(False)
-        self.plot.showGrid(x=True, y=True, alpha=0.25)
+        self.plot.showGrid(x=True, y=True, alpha=0.35)
         self.plot.setLabel("bottom", "Motordrehzahl (Rolle × i) [1/min]")
         self.plot.setMinimumHeight(280)
         self.plot.addLegend(offset=(10, 10))
@@ -117,6 +118,7 @@ class KalibPage(QtWidgets.QScrollArea):
         self.c_fit = self.plot.plot([], [], pen=pg.mkPen(FARBE_FIT, width=2.5), name="Fit")
         self.c_aktuell = self.plot.plot([], [], pen=pg.mkPen(FARBE_AKTUELL, width=1.5, style=QtCore.Qt.DashLine),
                                         name="aktuell gültig")
+        theme.diagramm(self.plot, self._kurven_thema)
         pl.addWidget(self.plot, 1)
         top.addLayout(pl, 1)
         rl.addLayout(top, 1)
@@ -171,6 +173,12 @@ class KalibPage(QtWidgets.QScrollArea):
         self.settings["ausrollen"] = self.cfg
         self.save()
 
+    def _kurven_thema(self, _thema: str):
+        k = theme.kurvenfarbe
+        self.c_punkte.setSymbolBrush(k(FARBE_PUNKTE))
+        self.c_fit.setPen(pg.mkPen(k(FARBE_FIT), width=2.5))
+        self.c_aktuell.setPen(pg.mkPen(k(FARBE_AKTUELL), width=1.5, style=QtCore.Qt.DashLine))
+
     # ------------------------------------------------------------------ Ergebnis
     def show_result(self, res: AusrollErgebnis, text: str = "", rid=None, store: bool = True):
         """Ergebnis anzeigen (text: woher, z.B. Lauf und Fahrzeug). Uebernommen wird erst mit dem Knopf."""
@@ -178,11 +186,13 @@ class KalibPage(QtWidgets.QScrollArea):
         self.source_label.setText(text or "Ausrollversuch")
         if res.ok:
             self.msg_label.setText("<br>".join(res.hinweise))
-            self.msg_label.setStyleSheet(f"color: {farben.WARNUNG};")
+            self.msg_label.setStyleSheet("")
+            theme.stufe(self.msg_label, theme.WARNUNG)
             self.msg_label.setVisible(bool(res.hinweise))
         else:
             self.msg_label.setText(res.meldung)
-            self.msg_label.setStyleSheet(f"color: {farben.FEHLER}; font-weight: 600;")
+            self.msg_label.setStyleSheet("font-weight: 600;")
+            theme.stufe(self.msg_label, theme.FEHLER)
             self.msg_label.setVisible(True)
         self.values.setText(self._values_html(res))
         self.apply_btn.setEnabled(res.ok)

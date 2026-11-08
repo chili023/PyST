@@ -20,6 +20,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .db import SETUP_FIELDS, Database
 from . import physics
+from . import theme
 from .dialogs import EditDialog
 import json
 
@@ -116,10 +117,10 @@ class LogViewer(QtWidgets.QWidget):
         root.addWidget(self.gauge_bar)                          # volle Breite ueber allem
         root.addWidget(split, 1)
         self.glw = pg.GraphicsLayoutWidget()
-        self.glw.setBackground("w")
+        self.glw.setBackground(theme.farbe("plot"))
         cl.addWidget(self.glw, 1)
         hint = QtWidgets.QLabel("Maus = Cursor · ←/→ = ein Telegramm weiter · Mausrad = Zoom · ziehen = verschieben")
-        hint.setStyleSheet("color: gray;")
+        theme.rolle(hint, "neben")
         cl.addWidget(hint)
         split.addWidget(center)
 
@@ -140,6 +141,7 @@ class LogViewer(QtWidgets.QWidget):
 
         self.plots: List[pg.PlotItem] = []
         self.lines: List[pg.InfiniteLine] = []
+        theme.bei_wechsel(self, self._thema, sofort=False)
         self.glw.scene().sigMouseMoved.connect(self._mouse_moved)
         for sig in (self.xaxis.currentIndexChanged, self.only_seg.toggled, self.panes_spin.valueChanged):
             sig.connect(lambda _=None: (self._layout_changed(), self._redraw()))
@@ -634,6 +636,16 @@ class LogViewer(QtWidgets.QWidget):
                 return self.data[rid][0][name].unit
         return ""
 
+    def _kfarbe(self, name: str) -> str:
+        """Kanalfarbe (ein Lauf) im aktiven Thema."""
+        return theme.kurvenfarbe(self.color_of.get(name, "#000"))
+
+    def _thema(self, _thema: str):
+        self.glw.setBackground(theme.farbe("plot"))
+        if getattr(self, "plots", None) is not None:
+            self._redraw()
+            self._fill_setup_table()
+
     def _redraw(self):
         self.glw.clear()
         self.plots, self.lines = [], []
@@ -644,9 +656,10 @@ class LogViewer(QtWidgets.QWidget):
         n_panes = self.panes_spin.value()
         for p in range(n_panes):
             pi = self.glw.addPlot(row=p, col=0)
+            theme.plotitem_stil(pi)
             pi.setMenuEnabled(False)
             pi.hideButtons()
-            pi.showGrid(x=True, y=False, alpha=0.25)
+            pi.showGrid(x=True, y=False, alpha=0.35)
             pi.getAxis("left").setStyle(showValues=False)
             pi.getAxis("left").setWidth(12)
             for ax in ("top", "right"):                         # geschlossener Rahmen
@@ -665,8 +678,8 @@ class LogViewer(QtWidgets.QWidget):
             if multi:
                 title = "  ".join(f"{STYLE_MARK[i % 4]} {n}" for i, n in enumerate(names))
             else:
-                title = "  ".join(f"<span style='color:{self.color_of.get(n, '#000')}'>{n}</span>" for n in names)
-            pi.setTitle(title, size="9pt")
+                title = "  ".join(f"<span style='color:{self._kfarbe(n)}'>{n}</span>" for n in names)
+            pi.setTitle(title, size="10pt", color=theme.farbe("text"))
             ranges = {}                                         # gleiche Einheit -> gemeinsame Skala
             for n in names:
                 r = self._range(n, runs)
@@ -686,7 +699,7 @@ class LogViewer(QtWidgets.QWidget):
                     if c is None or x is None:
                         continue
                     y = (c.values[self._slice(rid)] - lo) / (hi - lo)
-                    color = colors[rid] if multi else self.color_of.get(n, "#000")
+                    color = colors[rid] if multi else self._kfarbe(n)
                     style = STYLES[ci % 4] if multi else QtCore.Qt.SolidLine
                     pi.plot(x, y, pen=pg.mkPen(color, width=1.6, style=style), connect="finite")
             # Marker der Dauermessung (Text nur im obersten Feld)
@@ -694,11 +707,11 @@ class LogViewer(QtWidgets.QWidget):
                 for rid in runs:
                     d = self.data[rid]
                     for t, text in (d[2] if len(d) > 2 else []):
-                        pi.addItem(pg.InfiniteLine(t, angle=90, pen=pg.mkPen("#2e7d32", width=1.2),
+                        pi.addItem(pg.InfiniteLine(t, angle=90, pen=pg.mkPen(theme.kurvenfarbe("#2e7d32"), width=1.2),
                                                    label=text if p == 0 else None,
-                                                   labelOpts={"position": 0.92, "color": "#2e7d32"}),
+                                                   labelOpts={"position": 0.92, "color": theme.farbe("ok_fg")}),
                                    ignoreBounds=True)
-            line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("#444", width=1))
+            line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen(theme.farbe("cursor"), width=1))
             pi.addItem(line, ignoreBounds=True)
             self.plots.append(pi)
             self.lines.append(line)
@@ -777,7 +790,7 @@ class LogViewer(QtWidgets.QWidget):
         for r, n in enumerate(names):
             it = QtWidgets.QTableWidgetItem(n)
             if len(runs) <= 1:
-                it.setForeground(QtGui.QColor(self.color_of.get(n, "#000")))
+                it.setForeground(QtGui.QColor(self._kfarbe(n)))
             self.table.setItem(r, 0, it)
             for k, rid in enumerate(runs):
                 self.table.setItem(r, k + 1, QtWidgets.QTableWidgetItem(self._value(rid, n, x_at, k == 0)))
@@ -853,7 +866,8 @@ class LogViewer(QtWidgets.QWidget):
         for k, (row, _d) in enumerate(rows_data):
             self.setup_table.horizontalHeaderItem(k + 1).setForeground(QtGui.QColor(run_color(row)))
         self.setup_table.setRowCount(len(keys))
-        diff_bg = QtGui.QColor("#fff3b0")
+        diff_bg = QtGui.QColor(theme.farbe("changed_bg"))
+        diff_fg = QtGui.QColor(theme.farbe("changed_text"))
         for r, key in enumerate(keys):
             vals = [d.get(key, "") for _row, d in rows_data]
             differs = len(set(vals)) > 1 and key not in ("Datum", "Pmax", "Mmax", "Notiz Lauf")
@@ -867,6 +881,7 @@ class LogViewer(QtWidgets.QWidget):
                 cell = QtWidgets.QTableWidgetItem(v)
                 if differs:
                     cell.setBackground(diff_bg)
+                    cell.setForeground(diff_fg)
                 self.setup_table.setItem(r, k + 1, cell)
         # feste, schmale Laufspalten mit Zeilenumbruch, damit mehrere Laeufe nebeneinander passen
         self.setup_table.setWordWrap(True)

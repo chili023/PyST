@@ -6,28 +6,37 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from PySide6 import QtCore, QtWidgets
 
-CURSOR_BG = "#fff6cc"          # Hintergrund, solange Werte vom Cursor statt live angezeigt werden
-# Rahmen immer per Stylesheet (der Rahmen des Systems verschwindet sonst, sobald die Hervorhebung wechselt)
-GAUGE_STYLE = "QFrame#gauge {{ border: 1px solid #c4c4c4; border-radius: 4px; background: {bg}; }}"
+from . import theme
+
+# Rahmen immer per Stylesheet (der Rahmen des Systems verschwindet sonst, sobald die Hervorhebung wechselt).
+# Farben aus dem Thema; Hintergrund "cursor_bg", solange Werte vom Cursor statt live angezeigt werden.
+GAUGE_STYLE = ("QFrame#gauge {{ border: 1px solid {border}; border-radius: 4px; background: {bg}; }}"
+               "QLabel {{ background: transparent; border: none; }}")
 
 
 class Gauge(QtWidgets.QFrame):
     def __init__(self, title: str, unit: str):
         super().__init__()
         self.setObjectName("gauge")
-        self.setStyleSheet(GAUGE_STYLE.format(bg="#ffffff"))
+        self.highlight = False
         self.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)   # darf schmaler werden
         self.setMinimumWidth(70)
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(8, 2, 8, 2)
         lay.setSpacing(0)
         self.title = QtWidgets.QLabel(f"{title} [{unit}]" if unit else title)
-        self.title.setStyleSheet("color: gray; font-size: 11px;")
+        self.title.setStyleSheet("font-size: 12px;")
+        theme.rolle(self.title, "neben")
         self.value = QtWidgets.QLabel("–")
         self.value.setStyleSheet("font-size: 20px; font-weight: 600;")
         self.value.setAlignment(QtCore.Qt.AlignRight)
         lay.addWidget(self.title)
         lay.addWidget(self.value)
+        theme.bei_wechsel(self, lambda _t: self._stil())
+
+    def _stil(self):
+        T = theme.tokens()
+        self.setStyleSheet(GAUGE_STYLE.format(border=T["border"], bg=T["cursor_bg"] if self.highlight else T["panel"]))
 
     def set(self, text: str):
         self.value.setText(text)
@@ -36,7 +45,8 @@ class Gauge(QtWidgets.QFrame):
         self.title.setText(title)
 
     def set_highlight(self, on: bool):
-        self.setStyleSheet(GAUGE_STYLE.format(bg=CURSOR_BG if on else "#ffffff"))
+        self.highlight = on
+        self._stil()
 
 
 class GaugeBar(QtWidgets.QWidget):

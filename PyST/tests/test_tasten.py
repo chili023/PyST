@@ -322,12 +322,17 @@ class Gui(unittest.TestCase):
     def test_reiterstruktur(self):
         w = self.w
         top = [w.tabs.tabText(i) for i in range(w.tabs.count())]
-        self.assertEqual(top, ["Messen", "Fahrzeuge && Setups", "Auswertung", "Oszi / Dauermessung", "ECU",
-                               "Kalibrierung", "Einstellungen"])
+        self.assertEqual(top, ["Messen", "Fahrzeuge && Setups", "Auswertung", "Oszi / Dauermessung", "Einstellungen"])
         sub = [w.settings_tabs.tabText(i) for i in range(w.settings_tabs.count())]
-        self.assertEqual(sub, ["Allgemein", "Verbindung", "Zange · Netz · Steckdosen", "Tasten", "Prüfen", "Firmware"])
+        self.assertEqual(sub, ["Rolle/Lauf", "Verbindung", "Zange", "Lambda", "ECU", "Firmware", "WiFi"])
         s = w.page_settings
-        self.assertIs(w.settings_tabs.widget(1), s.conn_page)
+        self.assertIs(w.settings_tabs.widget(1), w.verbindung_tabs)
+        self.assertIs(w.verbindung_tabs.widget(0), s.conn_page)
+        self.assertIs(w.settings_tabs.widget(4), w.page_rusefi)
+        self.assertIs(w.zange_tabs.widget(1), w.page_tasten)
+        self.assertTrue(w.page_lambda.isAncestorOf(w.page_hw.box_lambda))
+        self.assertTrue(w.page_wifi.isAncestorOf(w.page_hw.box_net) and w.page_wifi.isAncestorOf(w.page_hw.box_plugs))
+        self.assertTrue(w.rolle_tabs.isAncestorOf(w.page_kalib))
         self.assertTrue(s.conn_page.isAncestorOf(s.port_combo) and s.conn_page.isAncestorOf(s.connect_btn))
         self.assertFalse(s.isAncestorOf(s.port_combo))
         self.assertTrue(s.isAncestorOf(s.fields["inkr"]))
@@ -352,8 +357,9 @@ class Gui(unittest.TestCase):
         from PySide6.QtTest import QTest
         w = self.w
         self.verbinden()
-        self.assertTrue(self.run_gui(5, lambda: "Zange verbunden" in w.zange_led.text()))
-        self.assertIn("Lambda", w.lambda_status.text() or self._warte_lambda())
+        zange = w.statusleiste.feld("zange")
+        self.assertTrue(self.run_gui(5, lambda: zange.stufe == "ok" and "Zange 1" in zange.text()), zange.text())
+        self.assertIn("Lambda", self._warte_lambda())
         w.activateWindow()
         for page in (w.page_oszi, w.page_tasten, w.page_flash, w.page_hw):
             w.show_page(page)
@@ -361,12 +367,13 @@ class Gui(unittest.TestCase):
             n = len(w.page_oszi.markers)
             QTest.keyClick(w, QtCore.Qt.Key_F3)
             self.assertTrue(self.run_gui(3, lambda: len(w.page_oszi.markers) == n + 1), page)
-            self.assertIn("Zange verbunden", w.zange_led.text())
-            self.assertTrue(w.zange_status.isVisible() and w.zange_led.isVisible())
+            self.assertEqual(zange.stufe, "ok")
+            self.assertTrue(zange.isVisible() and w.statusleiste.feld("ecu").isVisible())
 
     def _warte_lambda(self):
-        self.run_gui(3, lambda: bool(self.w.lambda_status.text()))
-        return self.w.lambda_status.text()
+        ecu = self.w.statusleiste.feld("ecu")
+        self.run_gui(3, lambda: "Lambda" in ecu.text())
+        return ecu.text()
 
     def test_hooks(self):
         w = self.w
@@ -388,19 +395,28 @@ class Gui(unittest.TestCase):
         w.show_page(w.page_tasten)
         w.save_window_layout()
         f = w.settings["fenster"]
-        self.assertEqual(f["reiter_neu"], [6, 3])
+        self.assertEqual(f["seite"], "tasten")
         w.show_page(w.page_oszi)
         w.settings_tabs.setCurrentIndex(0)
         w.restore_window_layout()
-        self.assertEqual((w.tabs.currentIndex(), w.settings_tabs.currentWidget()), (6, w.page_tasten))
+        self.assertIs(w.current_page(), w.page_tasten)
+        self.assertIs(w.tabs.currentWidget(), w.settings_tabs)
         # gespeichert von der Version ohne Unterreiter
-        for alt, page in ((6, w.page_flash), (4, w.page_hw), (5, w.page_pruef), (8, w.page_settings)):
+        for alt, page in ((6, w.page_flash), (4, w.page_hw), (5, w.page_pruef), (8, w.page_settings),
+                          (7, w.page_rusefi), (2, w.viewer)):
+            w.show_page(w.page_db)
             w.settings["fenster"] = {"reiter": alt}
             w.restore_window_layout()
-            self.assertEqual((w.tabs.currentWidget(), w.settings_tabs.currentWidget()), (w.settings_tabs, page), alt)
-        w.settings["fenster"] = {"reiter": 7}
-        w.restore_window_layout()
-        self.assertEqual(w.tabs.currentWidget(), w.page_rusefi)
+            self.assertIs(w.current_page(), page, alt)
+        # gespeichert von PyST 1.4 (Reiter ECU und Kalibrierung oben, Einstellungen mit sechs Unterreitern)
+        for f, page in (({"reiter_neu": [6, 3], "reiter_kalib": True}, w.page_tasten),
+                        ({"reiter_neu": [5, 0], "reiter_kalib": True}, w.page_kalib),
+                        ({"reiter_neu": [4, 0], "reiter_kalib": True}, w.page_rusefi),
+                        ({"reiter_neu": [6, 1], "reiter_kalib": True}, w.page_settings.conn_page)):
+            w.show_page(w.page_db)
+            w.settings["fenster"] = f
+            w.restore_window_layout()
+            self.assertIs(w.current_page(), page, f)
 
     # ------------------------------------------------------------------ Setup
     def test_setup_senden(self):

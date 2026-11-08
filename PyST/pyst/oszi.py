@@ -21,6 +21,7 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import diag as dg
+from . import theme
 from .kv_dialog import KvDialog
 from .physics import DynoParams
 from .recorder import Recorder
@@ -253,7 +254,9 @@ class OsziPage(QtWidgets.QWidget):
         self.rec_btn.setCheckable(True)
         self.rec_btn.setFixedHeight(32)
         self.rec_btn.setMinimumWidth(200)
-        self.rec_btn.setStyleSheet("QPushButton { font-weight: 700; } QPushButton:checked { background: #e57373; }")
+        theme.bei_wechsel(self.rec_btn, lambda _t: self.rec_btn.setStyleSheet(
+            "QPushButton { font-weight: 700; } QPushButton:checked { background: %s; color: %s; border-color: %s; }"
+            % (theme.farbe("err_bg"), theme.farbe("err_text"), theme.farbe("err_bg"))))
         self.rec_btn.toggled.connect(self.toggle_recording)
         top.addWidget(self.rec_btn)
         self.rec_label = QtWidgets.QLabel("keine Aufzeichnung")
@@ -309,11 +312,12 @@ class OsziPage(QtWidgets.QWidget):
         bar.addWidget(self.view_label, 1)
         lay.addLayout(bar)
         self.glw = pg.GraphicsLayoutWidget()
-        self.glw.setBackground("w")
+        self.glw.setBackground(theme.farbe("plot"))
+        theme.diagramm(self.glw, self._thema)
         lay.addWidget(self.glw, 1)
         hint = QtWidgets.QLabel("Mausrad = Zoom · ziehen = verschieben (hält die Anzeige an, „Live“ = weiter) · "
                                 "Ereignis doppelklicken = Stelle anzeigen")
-        hint.setStyleSheet("color: gray;")
+        theme.rolle(hint, "neben")
         lay.addWidget(hint)
         return w
 
@@ -463,7 +467,7 @@ class OsziPage(QtWidgets.QWidget):
         self.b_state = QtWidgets.QLabel("")
         lay.addWidget(self.b_state)
         self.bglw = pg.GraphicsLayoutWidget()
-        self.bglw.setBackground("w")
+        self.bglw.setBackground(theme.farbe("plot"))
         lay.addWidget(self.bglw, 1)
         self.p_logic = self.bglw.addPlot(row=0, col=0)
         self.p_logic.setLabel("left", "Pegel")
@@ -478,7 +482,9 @@ class OsziPage(QtWidgets.QWidget):
         self.p_per.setXLink(self.p_logic)
         self.p_per.showGrid(x=True, y=True, alpha=0.3)
         self.p_per.addLegend(offset=(5, 5))
-        self.cur = [pg.InfiniteLine(angle=90, movable=True, pen=pg.mkPen(c, width=1.5)) for c in ("#d32f2f", "#1976d2")]
+        self.cur = [pg.InfiniteLine(angle=90, movable=True, pen=pg.mkPen(theme.kurvenfarbe(c), width=1.5))
+                    for c in ("#d32f2f", "#1976d2")]
+        theme.diagramm(self.bglw)
         for c in self.cur:
             self.p_logic.addItem(c, ignoreBounds=True)
             c.sigPositionChanged.connect(self._cursor_moved)
@@ -804,11 +810,12 @@ class OsziPage(QtWidgets.QWidget):
         prev = None
         for row, u in enumerate(units):
             pi = self.glw.addPlot(row=row, col=0)
+            theme.plotitem_stil(pi)
             pi.setLabel("left", u)
-            pi.showGrid(x=True, y=True, alpha=0.25)
+            pi.showGrid(x=True, y=True, alpha=0.35)
             pi.setDownsampling(auto=True, mode="peak")
             pi.setClipToView(True)
-            pi.addLegend(offset=(5, 2), labelTextSize="8pt")
+            pi.addLegend(offset=(5, 2), labelTextSize="9pt")
             pi.getAxis("left").setWidth(60)
             pi.vb.sigRangeChangedManually.connect(self._manual_range)
             if prev is not None:
@@ -821,8 +828,16 @@ class OsziPage(QtWidgets.QWidget):
             self.plots[u] = pi
         for n in self.selected:
             pi = self.plots[LIVE_CHANNELS[n][0]]
-            self.curves[n] = pi.plot([], [], pen=pg.mkPen(LIVE_CHANNELS[n][1], width=1.5), name=n, connect="finite")
+            self.curves[n] = pi.plot([], [], pen=pg.mkPen(theme.kurvenfarbe(LIVE_CHANNELS[n][1]), width=1.5), name=n,
+                                     connect="finite")
+        for pi in self.plots.values():
+            theme.plotitem_stil(pi)                        # Legende jetzt mit Eintraegen
         self._draw(force=True)
+
+    def _thema(self, _thema: str):
+        """Themenwechsel: Diagramme der Live-Kanaele neu aufbauen (Farben, Achsen, Legenden)."""
+        if getattr(self, "plots", None) is not None:
+            self._rebuild_plots()
 
     def _manual_range(self, *_):
         if self.view_range is None and self.plots:
@@ -860,15 +875,19 @@ class OsziPage(QtWidgets.QWidget):
         for t, text in self.markers:
             if t0 <= t <= t1:
                 for k, pi in enumerate(self.plots.values()):
-                    line = pg.InfiniteLine(t, angle=90, pen=pg.mkPen("#2e7d32", width=1.5),
+                    gruen = theme.kurvenfarbe("#2e7d32")
+                    fill = QtGui.QColor(theme.farbe("panel"))
+                    fill.setAlpha(204)
+                    line = pg.InfiniteLine(t, angle=90, pen=pg.mkPen(gruen, width=1.5),
                                            label=text if pi is first else None,
-                                           labelOpts={"position": 0.9, "color": "#2e7d32", "fill": "#ffffffcc"})
+                                           labelOpts={"position": 0.9, "color": theme.farbe("ok_fg"), "fill": fill})
                     pi.addItem(line, ignoreBounds=True)
                     self.marker_lines.append((pi, line))
         shown = [e for e in self.events if t0 <= e.t <= t1][-50:]
         for e in shown:
             for pi in self.plots.values():
-                line = pg.InfiniteLine(e.t, angle=90, pen=pg.mkPen("#ff9800", width=1, style=QtCore.Qt.DashLine))
+                line = pg.InfiniteLine(e.t, angle=90, pen=pg.mkPen(theme.kurvenfarbe("#ff9800"), width=1,
+                                                                    style=QtCore.Qt.DashLine))
                 pi.addItem(line, ignoreBounds=True)
                 self.marker_lines.append((pi, line))
 
@@ -912,7 +931,7 @@ class OsziPage(QtWidgets.QWidget):
         self.p_per.clear()
         for c in self.cur:
             self.p_logic.addItem(c, ignoreBounds=True)
-        colors = {"I": "#c62828", "R": "#1f5fbf"}
+        colors = {"I": theme.kurvenfarbe("#c62828"), "R": theme.kurvenfarbe("#1f5fbf")}
         offs = {"I": 1.5, "R": 0.0}
         info = []
         for ch in ("I", "R"):
@@ -931,10 +950,10 @@ class OsziPage(QtWidgets.QWidget):
             if b.request.get("edge") == "B" or (len(set(y)) > 1 and b.ch == "A"):
                 ts, w = b.pulse_widths(ch, 0)
                 if len(w):
-                    self.p_per.plot(ts, w, pen=None, symbol="t", symbolSize=6, symbolBrush="#ff9800",
+                    self.p_per.plot(ts, w, pen=None, symbol="t", symbolSize=6, symbolBrush=theme.kurvenfarbe("#ff9800"),
                                     name=f"Pulsbreite {name}")
                     info.append(f"Pulsbreite {name}: {np.median(w) * 1e6:.1f} µs")
-        self.p_logic.addLine(x=0, pen=pg.mkPen("#ff9800", width=1, style=QtCore.Qt.DashLine)) \
+        self.p_logic.addLine(x=0, pen=pg.mkPen(theme.kurvenfarbe("#ff9800"), width=1, style=QtCore.Qt.DashLine)) \
             if b.trig_idx >= 0 else None
         tt = b.times()
         if len(tt):

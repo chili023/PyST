@@ -11,9 +11,10 @@ import os
 import time
 from typing import Callable, Dict, List, Optional
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import rusefi
+from . import theme
 
 DEFAULT_PROFILE = "Standard"
 FILE_TYPE = "pyst-rusefi-kanalsetup"
@@ -149,7 +150,7 @@ class RusefiPage(QtWidgets.QWidget):
                                 "Normalerweise holt PyST sie automatisch vom USB-Laufwerk „RUSEFI“ "
                                 "und merkt sie sich.")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: gray;")
+        theme.rolle(hint, "neben")
         gl.addWidget(self.ini_label, 0, 0, 1, 3)
         gl.addWidget(self.ini_file_btn, 1, 0)
         gl.addWidget(self.ini_drive_btn, 1, 1)
@@ -192,7 +193,7 @@ class RusefiPage(QtWidgets.QWidget):
             bt.addWidget(b)
         bt.addStretch(1)
         self.dirty_label = QtWidgets.QLabel("")
-        self.dirty_label.setStyleSheet("color: #b26a00;")
+        theme.stufe(self.dirty_label, theme.WARNUNG)
         bt.addWidget(self.dirty_label)
         gl.addLayout(bt)
         lay.addWidget(g, 1)
@@ -271,7 +272,7 @@ class RusefiPage(QtWidgets.QWidget):
             for k, text in enumerate(cells):
                 it = QtWidgets.QTableWidgetItem(text)
                 if k == 0 and self.ini and c is None:
-                    it.setForeground(QtCore.Qt.red)
+                    it.setForeground(QtGui.QColor(theme.farbe("err_fg")))
                     it.setToolTip("Kanal gibt es in dieser .ini nicht – wird nicht aufgezeichnet")
                 if k == 3:
                     it.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
@@ -298,19 +299,21 @@ class RusefiPage(QtWidgets.QWidget):
         L = self.link
         if L is None:
             self.status.setText("nicht verbunden")
-            self.status.setStyleSheet("")
+            if self.status.property("stufe"):
+                theme.stufe(self.status, "")
             return
         if L.ini is None:
-            text, color = f"{L.port}: {L.signature}\nKeine passende .ini – bitte unten wählen.", "#b71c1c"
+            text, stufe = f"{L.port}: {L.signature}\nKeine passende .ini – bitte unten wählen.", theme.FEHLER
         elif L.error:
-            text, color = f"{L.port}: Fehler – {L.error}", "#b71c1c"
+            text, stufe = f"{L.port}: Fehler – {L.error}", theme.FEHLER
         else:
             warn = "" if L.signature_ok else "\nACHTUNG: .ini passt nicht zur Firmware – Werte können falsch sein!"
             text = (f"{L.port}: {L.signature}\n{len(L.channel_names())} Kanäle, "
                     f"{L.measured_hz:.0f} Hz gelesen{warn}")
-            color = "#b71c1c" if warn else "#1b5e20"
+            stufe = theme.FEHLER if warn else theme.GUT
         self.status.setText(text)
-        self.status.setStyleSheet(f"color: {color};")
+        if self.status.property("stufe") != stufe:        # Farbe aus dem Thema; nur bei Wechsel neu gestalten
+            theme.stufe(self.status, stufe)
 
     def refresh_ports(self):
         current = self.port_combo.currentText() or self.cfg.get("port", "")

@@ -1,12 +1,18 @@
 """
 PyST – Oberflaeche (PySide6 + pyqtgraph). Mac, Linux (Raspberry Pi), Windows.
 
-Reiter:  Messen | Fahrzeuge & Setups | Auswertung | Oszi / Dauermessung | ECU | Kalibrierung | Einstellungen
-Einstellungen:  Allgemein | Verbindung | Zange · Netz · Steckdosen | Tasten | Prüfen | Firmware
+Reiter:  Messen | Fahrzeuge & Setups | Auswertung | Oszi / Dauermessung | Einstellungen
+Einstellungen:  Rolle/Lauf | Verbindung | Zange | Lambda | ECU | Firmware | WiFi
+  Rolle/Lauf: Allgemein (Pruefstand, Lauf, Filter, Klima, Anzeige) | Verluste (Ausrollversuch, frueher Reiter Kalibrierung)
+  Verbindung: Messboard (Port, Geraete-Einstellungen PST-Diag) | Prüfen
+  Zange: Zange (Zustand, Kopplung, Log) | Tasten;  Lambda: Lambda-Heizung;  ECU: rusEFI (frueher Hauptreiter ECU)
+  WiFi: Netzwerk der Basis, Steckdosen
+Tag/Nacht: theme.py (Menue Ansicht › Darstellung, Umschalter in der Statusleiste), Statusleiste: statusleiste.py
 """
 import json
 import logging
 import os
+import re
 import sys
 import time
 from dataclasses import asdict
@@ -16,6 +22,8 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import farben
+from . import theme
+from .statusleiste import Eingang, Statusleiste, zustaende
 from . import __version__, ausrollen, htmlexport, physics, report, storage, tasten
 from .channels import fault_text, lambda_from_afr, run_channels, run_faults
 from .db import SETUP_SUMMARY_KEYS, VEHICLE_FIELDS, Database, base_dir, field_label
@@ -46,9 +54,14 @@ log = logging.getLogger("pyst.gui")
 SETTINGS_FILE = os.path.join(base_dir(), "einstellungen.json")
 LIVE_KEY = "live"
 FILTER_S_DEFAULT = (1.75, 0.75)       # = LabVIEW 35/15 bei 20 Hz
-# Reiterstand gespeicherter Fenster von vor den Unterreitern: alter Index -> (Reiter, Unterreiter)
+# Gespeicherter Reiterstand: heute der Schluessel der Seite ("seite", siehe MainWindow.seiten).
+# Aeltere Fenster: "reiter" (Index vor den Unterreitern) -> (Reiter, Unterreiter) ...
 REITER_ALT = {0: (0, 0), 1: (1, 0), 2: (2, 0), 3: (3, 0), 4: (5, 2), 5: (5, 4), 6: (5, 5), 7: (4, 0), 8: (5, 0)}
-REITER_KALIB = 5          # Reiter Kalibrierung ist neu an dieser Stelle: aeltere gespeicherte Indizes ab hier + 1
+REITER_KALIB = 5          # ... "reiter_neu" ohne "reiter_kalib": Indizes ab hier + 1 (Reiter Kalibrierung kam dazu)
+# ... und "reiter_neu" (PyST 1.4: Messen, Fahrzeuge, Auswertung, Oszi, ECU, Kalibrierung, Einstellungen mit den
+# Unterreitern Allgemein, Verbindung, Zange · Netz · Steckdosen, Tasten, Prüfen, Firmware) -> Seite heute
+REITER_14 = ["messen", "fahrzeuge", "auswertung", "oszi", "ecu", "verluste", None]
+UNTER_14 = ["rolle", "verbindung", "zange", "tasten", "pruefen", "firmware"]
 
 # (Feld, Beschriftung, Min, Max, Nachkommastellen)
 PARAM_FIELDS = {
@@ -125,8 +138,7 @@ def compact_table(t: QtWidgets.QTableWidget, row_h: int = 20):
     vh.setDefaultSectionSize(row_h)
     t.horizontalHeader().setFixedHeight(row_h + 2)
     # eigener Rahmen: der Rahmen des Systems (macOS) ist unterschiedlich breit und wurde unten abgeschnitten
-    t.setStyleSheet("QTableView { border: 1px solid #c4c4c4; gridline-color: #d6d6d6; }"
-                    "QTableView::item { padding: 0px 4px; }")
+    t.setStyleSheet("QTableView::item { padding: 0px 4px; }")     # Rahmen/Gitter aus dem Thema (theme.py)
     t.setAttribute(QtCore.Qt.WA_MacShowFocusRect, False)
     t.setWordWrap(False)
 
@@ -163,7 +175,7 @@ class SettingsPage(QtWidgets.QScrollArea):
         self.live_check.setChecked(settings.get("live", True))
         self.fw_label = QtWidgets.QLabel("nicht verbunden")
         self.fw_label.setWordWrap(True)
-        self.fw_label.setStyleSheet("color: gray;")
+        theme.rolle(self.fw_label, "neben")
         gl.addWidget(QtWidgets.QLabel("Port"), 0, 0)
         gl.addWidget(self.port_combo, 0, 1)
         gl.addWidget(self.refresh_btn, 0, 2)
@@ -218,16 +230,16 @@ class SettingsPage(QtWidgets.QScrollArea):
                 note = QtWidgets.QLabel("n vom Gas: ab hier wird auf fallende Drehzahl (= Laufende) geprüft. "
                                         "Muss über der Haltedrehzahl liegen.")
                 note.setWordWrap(True)
-                note.setStyleSheet("color: gray;")
+                theme.rolle(note, "neben")
                 fl.addRow(note)
             if group == "Filter && Verluste":
                 self.filter_label = QtWidgets.QLabel()
                 self.filter_label.setWordWrap(True)
-                self.filter_label.setStyleSheet("color: gray;")
+                theme.rolle(self.filter_label, "neben")
                 fl.addRow(self.filter_label)
                 self.loss_label = QtWidgets.QLabel()
                 self.loss_label.setWordWrap(True)
-                self.loss_label.setStyleSheet("color: gray;")
+                theme.rolle(self.loss_label, "neben")
                 fl.addRow(self.loss_label)
             if group == "Klima":
                 self.climate_auto = QtWidgets.QCheckBox("vor jedem Lauf vom Sensor lesen")
@@ -322,7 +334,7 @@ class SettingsPage(QtWidgets.QScrollArea):
     def _show_loss_source(self):
         v = {k: self.fields[k].value() for k in LOSS_KEYS}
         if not (v["m0"] or v["m1"] or v["m2"]):
-            text = "Keine Verluste: Ergebnis = Radleistung. Verluste aus dem Ausrollversuch (Reiter Kalibrierung)."
+            text = "Keine Verluste: Ergebnis = Radleistung. Verluste aus dem Ausrollversuch (Rolle/Lauf › Verluste)."
         else:
             text = ("Verluste: " + (self.verlust_quelle or "von Hand eingetragen")
                     + ". Ergebnis = Motorleistung (Rad + Verluste).")
@@ -519,6 +531,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle(f"PyST {__version__}")
         self.resize(1500, 920)
         self.settings = load_settings()
+        # Tag/Nacht/Auto vor dem Aufbau: die Seiten holen ihre Farben beim Bauen aus dem Thema
+        theme.manager().setze(self.settings.get("thema", theme.STANDARD_WAHL), speichern=False)
+        theme.verbinde(theme.manager().wahl_geaendert, self, self._thema_gewaehlt)
         self.db = db or Database()
         self.link: Optional[DynoLink] = None
         self.ctrl: Optional[RunController] = None
@@ -562,13 +577,8 @@ class MainWindow(QtWidgets.QMainWindow):
                                     lambda: bool(self.ctrl and self.ctrl.state in ACTIVE) or self.page_oszi.rec is not None)
         self.page_flash = FlashPage(self.settings, lambda: save_settings(self.settings), lambda: self.link,
                                     self.on_connect)
-        for page, text in ((self.page_settings, "Allgemein"), (self.page_settings.conn_page, "Verbindung"),
-                           (self.page_hw, "Zange · Netz · Steckdosen"), (self.page_tasten, "Tasten"),
-                           (self.page_pruef, "Prüfen"), (self.page_flash, "Firmware")):
-            self.settings_tabs.addTab(page, text)
-        self.tabs.addTab(self.page_rusefi, "ECU")
         self.page_kalib = KalibPage(self.settings, lambda: save_settings(self.settings))
-        self.tabs.addTab(self.page_kalib, "Kalibrierung")
+        self._build_settings_tabs()
         self.tabs.addTab(self.settings_tabs, "Einstellungen")
         self.page_settings.data_label.setText(self.db.path)
         self._build_menu()
@@ -600,16 +610,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.page_hw.log_saved.connect(lambda folder: self._dauer_saved(folder, "Zange-Log"))
         self.page_hw.connect_port.connect(self._connect_port)
         self.page_flash.flash_done.connect(lambda: setattr(self, "_manual_off", False))
-        self.zange_status = QtWidgets.QLabel("")
-        self.statusBar().addPermanentWidget(self.zange_status)
-        self.page_hw.zange_text.connect(self.zange_status.setText)
-        self.zange_led = QtWidgets.QLabel("")
-        self.statusBar().addPermanentWidget(self.zange_led)
-        self.page_hw.zange_state.connect(self._show_zange_led)
+        # Statusleiste: drei Felder Basis | Zange/Mega | Lambda/ECU, Kurzmeldungen, Umschalter Tag/Nacht/Auto
+        self.statusleiste = Statusleiste()
+        self.statusleiste.einbauen(self.statusBar())
+        self._zange_state = ""
+        self._zange_weitere = 0
+        self.page_hw.zange_state.connect(self._zange_state_neu)
         self.page_hw.zange_state.connect(self.page_tasten.zange_zustand)
-        self.lambda_status = QtWidgets.QLabel("")
-        self.statusBar().addPermanentWidget(self.lambda_status)
-        self.page_hw.lambda_text.connect(self._show_lambda_status)
+        self.page_hw.zange_text.connect(self._zange_text_neu)
+        self.page_hw.lambda_text.connect(lambda *_a: self._status_tick())
+        self.status_timer = QtCore.QTimer(self)
+        self.status_timer.timeout.connect(self._status_tick)
+        self.status_timer.start(500)
+        theme.bei_wechsel(self, self._thema_gewechselt, sofort=False)
         self._warn_box = None
         self._tcp_again = ""                       # Port, an dem nach einem Abriss neu verbunden wird
         self._auth_stop = ""                       # Grund, warum die letzte Anmeldung abgelehnt wurde
@@ -665,9 +678,9 @@ class MainWindow(QtWidgets.QMainWindow):
         gauges = QtWidgets.QHBoxLayout()
         self.g_pmax = Gauge("Pmax", "PS")
         self.g_mmax = Gauge("Mmax", "Nm")
-        for g in (self.g_pmax, self.g_mmax):
-            g.value.setStyleSheet("font-size: 24px; font-weight: 700; color: #b71c1c;")
-        self.g_mmax.value.setStyleSheet("font-size: 24px; font-weight: 700; color: #0d47a1;")
+        for g, tok in ((self.g_pmax, "p_color"), (self.g_mmax, "m_color")):
+            theme.bei_wechsel(g, lambda _t, g=g, tok=tok: g.value.setStyleSheet(
+                f"font-size: 24px; font-weight: 700; color: {theme.farbe(tok)};"))
         self.g_n = Gauge("Motor (Rolle × i)", "1/min")
         self.g_ign = Gauge("Motor (Zündung)", "1/min")
         self.g_v = Gauge("Rolle", "km/h")
@@ -731,14 +744,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cursor_toggle.setAutoRaise(True)
         self.cursor_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
         self.cursor_toggle.setCheckable(True)
-        self.cursor_toggle.setStyleSheet("QToolButton { font-size: 11px; color: #555; padding: 0px; }")
-        self.cursor_toggle.setFixedHeight(16)
+        theme.rolle(self.cursor_toggle, "klein")
+        self.cursor_toggle.setFixedHeight(18)
         self.cursor_toggle.toggled.connect(self._show_cursor_table)
         self.cursor_cols_btn = QtWidgets.QToolButton()
         self.cursor_cols_btn.setText("Spalten …")
         self.cursor_cols_btn.setAutoRaise(True)
-        self.cursor_cols_btn.setStyleSheet("QToolButton { font-size: 11px; color: #555; padding: 0px 4px; }")
-        self.cursor_cols_btn.setFixedHeight(16)
+        theme.rolle(self.cursor_cols_btn, "klein")
+        self.cursor_cols_btn.setFixedHeight(18)
         self.cursor_cols_btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
         self.cursor_menu = QtWidgets.QMenu(self.cursor_cols_btn)
         self.cursor_menu.aboutToShow.connect(self._fill_cursor_menu)
@@ -809,6 +822,17 @@ class MainWindow(QtWidgets.QMainWindow):
             grp.addAction(a)
             a.triggered.connect(lambda _c=False, val=val: self._set_ui_scale(val))
         v.addAction("Jetzt neu starten", self._restart)
+        dar = v.addMenu("Darstellung")
+        grp = QtGui.QActionGroup(self)
+        self.thema_aktionen: Dict[str, QtGui.QAction] = {}
+        for wahl, label in ((theme.TAG, "☀ Tag (hell)"), (theme.NACHT, "☾ Nacht (dunkel)"),
+                            (theme.AUTO, "Automatisch (wie das System)")):
+            a = dar.addAction(label)
+            a.setCheckable(True)
+            a.setChecked(theme.manager().wahl == wahl)
+            grp.addAction(a)
+            a.triggered.connect(lambda _c=False, w=wahl: theme.manager().setze(w))
+            self.thema_aktionen[wahl] = a
         m = self.menuBar().addMenu("Datei")
         for text, slot, key in (("Öffnen / importieren (.pyst, Läufe, Mitschnitte) …", self.on_import, "Ctrl+O"),
                                 ("Läufe importieren …", self.on_import, "Ctrl+I"),
@@ -870,9 +894,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------ Hilfen
     def _set_status(self, text: str, color: str):
+        """Zustandszeile Messen. color: Stufe (ok/warn/err/info, "" = neutral) oder eine alte feste Farbe;
+        die Flaeche kommt aus dem Thema."""
+        self._status_last = (text, color)
         self.status.setText(text)
-        self.status.setStyleSheet(f"background: {color}; font-size: 18px; font-weight: 700; "
-                                  f"border-radius: 6px; padding: 0px;")
+        stufe = farben.stufe_von(color)
+        if stufe in (theme.GUT, theme.WARNUNG, theme.FEHLER):
+            bg, fg, _sym = theme.status_farben(stufe)
+        elif stufe == "info":
+            bg, fg = theme.farbe("accent"), theme.farbe("accent_text")
+        else:
+            bg, fg = theme.farbe("panel"), theme.farbe("text")
+        self.status.setStyleSheet(f"background: {bg}; color: {fg}; font-size: 18px; font-weight: 700; "
+                                  f"border: 1px solid {theme.farbe('border')}; border-radius: 6px; padding: 0px;")
 
     def _refresh_ports(self):
         combo = self.page_settings.port_combo
@@ -1523,7 +1557,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_max_display()
         if self._cursor_names is None:                     # nicht je Mausbewegung in die Datenbank
             self._cursor_names = {str(r.id): (self._run_label(r), self._run_color(r)) for r in self.db.runs() if r.sichtbar}
-            self._cursor_names[LIVE_KEY] = ("laufende Messung", "#000000")
+            self._cursor_names[LIVE_KEY] = ("laufende Messung", theme.farbe("live_curve"))
         names = self._cursor_names
         lam_mode = self.page_settings.lambda_radio.isChecked()
         # Spalten: n, PS, Nm, dann die gewaehlten (Menue "Spalten …" an der Cursor-Tabelle)
@@ -1547,7 +1581,7 @@ class MainWindow(QtWidgets.QMainWindow):
         rows = []
         for key in self.plot.data:
             v = self.plot.values_at(key, n_rpm)
-            label, color = names.get(key, (key, "#000"))
+            label, color = names.get(key, (key, theme.farbe("live_curve")))
             if v is None:
                 rows.append((color, label, "", "", "") + ("",) * len(cols))
                 continue
@@ -1840,7 +1874,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if coast is not None:
             self.page_kalib.show_result(coast, self._coast_label(rid), rid)
             self.statusBar().showMessage(self.ctrl.coast_text(), 10000)
-            self.band.zeige(("Ausrollversuch ausgewertet – im Reiter Kalibrierung prüfen und übernehmen"
+            self.band.zeige(("Ausrollversuch ausgewertet – unter Einstellungen › Rolle/Lauf › Verluste prüfen und übernehmen"
                              if coast.ok else f"Ausrollversuch: {coast.meldung}"),
                             farben.GUT if coast.ok else farben.FEHLER, 8.0)
 
@@ -2010,7 +2044,7 @@ class MainWindow(QtWidgets.QMainWindow):
         veh = self.db.vehicle(row.vehicle_id) if row.vehicle_id else None
         setup = self.db.setup(row.setup_id) if row.setup_id else None
         return {"ordner": row.ordner, "name": row.name, "datum": row.datum, "quelle": row.quelle,
-                "art": "dauermessung" if row.quelle == "Dauermessung" else "lauf",
+                "art": row.art, "setup_werte": row.setup_werte, "nur_lauf": row.nur_lauf,
                 "fahrzeug": {k: v for k, v in (veh or {}).items() if k != "id"},
                 "setup": {k: v for k, v in (setup or {}).items() if k not in ("id", "vehicle_id")},
                 "notiz": row.notiz, "farbe": row.farbe, "parameter": row.params, "fehler": row.fehler,
@@ -2190,7 +2224,7 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 ergebnis = f"{row.p_max:.1f} PS bei {row.n_pmax:.0f} 1/min\n{row.m_max:.1f} Nm bei {row.n_mmax:.0f} 1/min"
             rows.append({
-                "farbe": self._run_color(row),
+                "farbe": run_color(row, theme.TAG),       # Bericht auf weissem Papier
                 "name": self._run_label(row) + (f"\n{row.notiz}" if row.notiz else ""),
                 "fahrzeug": veh + ("\n" + details if details else ""),
                 "ergebnis": ergebnis,
@@ -2391,15 +2425,144 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(f"Übersetzung nicht übernommen: {ereignis.text}", 8000)
             self.page_tasten.led(tasten.LED_FEHLER)
 
+    # ------------------------------------------------------------------ Einstellungen: Unterreiter
+    @staticmethod
+    def _unterreiter(*seiten) -> QtWidgets.QTabWidget:
+        t = QtWidgets.QTabWidget()
+        t.setDocumentMode(True)
+        for page, text in seiten:
+            t.addTab(page, text)
+        return t
+
+    @staticmethod
+    def _seite(*widgets, stretch_last: bool = False) -> QtWidgets.QScrollArea:
+        """Scrollbare Seite aus vorhandenen Gruppen (werden dabei aus ihrer alten Seite herausgenommen)."""
+        area = QtWidgets.QScrollArea()
+        area.setWidgetResizable(True)
+        inner = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(inner)
+        for i, w in enumerate(widgets):
+            lay.addWidget(w, 1 if stretch_last and i == len(widgets) - 1 else 0)
+        if not stretch_last:
+            lay.addStretch(1)
+        area.setWidget(inner)
+        return area
+
+    def _build_settings_tabs(self):
+        """Einstellungen: Rolle/Lauf | Verbindung | Zange | Lambda | ECU | Firmware | WiFi.
+        Geruest der Stufe 1: die bisherigen Seiten unveraendert in den passenden Unterreitern (Feinarbeit folgt)."""
+        s, hw = self.page_settings, self.page_hw
+        box = QtWidgets.QGroupBox("Messboard (PST-Diag 1)")
+        bl = QtWidgets.QVBoxLayout(box)
+        self.dev_settings_btn = QtWidgets.QPushButton("Geräte-Einstellungen des Messboards …")
+        self.dev_settings_btn.setToolTip("#GET/#SET der Basis bzw. des Messboards (Messfrequenz, AFR-Eingang, BME280 …)")
+        self.dev_settings_btn.clicked.connect(self._messboard_einstellungen)
+        bl.addWidget(self.dev_settings_btn, 0, QtCore.Qt.AlignLeft)
+        s.conn_page.widget().layout().insertWidget(1, box)
+        self.rolle_tabs = self._unterreiter((s, "Allgemein"), (self.page_kalib, "Verluste (Ausrollversuch)"))
+        self.verbindung_tabs = self._unterreiter((s.conn_page, "Messboard"), (self.page_pruef, "Prüfen"))
+        self.zange_tabs = self._unterreiter((hw, "Zange"), (self.page_tasten, "Tasten"))
+        self.page_lambda = self._seite(hw.box_lambda)
+        self.page_wifi = self._seite(hw.box_net, hw.box_plugs, stretch_last=True)
+        for page, text in ((self.rolle_tabs, "Rolle/Lauf"), (self.verbindung_tabs, "Verbindung"),
+                           (self.zange_tabs, "Zange"), (self.page_lambda, "Lambda"), (self.page_rusefi, "ECU"),
+                           (self.page_flash, "Firmware"), (self.page_wifi, "WiFi")):
+            self.settings_tabs.addTab(page, text)
+        # Schluessel der Seiten (gespeicherter Reiterstand, show_page)
+        self.seiten: Dict[str, QtWidgets.QWidget] = {
+            "messen": self.tabs.widget(0), "fahrzeuge": self.page_db, "auswertung": self.viewer, "oszi": self.page_oszi,
+            "rolle": s, "verluste": self.page_kalib, "verbindung": s.conn_page, "pruefen": self.page_pruef,
+            "zange": hw, "tasten": self.page_tasten, "lambda": self.page_lambda, "ecu": self.page_rusefi,
+            "firmware": self.page_flash, "wifi": self.page_wifi}
+
+    def _messboard_einstellungen(self):
+        if self.link is None or not getattr(self.link, "has_diag", False):
+            QtWidgets.QMessageBox.information(self, "Messboard", "Zuerst ein Messboard mit PST-Diag verbinden "
+                                                                 "(PyST-Basis oder STM32-Firmware).")
+            return
+        self.page_oszi.device_settings()
+
+    # ------------------------------------------------------------------ Statusleiste, Thema
+    def _zange_state_neu(self, state: str):
+        self._zange_state = state
+        self._status_tick()
+
+    def _zange_text_neu(self, text: str):
+        m = re.search(r"\(\+(\d+) weitere\)", text or "")
+        self._zange_weitere = int(m.group(1)) if m else 0
+
+    def status_eingang(self) -> Eingang:
+        """Momentaufnahme fuer die Statusleiste aus Verbindung, Zange, Lambda und ECU."""
+        e = Eingang(zange_state=self._zange_state, zangen_weitere=self._zange_weitere,
+                    weg="Verbindung weg, PyST verbindet neu …" if self._tcp_again else "",
+                    anmeldung_fehler=self._auth_stop if self.link is None else "")
+        L = self.link
+        if L is not None:
+            e.verbunden, e.port = True, L.port
+            if L.is_zange_usb:
+                e.board = "zange_usb"
+            elif L.is_basis:
+                e.board = "basis"
+            else:
+                e.board = "f446" if L.is_stm else "mega"
+            first = self.firmware.splitlines()[0].strip() if self.firmware else ""
+            e.fw = L.caps.get("fw", "") if L.is_basis or L.is_zange_usb else first[:40]
+            e.bootloader = bool(L.bootloader)
+            if self.ctrl is not None and L.streaming():
+                e.hz = self.ctrl.live.rate
+            if L.is_basis:
+                e.zange, e.lam = self.page_hw.zst, self.page_hw.lam
+        R = self.page_rusefi.link
+        if R is not None:
+            e.ecu = {"fehler": R.error or "", "ini": R.ini is not None, "passt": bool(R.signature_ok),
+                     "hz": R.measured_hz}
+        return e
+
+    def _status_tick(self):
+        if waiting():                                      # Verbindung gerade in einer Abfrage
+            return
+        try:
+            self.statusleiste.set_zustaende(zustaende(self.status_eingang()))
+        except Exception as exc:                           # Anzeige darf den Takt nie stoppen
+            log.debug("Statusleiste: %s", exc)
+
+    def _thema_gewaehlt(self, wahl: str):
+        """Tag/Nacht/Auto gewaehlt (Menue oder Umschalter): merken."""
+        self.settings["thema"] = wahl
+        save_settings(self.settings)
+        a = getattr(self, "thema_aktionen", {}).get(wahl)
+        if a is not None:
+            a.setChecked(True)
+
+    def _thema_gewechselt(self, _thema: str):
+        """Nach dem Wechsel: Farbfelder der Laufliste und Zustandszeile neu (Diagramme folgen selbst)."""
+        a = getattr(self, "thema_aktionen", {}).get(theme.manager().wahl)
+        if a is not None:
+            a.setChecked(True)
+        if getattr(self, "_status_last", None):
+            self._set_status(*self._status_last)
+        self._reload_runs()
+
     # ------------------------------------------------------------------ Fenster-Layout
     def show_page(self, page: QtWidgets.QWidget):
-        """Seite zeigen, auch wenn sie ein Unterreiter von Einstellungen ist."""
-        i = self.settings_tabs.indexOf(page)
-        if i >= 0:
-            self.settings_tabs.setCurrentIndex(i)
-            self.tabs.setCurrentWidget(self.settings_tabs)
-        else:
-            self.tabs.setCurrentWidget(page)
+        """Seite zeigen, auch wenn sie ein Unterreiter (von Unterreitern) von Einstellungen ist."""
+        w = page
+        while w is not None:
+            par = w.parentWidget()
+            if isinstance(par, QtWidgets.QStackedWidget) and isinstance(par.parentWidget(), QtWidgets.QTabWidget):
+                par.parentWidget().setCurrentWidget(w)
+            w = par
+
+    def current_page(self) -> QtWidgets.QWidget:
+        """Innerste sichtbare Seite (durch alle Reiterebenen)."""
+        w = self.tabs.currentWidget()
+        while isinstance(w, QtWidgets.QTabWidget):
+            w = w.currentWidget()
+        return w
+
+    def current_page_key(self) -> str:
+        cur = self.current_page()
+        return next((k for k, w in self.seiten.items() if w is cur), "messen")
 
     def save_window_layout(self):
         """Fenster, Aufteilungen, Spaltenbreiten und Reiter (beim Beenden)."""
@@ -2409,9 +2572,21 @@ class MainWindow(QtWidgets.QMainWindow):
             "messen_teilung": b64(self.measure_split.saveState()),
             "auswertung_teilung": b64(self.viewer.split.saveState()),
             "laufliste_spalten": [self.run_tree.columnWidth(c) for c in range(self.run_tree.columnCount())],
-            "reiter_neu": [self.tabs.currentIndex(), self.settings_tabs.currentIndex()],
-            "reiter_kalib": True,                  # Indizes zaehlen den Reiter Kalibrierung mit
+            "seite": self.current_page_key(),
         }
+
+    @staticmethod
+    def alte_seite(f: dict) -> str:
+        """Seitenschluessel aus einem gespeicherten Reiterstand frueherer Versionen ("reiter", "reiter_neu")."""
+        haupt, unter = f.get("reiter_neu") or REITER_ALT.get(f.get("reiter"), (0, 0))
+        if not f.get("reiter_kalib") and haupt >= REITER_KALIB:
+            haupt += 1                             # gespeichert von der Version ohne Reiter Kalibrierung
+        if not 0 <= haupt < len(REITER_14):
+            return "messen"
+        key = REITER_14[haupt]
+        if key is None:
+            key = UNTER_14[unter] if 0 <= unter < len(UNTER_14) else "rolle"
+        return key
 
     def restore_window_layout(self) -> bool:
         """True, wenn Fenstergroesse/-position wiederhergestellt wurde."""
@@ -2425,28 +2600,11 @@ class MainWindow(QtWidgets.QMainWindow):
             for c, wd in enumerate(f.get("laufliste_spalten", [])[:self.run_tree.columnCount()]):
                 if wd > 0:
                     self.run_tree.setColumnWidth(c, wd)
-            haupt, unter = f.get("reiter_neu") or REITER_ALT.get(f.get("reiter"), (0, 0))
-            if not f.get("reiter_kalib") and haupt >= REITER_KALIB:
-                haupt += 1                         # gespeichert von der Version ohne Reiter Kalibrierung
-            if 0 <= unter < self.settings_tabs.count():
-                self.settings_tabs.setCurrentIndex(unter)
-            if 0 <= haupt < self.tabs.count():
-                self.tabs.setCurrentIndex(haupt)
+            key = f.get("seite") if f.get("seite") in self.seiten else self.alte_seite(f)
+            self.show_page(self.seiten.get(key, self.seiten["messen"]))
             return bool(f.get("geometrie")) and self.restoreGeometry(ba(f["geometrie"]))
         except (TypeError, ValueError, AttributeError):
             return False
-
-    def _show_zange_led(self, state: str):
-        """Statusleiste: auf einen Blick, ob die Zange da ist."""
-        text, farbe = {"ok": ("Zange verbunden", farben.GUT), "weg": ("Zange nicht verbunden", farben.FEHLER),
-                       "usb": ("Zange per USB", farben.WARNUNG)}.get(state, ("", ""))
-        self.zange_led.setText(f"● {text}" if text else "")
-        self.zange_led.setStyleSheet(f"color: {farbe}; font-weight: 700;" if text else "")
-
-    def _show_lambda_status(self, text: str, farbe: str):
-        """Statusleiste neben der Zange: Lambda-Heizung mit Restzeit, rot bei zu niedriger 12-V-Spannung."""
-        self.lambda_status.setText(text)
-        self.lambda_status.setStyleSheet(f"color: {farbe}; font-weight: 700;" if text else "")
 
     def closeEvent(self, ev):
         self.save_window_layout()

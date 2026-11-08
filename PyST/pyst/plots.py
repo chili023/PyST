@@ -19,7 +19,9 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
+
+from . import theme
 
 GRID_ALPHA = 60
 # 20 gut unterscheidbare Farben (auf weissem Grund lesbar)
@@ -31,11 +33,17 @@ OLD_AUTO_COLORS = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e", "#8c56
                    "#bcbd22", "#7f7f7f"]
 
 
-def run_color(row) -> str:
-    """Farbe eines Laufs: selbst gewaehlte Farbe aus der Datenbank, sonst fest aus der Lauf-Nummer.
+def run_color_basis(row) -> str:
+    """Farbe eines Laufs ohne Thema: selbst gewaehlte Farbe aus der Datenbank, sonst fest aus der Lauf-Nummer.
     Schritt 7 durch 20 Farben -> aufeinanderfolgende Laeufe bekommen deutlich verschiedene Farben,
     eine Farbe wiederholt sich erst nach 20 Laeufen."""
     return row.farbe or RUN_COLORS[(row.id * 7) % len(RUN_COLORS)]
+
+
+def run_color(row, thema: Optional[str] = None) -> str:
+    """Farbe eines Laufs im (aktiven) Thema: gleicher Farbton, Helligkeit auf >= 3,2:1 gegen die Diagrammflaeche
+    (theme.laufarbe). Fuer Export/PDF auf weissem Grund thema="tag" nehmen."""
+    return theme.laufarbe(run_color_basis(row), thema)
 
 
 def nice_step(raw: float) -> float:
@@ -132,7 +140,7 @@ def _even_intervals(span: float, prefer=(4, 3, 5, 6, 2)) -> int:
     return 4
 
 
-FIELD_H = 15
+FIELD_H = 17
 
 
 class AxisField(QtWidgets.QLineEdit):
@@ -144,10 +152,14 @@ class AxisField(QtWidgets.QLineEdit):
         self.setToolTip(tip + "\nZahl + Enter = feste Grenze, leer = automatisch")
         self.setAlignment(align | QtCore.Qt.AlignVCenter)
         self.setFixedSize(52, FIELD_H)
+        theme.bei_wechsel(self, self._thema)
+
+    def _thema(self, _th: str = ""):
+        T = theme.tokens()
         self.setStyleSheet(
-            "QLineEdit { border: 1px solid transparent; border-radius: 3px; background: #ffffff;"
-            " font-size: 11px; padding: 0 2px; color: #000; }"
-            "QLineEdit:hover, QLineEdit:focus { border: 1px solid #8a8a8a; background: #ffffff; }")
+            f"QLineEdit {{ border: 1px solid {T['plot_grid']}; border-radius: 3px; background: {T['field']};"
+            f" font-size: {theme.ACHSE_PX}px; padding: 0 2px; min-height: 0px; color: {T['input_text']}; }}"
+            f"QLineEdit:hover, QLineEdit:focus {{ border: 1px solid {T['border']}; }}")
 
     def set_fixed(self, text: str):
         self.setText(text)
@@ -184,8 +196,17 @@ class DualAxisPlot:
         self._scales = None
 
     def set_labels(self, left: str, right: str, left_color: str, right_color: str):
-        self.pi.setLabel("left", left, color=left_color)
-        self.pi.setLabel("right", right, color=right_color)
+        """Farben: "#rrggbb" oder ein Token des Themas (z.B. "p_color"), dann folgt die Farbe dem Thema."""
+        self._labels = (left, right, left_color, right_color)
+        style = {"font-size": f"{theme.SCHRIFT_PX}px", "font-weight": "700"}
+        T = theme.tokens()
+        self.pi.setLabel("left", left, color=T.get(left_color, left_color), **style)
+        self.pi.setLabel("right", right, color=T.get(right_color, right_color), **style)
+
+    def apply_theme(self, thema: str):
+        theme.plotitem_stil(self.pi, thema)
+        if getattr(self, "_labels", None):
+            self.set_labels(*self._labels)
 
     def _sync(self):
         self.vb2.setGeometry(self.pi.vb.sceneBoundingRect())
@@ -213,13 +234,14 @@ class DynoPlot(pg.GraphicsLayoutWidget):
     cursor_left = QtCore.Signal()                # Maus hat das Diagramm verlassen
     limits_changed = QtCore.Signal(dict)         # Achsgrenzen in den Feldern geaendert
 
-    P_COLOR, M_COLOR = "#c62828", "#1f5fbf"
+    P_COLOR, M_COLOR = "p_color", "m_color"             # Tokens des Themas (theme.py)
+    LAM_COLOR, EGT_COLOR = "lam_color", "egt_color"
 
     def __init__(self):
         super().__init__()
-        self.setBackground("w")
+        self.setBackground(theme.farbe("plot"))
         self.top = DualAxisPlot(self.ci, 0, "Leistung [PS]", "Drehmoment [Nm]", self.P_COLOR, self.M_COLOR)
-        self.bottom = DualAxisPlot(self.ci, 1, "Lambda λ", "EGT [°C]", "#2e7d32", "#ef6c00")
+        self.bottom = DualAxisPlot(self.ci, 1, "Lambda λ", "EGT [°C]", self.LAM_COLOR, self.EGT_COLOR)
         self.bottom.pi.setXLink(self.top.pi)
         self.top.pi.getAxis("bottom").setStyle(showValues=False)
         self.bottom.pi.setLabel("bottom", "Motordrehzahl [1/min]")
@@ -246,7 +268,8 @@ class DynoPlot(pg.GraphicsLayoutWidget):
         self.top.pi.vb.sigResized.connect(self._sync_overlays)
         self.cursor_lines = []
         for plot in (self.top.pi, self.bottom.pi):
-            line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("#555555", width=1, style=QtCore.Qt.DashLine))
+            line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen(theme.farbe("cursor"), width=1.5,
+                                                                           style=QtCore.Qt.DashLine))
             line.setVisible(False)
             plot.addItem(line, ignoreBounds=True)
             self.cursor_lines.append(line)
@@ -255,6 +278,42 @@ class DynoPlot(pg.GraphicsLayoutWidget):
         for plot in (self.top, self.bottom):
             plot.end_labels = False
         self.apply_scale(self.default_scale())
+        theme.bei_wechsel(self, self.apply_theme)
+
+    # ------------------------------------------------------------ Thema
+    def apply_theme(self, thema: str = ""):
+        """Diagramm im Thema: Flaeche, Achsen, Titel, Gitter, Cursor, Knoepfe/Felder und alle Kurven (die Laufarben
+        werden je Thema in der Helligkeit angepasst, siehe theme.laufarbe)."""
+        thema = thema or theme.aktiv()
+        T = theme.tokens(thema)
+        self.setBackground(T["plot"])
+        for plot in (self.top, self.bottom):
+            plot.apply_theme(thema)
+            plot.pi.showGrid(x=True, y=True, alpha=(0.55 if thema == theme.NACHT else 0.35))
+        self.bottom.pi.setLabel("bottom", self.bottom.pi.getAxis("bottom").labelText or "", color=T["plot_axis"],
+                                **{"font-size": f"{theme.SCHRIFT_PX}px"})
+        if not self.lower_visible:
+            self.top.pi.setLabel("bottom", "Motordrehzahl [1/min]", color=T["plot_axis"],
+                                 **{"font-size": f"{theme.SCHRIFT_PX}px"})
+        for line in self.cursor_lines:
+            line.setPen(pg.mkPen(T["cursor"], width=1.5, style=QtCore.Qt.DashLine))
+        css = (f"QToolButton {{ font-size: {theme.ACHSE_PX}px; font-weight: 700; padding: 0px 6px; background: {T['panel']};"
+               f" color: {T['text']}; border: 1px solid {T['border_strong']}; border-radius: 3px; }}"
+               f"QToolButton:hover {{ border-color: {T['accent_border']}; }}"
+               "QToolButton::menu-indicator { image: none; }")
+        for b in (self.top_btn, self.bottom_btn, self.auto_btn):
+            b.setStyleSheet(css)
+        for key, cur in self.items.items():               # Kurven: Farbe des Laufs im neuen Thema
+            color, _width = self._styles.get(key, ("#000000", 2.0))
+            for role, (item, _owner) in cur.items():
+                pen = QtGui.QPen(item.opts["pen"])
+                c = pg.mkColor(theme.laufarbe(color, thema))
+                c.setAlpha(pen.color().alpha())
+                pen.setColor(c)
+                item.setPen(pen)
+        if self.overlays:
+            self._scale_overlays()
+        self._lower_axis_labels()
 
     # ------------------------------------------------------------ Kurven
     def set_curves(self, key: str, n, ps, nm, lam=None, egt1=None, egt2=None, color="#000000",
@@ -317,6 +376,7 @@ class DynoPlot(pg.GraphicsLayoutWidget):
         return want
 
     def _pen(self, role: str, color: str, width: float, style):
+        color = theme.laufarbe(color)                 # Helligkeit passend zum Thema
         if role.startswith(EXTRA_PREFIX):
             names = [o[0] for o in self.overlays]
             name = role[len(EXTRA_PREFIX):]
@@ -390,7 +450,7 @@ class DynoPlot(pg.GraphicsLayoutWidget):
                 mark = LOWER_MARKS[i % MAX_LOWER] + " " if len(self.lower[side]) > 1 else ""
                 parts.append(f"{mark}{label}" + (f" [{unit}]" if unit and unit != "λ" else (" λ" if unit else "")))
             return "   ".join(parts)
-        self.bottom.set_labels(text("left"), text("right"), "#2e7d32", "#ef6c00")
+        self.bottom.set_labels(text("left"), text("right"), self.LAM_COLOR, self.EGT_COLOR)
         self.bottom.pi.getAxis("left").setStyle(showValues=bool(self.lower["left"]))
         self.bottom.pi.getAxis("right").setStyle(showValues=bool(self.lower["right"]))
 
@@ -458,7 +518,10 @@ class DynoPlot(pg.GraphicsLayoutWidget):
             u = f" {unit}" if unit else ""
             lines.append(f"<span style='font-family: monospace;'>{OVERLAY_SAMPLES[i]}</span> "
                          f"{label}: {fmt_value(lo)} … {fmt_value(hi)}{u}")
-        self.ov_legend.setHtml("<div style='background: rgba(255,255,255,200); color: #333; font-size: 11px;'>"
+        T = theme.tokens()
+        bg = QtGui.QColor(T["panel"])
+        self.ov_legend.setHtml(f"<div style='background: rgba({bg.red()},{bg.green()},{bg.blue()},210);"
+                               f" color: {T['text']}; font-size: {theme.ACHSE_PX}px;'>"
                                + "<br>".join(lines) + "</div>" if lines else "")
 
     def remove(self, key: str):
@@ -516,7 +579,6 @@ class DynoPlot(pg.GraphicsLayoutWidget):
         self.auto_btn = QtWidgets.QToolButton(self)
         self.auto_btn.setText("auto")
         self.auto_btn.setToolTip("Alle Achsgrenzen zurück auf automatisch")
-        self.auto_btn.setStyleSheet("QToolButton { font-size: 11px; padding: 0 4px; }")
         self.auto_btn.clicked.connect(self.reset_limits)
         # Auswahlmenues oben links in beiden Diagrammen (Inhalt fuellt das Hauptfenster)
         self.top_btn, self.top_menu = self._menu_button("Kurven", "Kurven im Leistungsdiagramm")
@@ -529,9 +591,6 @@ class DynoPlot(pg.GraphicsLayoutWidget):
         btn.setText(text + " ▾")
         btn.setToolTip(tip)
         btn.setPopupMode(QtWidgets.QToolButton.InstantPopup)
-        btn.setStyleSheet("QToolButton { font-size: 11px; padding: 0px 4px; background: rgba(255,255,255,220);"
-                          " border: 1px solid #c4c4c4; border-radius: 3px; }"
-                          "QToolButton::menu-indicator { image: none; }")
         btn.setFixedHeight(FIELD_H + 1)
         menu = QtWidgets.QMenu(btn)
         btn.setMenu(menu)
@@ -597,13 +656,22 @@ class DynoPlot(pg.GraphicsLayoutWidget):
         self.bottom_btn.setVisible(self.lower_visible)
 
     def render_image(self):
-        """Bild fuer den PDF-Bericht: mit allen Achsbeschriftungen (die Felder sind nicht Teil der Szene)."""
+        """Bild fuer den PDF-Bericht: mit allen Achsbeschriftungen (die Felder sind nicht Teil der Szene),
+        immer im Tagmodus (weisses Papier)."""
         from . import report
         for plot in (self.top, self.bottom):
             plot.set_end_labels(True)
+        m = theme.manager()
+        alt = m.aktiv
+        if alt != theme.TAG:
+            m.aktiv = theme.TAG                   # nur fuer dieses Bild, die Anwendung bleibt im Nachtmodus
+            self.apply_theme(theme.TAG)
         try:
             return report.render_plot(self.scene())
         finally:
+            if alt != theme.TAG:
+                m.aktiv = alt
+                self.apply_theme(alt)
             for plot in (self.top, self.bottom):
                 plot.set_end_labels(False)
 

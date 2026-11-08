@@ -7,7 +7,7 @@ from typing import Callable, Dict
 
 from PySide6 import QtCore, QtWidgets
 
-from . import tasten
+from . import farben, tasten, theme
 from .bg import Bg
 
 
@@ -20,6 +20,7 @@ class TastenBand(QtWidgets.QLabel):
         self.setWordWrap(True)
         self.farbe = ""
         self.hide()
+        theme.bei_wechsel(self, lambda _t: self._gestalten(), sofort=False)
         self.timer = QtCore.QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.timeout.connect(self.hide)
@@ -29,11 +30,21 @@ class TastenBand(QtWidgets.QLabel):
         self.setText(text)
         if farbe != self.farbe:                    # läuft im Sekundenzähler, neu gestalten kostet
             self.farbe = farbe
-            self.setStyleSheet(f"background: {farbe}; color: white; font-size: 26px; font-weight: 700; padding: 10px;")
+            self._gestalten()
         self.show()
         self.timer.stop()
         if dauer_s:
             self.timer.start(int(dauer_s * 1000))
+
+
+    def _gestalten(self):
+        """Farbige Flaeche aus dem Thema: farbe ist eine farben.*-Farbe oder Stufe (ok/warn/err/info)."""
+        stufe = farben.stufe_von(self.farbe)
+        if stufe == "info" or not stufe:
+            bg, fg = theme.farbe("accent"), theme.farbe("accent_text")
+        else:
+            bg, fg, _sym = theme.status_farben(stufe)
+        self.setStyleSheet(f"background: {bg}; color: {fg}; font-size: 26px; font-weight: 700; padding: 10px;")
 
 
 class TastenPage(QtWidgets.QScrollArea):
@@ -79,7 +90,8 @@ class TastenPage(QtWidgets.QScrollArea):
 
         self.doppelt = QtWidgets.QLabel("")
         self.doppelt.setWordWrap(True)
-        self.doppelt.setStyleSheet("color: #ef6c00; font-weight: 600;")
+        self.doppelt.setStyleSheet("font-weight: 600;")
+        theme.stufe(self.doppelt, theme.WARNUNG)
         root.addWidget(self.doppelt)
         self.status = QtWidgets.QLabel("")
         self.status.setWordWrap(True)
@@ -90,7 +102,7 @@ class TastenPage(QtWidgets.QScrollArea):
                                 "das Fehlerbild (3 × lang). Übersetzung messen: Drehzahl halten, Taste startet 5 s Messung, "
                                 "erst ein zweiter Druck innerhalb von 30 s übernimmt den Wert.")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: gray;")
+        theme.rolle(hint, "neben")
         root.addWidget(hint)
         root.addStretch(1)
         self._zeige()
@@ -118,7 +130,10 @@ class TastenPage(QtWidgets.QScrollArea):
         self.doppelt.setText(tasten.doppelt_text(self.setup))
         text, farbe = self.sync.text()
         self.status.setText(text)
-        self.status.setStyleSheet(f"font-weight: 600; color: {farbe};")
+        st = farben.stufe_von(farbe) or "neben"
+        if self.status.property("stufe") != st:          # Farbe aus dem Thema, auch nach einem Wechsel
+            self.status.setStyleSheet("font-weight: 600;")
+            theme.stufe(self.status, st)
 
     # ------------------------------------------------------------------ Zange
     def zange_zustand(self, state: str):

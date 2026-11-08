@@ -14,13 +14,15 @@ from typing import Callable, List, Optional
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import physics
+from . import theme
 
 ECU_RPM = "RPMValue"
 SOURCES = (("board", "Zündabnehmer (Messboard)"), ("ecu", "rusEFI (Drehzahl vom Steuergerät)"))
-COLORS = {"board": "#ef6c00", "ecu": "#1f5fbf"}
+COLORS = {"board": "#ef6c00", "ecu": "#1f5fbf"}       # Basisfarben, je Thema angepasst (theme.kurvenfarbe)
+LINE_COLOR = "#c62828"
 
 
 class RatioDialog(QtWidgets.QDialog):
@@ -62,7 +64,7 @@ class RatioDialog(QtWidgets.QDialog):
             gl.addWidget(rb)
             self.radios[key] = rb
         self.ecu_hint = QtWidgets.QLabel("")
-        self.ecu_hint.setStyleSheet("color: gray;")
+        theme.rolle(self.ecu_hint, "neben")
         gl.addWidget(self.ecu_hint)
         lay.addWidget(g)
 
@@ -87,23 +89,29 @@ class RatioDialog(QtWidgets.QDialog):
         self.progress.setRange(0, 1000)
         self.progress.setTextVisible(False)
         lay.addWidget(self.progress)
-        self.plot = pg.PlotWidget(background="w")
+        self.plot = pg.PlotWidget(background=theme.farbe("plot"))
         self.plot.setMenuEnabled(False)
         self.plot.hideButtons()
-        self.plot.showGrid(x=True, y=True, alpha=0.25)
+        self.plot.showGrid(x=True, y=True, alpha=0.35)
         self.plot.setLabel("bottom", "Messzeit [s]")
         self.plot.setLabel("left", "Übersetzung nKW/nRolle")
         self.plot.setMouseEnabled(x=False, y=True)
         self.plot.setMinimumHeight(220)
         self.curves = {}
         for key, _text in SOURCES:
-            self.curves[key] = self.plot.plot([], [], pen=pg.mkPen(COLORS[key], width=1.2),
+            c = theme.kurvenfarbe(COLORS[key])
+            self.curves[key] = self.plot.plot([], [], pen=pg.mkPen(c, width=1.2),
                                               symbol="o", symbolSize=4, symbolPen=None,
-                                              symbolBrush=COLORS[key], connect="finite")
-        self.mean_line = pg.InfiniteLine(angle=0, movable=True, pen=pg.mkPen("#c62828", width=2.5),
-                                         hoverPen=pg.mkPen("#ff1744", width=4),
-                                         label="{value:.3f}", labelOpts={"position": 0.95, "color": "#c62828",
-                                                                         "fill": "#ffffffcc"})
+                                              symbolBrush=c, connect="finite")
+        T = theme.tokens()
+        rot = theme.kurvenfarbe(LINE_COLOR)
+        fill = QtGui.QColor(T["panel"])
+        fill.setAlpha(204)
+        self.mean_line = pg.InfiniteLine(angle=0, movable=True, pen=pg.mkPen(rot, width=2.5),
+                                         hoverPen=pg.mkPen(T["text"], width=4),
+                                         label="{value:.3f}", labelOpts={"position": 0.95, "color": T["p_color"],
+                                                                         "fill": fill})
+        theme.diagramm(self.plot)
         self.mean_line.setVisible(False)
         self.plot.addItem(self.mean_line, ignoreBounds=True)
         self.mean_line.sigPositionChanged.connect(self._line_moved)
@@ -125,7 +133,7 @@ class RatioDialog(QtWidgets.QDialog):
         self.mean_btn.clicked.connect(self._reset_line)
         vl.addWidget(self.mean_btn)
         hint = QtWidgets.QLabel("Linie ziehen oder ins Diagramm klicken")
-        hint.setStyleSheet("color: gray;")
+        theme.rolle(hint, "neben")
         vl.addWidget(hint, 1)
         lay.addLayout(vl)
 
@@ -153,7 +161,7 @@ class RatioDialog(QtWidgets.QDialog):
 
         ecu_ok = self._ecu_available()
         self.radios["ecu"].setEnabled(ecu_ok)
-        self.ecu_hint.setText("" if ecu_ok else "rusEFI nicht verbunden (Reiter ECU) oder ohne .ini")
+        self.ecu_hint.setText("" if ecu_ok else "rusEFI nicht verbunden (Einstellungen › ECU) oder ohne .ini")
         self.radios["ecu" if source == "ecu" and ecu_ok else "board"].setChecked(True)
         self.resize(620, 640)
 
@@ -217,7 +225,7 @@ class RatioDialog(QtWidgets.QDialog):
         ok = self._ecu_available()
         if ok != self.radios["ecu"].isEnabled():
             self.radios["ecu"].setEnabled(ok)
-            self.ecu_hint.setText("" if ok else "rusEFI nicht verbunden (Reiter ECU) oder ohne .ini")
+            self.ecu_hint.setText("" if ok else "rusEFI nicht verbunden (Einstellungen › ECU) oder ohne .ini")
             if ok:
                 self._add_ecu_rpm()
             elif self.radios["ecu"].isChecked():
@@ -333,7 +341,7 @@ class RatioDialog(QtWidgets.QDialog):
         self.value_spin.setEnabled(on)
         self.mean_btn.setEnabled(on)
         if on:
-            self.mean_line.setPen(pg.mkPen("#c62828", width=2.5))
+            self.mean_line.setPen(pg.mkPen(theme.kurvenfarbe(LINE_COLOR), width=2.5))
             self._set_value(r[0])
             # Achse auf die Werte der gewaehlten Quelle (Ausreisser anderer Quellen nicht mitzoomen)
             _t, y = self._ratios(self._last)[self.source()]

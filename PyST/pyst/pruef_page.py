@@ -8,12 +8,14 @@ from typing import Callable, List
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import farben
+from . import theme
 from . import pruef
 from .bg import Bg
-from .hw_page import RED_BANNER
 from .pruef import Check
 
-FARBE = {pruef.OK: farben.GUT, pruef.WARN: farben.WARNUNG, pruef.FEHLER: farben.FEHLER, pruef.INFO: "#666666"}
+def farbe(ergebnis) -> str:
+    """Schriftfarbe eines Pruefergebnisses im aktiven Thema."""
+    return {pruef.OK: farben.GUT, pruef.WARN: farben.WARNUNG, pruef.FEHLER: farben.FEHLER}.get(ergebnis, farben.NEUTRAL)
 BLITZ_WARNUNG = ("Nicht in die LED schauen. Mit kurzem Puls beginnen und U_DS am Blitzkopf (TP7 gegen TP8) messen: "
                  "über 24 V sofort aufhören.")
 
@@ -60,7 +62,7 @@ class PruefPage(QtWidgets.QWidget):
         root.addWidget(self.tree, 1)
         self.msg = QtWidgets.QLabel("")
         self.msg.setWordWrap(True)
-        self.msg.setStyleSheet("color: #555;")
+        theme.rolle(self.msg, "neben")
         root.addWidget(self.msg)
         self.b_all.clicked.connect(self.run_all)
         self.b_pair.clicked.connect(self.pair)
@@ -110,7 +112,7 @@ class PruefPage(QtWidgets.QWidget):
         lay.addLayout(row)
         warn = QtWidgets.QLabel(BLITZ_WARNUNG)
         warn.setWordWrap(True)
-        warn.setStyleSheet(RED_BANNER)
+        theme.rolle(warn, "banner_fehler")
         lay.addWidget(warn)
         return self.blitz_box
 
@@ -143,9 +145,9 @@ class PruefPage(QtWidgets.QWidget):
         self.tree.clear()
         for c in self.checks:
             it = QtWidgets.QTreeWidgetItem([f"{c.gruppe}: {c.name}", pruef.SYMBOL[c.ergebnis], c.wert, c.soll])
-            it.setForeground(1, QtGui.QBrush(QtGui.QColor(FARBE[c.ergebnis])))
+            it.setForeground(1, QtGui.QBrush(QtGui.QColor(farbe(c.ergebnis))))
             if c.ergebnis == pruef.FEHLER:
-                it.setForeground(2, QtGui.QBrush(QtGui.QColor(FARBE[c.ergebnis])))
+                it.setForeground(2, QtGui.QBrush(QtGui.QColor(farbe(c.ergebnis))))
             self.tree.addTopLevelItem(it)
 
     def run_all(self):

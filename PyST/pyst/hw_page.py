@@ -17,6 +17,7 @@ from typing import Callable, Dict, List, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import farben
+from . import theme
 from . import storage
 from .auth import AuthError, refusal_text, wlan_password
 from .bg import Bg, wait_in_thread
@@ -25,7 +26,6 @@ from .basis import (LAMBDA_GRUND, MAX_PLUGS, PLUG_TYPE_TEXT, PLUG_TYPES, ZANGE_K
 from .kv_dialog import KvDialog
 from .plugs import NO_FALLBACK, PlugConfig, PlugManager, start_demo_plugs
 
-RED_BANNER = "background: #c62828; color: white; font-weight: 700; padding: 6px; border-radius: 4px;"
 
 
 class ZangeSettingsDialog(KvDialog):
@@ -108,7 +108,7 @@ class PlugDialog(QtWidgets.QDialog):
         note = QtWidgets.QLabel("Komfortfunktion, keine Sicherheitsfunktion – kein Not-Aus über WLAN.\n"
                                 "„fällt aus“: Einschalten immer mit Rückfallzeit (Totmann), wird laufend erneuert.\n"
                                 "ESPHome kennt keine Rückfallzeit – dort nur zyklisch erneuert.")
-        note.setStyleSheet("color: gray;")
+        theme.rolle(note, "neben")
         form.addRow(note)
         bb = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept)
@@ -159,16 +159,19 @@ class HardwarePage(QtWidgets.QScrollArea):
         self.setWidget(inner)
         root = QtWidgets.QVBoxLayout(inner)
         self.banner = QtWidgets.QLabel("ACHTUNG: " + ZANGE_USB_WARNUNG.replace("\n", " "))
-        self.banner.setStyleSheet(RED_BANNER)
+        theme.rolle(self.banner, "banner_fehler")
         self.banner.setWordWrap(True)
         self.banner.hide()
         root.addWidget(self.banner)
+        # Gruppen als Attribute: das Hauptfenster verteilt sie auf die Unterreiter Zange, Lambda und WiFi
+        self.box_zange, self.box_net = self._build_zange(), self._build_net()
+        self.box_lambda, self.box_plugs = self._build_lambda(), self._build_plugs()
         top = QtWidgets.QHBoxLayout()
-        top.addWidget(self._build_zange(), 3)
-        top.addWidget(self._build_net(), 2)
+        top.addWidget(self.box_zange, 3)
+        top.addWidget(self.box_net, 2)
         root.addLayout(top)
-        root.addWidget(self._build_lambda())
-        root.addWidget(self._build_plugs(), 1)
+        root.addWidget(self.box_lambda)
+        root.addWidget(self.box_plugs, 1)
         mode = settings.get("steckdosen_weg", "direkt")
         key = "steckdosen" if mode == "direkt" else "steckdosen_basis"
         self.plugs = PlugManager([PlugConfig.from_dict(d) for d in settings.get(key, [])], mode=mode,
@@ -190,7 +193,7 @@ class HardwarePage(QtWidgets.QScrollArea):
                                         ("sync", "Sync"), ("funken", "Funken"), ("blitz", "Blitz φ"),
                                         ("log", "Log"), ("fw", "Firmware"))):
             t = QtWidgets.QLabel(label)
-            t.setStyleSheet("color: gray;")
+            theme.rolle(t, "neben")
             v = QtWidgets.QLabel("–")
             v.setStyleSheet("font-size: 15px; font-weight: 600;")
             grid.addWidget(t, (i // 4) * 2, i % 4)
@@ -198,7 +201,7 @@ class HardwarePage(QtWidgets.QScrollArea):
             self.z_vals[k] = v
         lay.addLayout(grid)
         self.z_weitere = QtWidgets.QLabel("")
-        self.z_weitere.setStyleSheet("color: #555;")
+        theme.rolle(self.z_weitere, "neben")
         self.z_weitere.setToolTip("Weitere gekoppelte Zangen; den Zündkanal liefert die Hauptzange (Basis: zange_id).")
         self.z_weitere.setVisible(False)
         lay.addWidget(self.z_weitere)
@@ -229,7 +232,7 @@ class HardwarePage(QtWidgets.QScrollArea):
         lay.addLayout(row)
         self.z_msg = QtWidgets.QLabel("")
         self.z_msg.setWordWrap(True)
-        self.z_msg.setStyleSheet("color: #555;")
+        theme.rolle(self.z_msg, "neben")
         lay.addWidget(self.z_msg)
         self.b_pair.clicked.connect(self.pair)
         self.b_mark.clicked.connect(self.mark)
@@ -250,9 +253,9 @@ class HardwarePage(QtWidgets.QScrollArea):
         self.lam_state = QtWidgets.QLabel("–")
         self.lam_state.setStyleSheet("font-size: 15px; font-weight: 600;")
         self.lam_detail = QtWidgets.QLabel("")
-        self.lam_detail.setStyleSheet("color: #555;")
+        theme.rolle(self.lam_detail, "neben")
         self.lam_warn = QtWidgets.QLabel("12-V-Spannung zu niedrig: Sonde heizt nicht (lambda_umin).")
-        self.lam_warn.setStyleSheet(RED_BANNER)
+        theme.rolle(self.lam_warn, "banner_fehler")
         self.lam_warn.hide()
         lay.addWidget(self.b_lambda)
         lay.addWidget(self.lam_state)
@@ -301,7 +304,7 @@ class HardwarePage(QtWidgets.QScrollArea):
         form.addRow(row)
         self.net_msg = QtWidgets.QLabel("Der Kanal gilt auch für den Funk zur Zange (ESP-NOW).")
         self.net_msg.setWordWrap(True)
-        self.net_msg.setStyleSheet("color: gray;")
+        theme.rolle(self.net_msg, "neben")
         form.addRow(self.net_msg)
         self.net_mode.currentIndexChanged.connect(self._net_mode_ui)
         self.b_net_apply.clicked.connect(self.net_apply)
@@ -352,7 +355,7 @@ class HardwarePage(QtWidgets.QScrollArea):
         lay.addLayout(row)
         self.p_msg = QtWidgets.QLabel("Komfortfunktion, keine Sicherheitsfunktion – kein Not-Aus über WLAN.")
         self.p_msg.setWordWrap(True)
-        self.p_msg.setStyleSheet("color: gray;")
+        theme.rolle(self.p_msg, "neben")
         lay.addWidget(self.p_msg)
         self.b_on.clicked.connect(lambda: self._switch_selected(True))
         self.b_off.clicked.connect(lambda: self._switch_selected(False))
@@ -420,13 +423,14 @@ class HardwarePage(QtWidgets.QScrollArea):
             for k in v:
                 v[k].setText("–")
             v["verb"].setStyleSheet("font-size: 15px; font-weight: 600;")
+            theme.stufe(v["verb"], "")
             self.zange_text.emit("")
             self.zange_state.emit("")
             return
         nan = lambda x: x != x
         v["verb"].setText(("verbunden" if st.connected else "nicht erreichbar") + (f" (ID {st.id})" if st.id else ""))
-        v["verb"].setStyleSheet("font-size: 15px; font-weight: 600; color: %s;" % (farben.GUT if st.connected
-                                                                                   else farben.FEHLER))
+        v["verb"].setStyleSheet("font-size: 15px; font-weight: 600;")
+        theme.stufe(v["verb"], theme.GUT if st.connected else theme.FEHLER)
         v["akku"].setText("–" if nan(st.akku_pct) else f"{st.akku_pct:.0f} %" +
                           ("" if nan(st.akku_mv) else f" ({st.akku_mv / 1000:.2f} V)") + (" lädt" if st.vbus else ""))
         v["rssi"].setText("–" if nan(st.rssi) else f"{st.rssi:.0f} dBm")
@@ -449,11 +453,13 @@ class HardwarePage(QtWidgets.QScrollArea):
         if not known:
             self.lam_state.setText("–")
             self.lam_state.setStyleSheet("font-size: 15px; font-weight: 600;")
+            theme.stufe(self.lam_state, "")
             self.lam_detail.setText("Basis-Firmware ab 0.2.2 nötig" if st is not None else "")
             self.lambda_text.emit("", "")
             return
         self.lam_state.setText(st.state_text)
-        self.lam_state.setStyleSheet(f"font-size: 15px; font-weight: 600; color: {st.color};")
+        self.lam_state.setStyleSheet("font-size: 15px; font-weight: 600;")
+        theme.stufe(self.lam_state, farben.stufe_von(st.color))
         self.lam_detail.setText(st.detail)
         text = f"● Lambda {st.state_text}"
         if st.on:
@@ -815,8 +821,11 @@ class HardwarePage(QtWidgets.QScrollArea):
                     t.setItem(r, col, it)
                 it.setText(v)
                 if col == 4:
-                    it.setBackground(QtGui.QColor("#c8e6c9" if st and st.on else "#ffcdd2"
-                                                  if st and st.reachable is False else "#ffffff"))
+                    tok = "zone_ok" if st and st.on else "zone_err" if st and st.reachable is False else ""
+                    hg = QtGui.QColor(theme.farbe(tok)) if tok else QtGui.QColor(0, 0, 0, 0)
+                    if tok:
+                        hg.setAlpha(70)
+                    it.setBackground(hg)
             if c.nr == cur:
                 t.selectRow(r)
 
@@ -850,7 +859,7 @@ class HardwarePage(QtWidgets.QScrollArea):
         if link is not None and link.is_basis and now - self._last_net > 10.0:
             self._last_net = now
             self._refresh_net()
-        interval = 3.0 if self.isVisible() else 10.0
+        interval = 3.0 if self.box_plugs.isVisible() else 10.0
         if self.plugs.configs and now - self._last_plugs > interval and self.plugs.idle():
             if self.plugs.mode == "direkt" or (link is not None and link.is_basis):
                 self._last_plugs = now

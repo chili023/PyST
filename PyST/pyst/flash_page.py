@@ -5,6 +5,7 @@ from typing import Callable, Dict
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import farben
+from . import theme
 from . import flash, update
 from .flash import FlashCancelled, FlashError
 from .bg import Bg, wait_in_thread
@@ -81,7 +82,7 @@ class FlashRow(QtWidgets.QGroupBox):
         self.current, self.stale = "", False
         hint = QtWidgets.QLabel(target.hint)
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #555;")
+        theme.rolle(hint, "neben")
         lay.addWidget(self.path, 0, 0)
         lay.addWidget(b_pick, 0, 1)
         lay.addWidget(self.b_go, 0, 2)
@@ -147,7 +148,7 @@ class FlashRow(QtWidgets.QGroupBox):
             line, state = flash.version_text(self.current, new, self.stale)
             self.versions.setText(line)
             self.versions.setStyleSheet("font-weight: 600; color: %s;" % {
-                "neu": farben.WARNUNG, "gleich": farben.GUT, "aelter": farben.FEHLER}.get(state, "#333333"))
+                "neu": farben.WARNUNG, "gleich": farben.GUT, "aelter": farben.FEHLER}.get(state, theme.farbe("text")))
         port = flash.target_port(self.target.key)
         if self.target.key != flash.BASIS_STLINK:
             text += f"\nPort: {port or 'nicht gefunden'}"

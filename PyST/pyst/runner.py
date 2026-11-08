@@ -206,8 +206,8 @@ class RunController:
         if not c.ok:
             return f"Ausrollversuch: {c.meldung}"
         return (f"Ausrollversuch: Verlust M0 {c.m0:.2f} / M1 {c.m1:.2f} Nm bei {c.n1:.0f} 1/min"
-                + (f", m2 {c.m2:.3f}" if c.quadratisch else "") + f", R² {c.r2:.3f} – im Reiter Kalibrierung "
-                "übernehmen")
+                + (f", m2 {c.m2:.3f}" if c.quadratisch else "") + f", R² {c.r2:.3f} – unter "
+                "Einstellungen › Rolle/Lauf › Verluste übernehmen")
 
     def finish(self):
         n_roll, dt, n_meas, afr, egt = self.arrays()

@@ -147,7 +147,7 @@ class TastenSync:
             return f"Firmware zu alt für das Setup: Zange ab {ZANGE_VERSION}, Basis ab {BASIS_VERSION}.", farben.FEHLER
         if self.zustand == self.FEHLER:
             return f"Die Zange hat das Setup nicht bestätigt ({self.grund}).", farben.FEHLER
-        return "Keine Zange verbunden. Das Setup geht beim Verbinden hinaus, bis dahin gilt der Standard.", "#666666"
+        return "Keine Zange verbunden. Das Setup geht beim Verbinden hinaus, bis dahin gilt der Standard.", farben.NEUTRAL
 
 
 # ---------------------------------------------------------------------------------------------- Sperren
