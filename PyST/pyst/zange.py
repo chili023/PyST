@@ -19,7 +19,7 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from . import __version__, physics
-from .basis import LOG_BOOT, LOG_MARK, LOG_SPARK, LOG_STATUS, LOG_SYNC, LogEntry
+from .basis import LOG_BOOT, LOG_MARK, LOG_OFF, LOG_SPARK, LOG_STATUS, LOG_SYNC, LogEntry
 from .storage import DIAG_HEADER, ROH_HEADER, ZANGE_HEADER
 
 MARK_TEXT = {1: "Taste T1", 2: "Taste T2", 3: "Taste T3", 4: "Taste T4", 5: "Trigger", 10: "fern"}
@@ -122,6 +122,63 @@ def log_to_rows(entries: List[LogEntry], params: physics.DynoParams, rate_hz: fl
             "dauer_s": t_end}
 
 
+RESET_TEXT = {1: "Einschalten", 3: "Software", 4: "Absturz (panic)", 5: "Watchdog (int)", 6: "Watchdog (task)",
+              7: "Watchdog", 8: "Tiefschlaf", 9: "Brown-out", 11: "USB"}
+OFF_TEXT = {1: "T1 lang", 2: "Akku leer", 3: "Auto-Aus", 4: "Befehl USB", 5: "Befehl Funk", 6: "Neustart-Befehl"}
+
+
+def log_starts(entries: List[LogEntry]) -> List[Dict]:
+    """Je Start der Zange: Grund, Laufzeit, Funken, mittlere Spitze, letzter Akkuwert und wie der Lauf endete."""
+    runs: List[Dict] = []
+    for e in sorted(entries, key=lambda e: e.idx):
+        if e.art == LOG_BOOT:
+            runs.append({"idx": e.idx, "grund": int(e.num(0)), "brownouts": int(e.num(1)), "ende_s": e.local_us / 1e6,
+                         "funken": 0, "spitzen": [], "akku_mv": None, "aus": None})
+        elif runs:
+            r = runs[-1]
+            r["ende_s"] = max(r["ende_s"], e.local_us / 1e6)
+            if e.art == LOG_SPARK:
+                r["funken"] += 1
+                r["spitzen"].append(e.num(2))
+            elif e.art == LOG_STATUS:
+                r["akku_mv"] = int(e.num(0))
+            elif e.art == LOG_OFF:
+                r["aus"] = int(e.num(0))
+    with_off = any(r["aus"] is not None for r in runs)
+    for i, r in enumerate(runs):
+        nxt = runs[i + 1] if i + 1 < len(runs) else None
+        if r["aus"] is not None:
+            r["ende"] = "sauber aus: " + OFF_TEXT.get(r["aus"], str(r["aus"]))
+        elif nxt is None:
+            r["ende"] = "läuft oder Log-Ende"
+        elif nxt["grund"] != 1:
+            r["ende"] = "Reset: " + RESET_TEXT.get(nxt["grund"], str(nxt["grund"]))
+        else:
+            r["ende"] = "kein Aus im Log: Spannung weg" if with_off else "unbekannt (Firmware ohne Aus-Eintrag)"
+    return runs
+
+
+def starts_report(entries: List[LogEntry]) -> str:
+    """Bericht zu log_starts als Text."""
+    runs = log_starts(entries)
+    text = [f"{len(runs)} Starts im Log", "",
+            "idx      Grund            Laufzeit s   Funken  Spitze mV  Akku mV  Brownouts  Ende"]
+    for r in runs:
+        peak = round(sum(r["spitzen"]) / len(r["spitzen"])) if r["spitzen"] else "-"
+        text.append(f"{r['idx']:<8} {RESET_TEXT.get(r['grund'], str(r['grund'])):<16} {r['ende_s']:>10.1f} {r['funken']:>8} "
+                    f"{peak!s:>10} {r['akku_mv'] or '-'!s:>8} {r['brownouts']:>10}  {r['ende']}")
+    return "\n".join(text) + "\n"
+
+
+def write_log_csv(entries: List[LogEntry], path: str) -> None:
+    """Alle Eintraege als CSV, unveraendert."""
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh, delimiter=";")
+        w.writerow(["idx", "art", "lokal_us", "werte"])
+        for e in sorted(entries, key=lambda e: e.idx):
+            w.writerow([e.idx, e.art, e.local_us, ";".join(e.rest)])
+
+
 def write_log_folder(entries: List[LogEntry], folder: str, params: Optional[physics.DynoParams] = None,
                      firmware: str = "", port: str = "", settings: Optional[Dict[str, str]] = None) -> str:
     """Zangen-Log als Dauermessungs-Ordner (roh.csv, lauf.json, marker.csv, zange_log.csv) ablegen."""
@@ -140,11 +197,9 @@ def write_log_folder(entries: List[LogEntry], folder: str, params: Optional[phys
         w = csv.writer(fh, delimiter=";")
         w.writerow(res["header"])
         w.writerows(res["rows"])
-    with open(os.path.join(folder, "zange_log.csv"), "w", newline="", encoding="utf-8") as fh:
-        w = csv.writer(fh, delimiter=";")
-        w.writerow(["idx", "art", "lokal_us", "werte"])
-        for e in sorted(entries, key=lambda e: e.idx):
-            w.writerow([e.idx, e.art, e.local_us, ";".join(e.rest)])
+    write_log_csv(entries, os.path.join(folder, "zange_log.csv"))
+    with open(os.path.join(folder, "zange_starts.txt"), "w", encoding="utf-8") as fh:
+        fh.write(starts_report(entries))
     if res["markers"]:
         with open(os.path.join(folder, "marker.csv"), "w", newline="", encoding="utf-8") as fh:
             w = csv.writer(fh, delimiter=";")
