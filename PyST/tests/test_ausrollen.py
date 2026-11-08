@@ -341,8 +341,8 @@ class Gui(unittest.TestCase):
     def test_reiter_schalter_uebernehmen(self):
         w, gui = self.w, self.gui
         k = w.page_kalib
-        self.assertEqual(w.rolle_tabs.tabText(w.rolle_tabs.indexOf(k)), "Verluste (Ausrollversuch)")
-        self.assertEqual(w.settings_tabs.tabText(w.settings_tabs.indexOf(w.rolle_tabs)), "Rolle/Lauf")
+        self.assertTrue(w.page_settings.isAncestorOf(k))                # Gruppe „Verluste – Ausrollversuch“
+        self.assertEqual(w.settings_tabs.tabText(w.settings_tabs.indexOf(w.page_settings)), "Rolle/Lauf")
         self.assertFalse(k.enabled())                      # Vorgabe: aus, alles wie bisher
         k.an.setChecked(True)
         k.n_ende.setValue(4500)
@@ -388,12 +388,12 @@ class Gui(unittest.TestCase):
         w.settings["fenster"] = {"reiter_neu": [5, 3]}         # Version ohne Kalibrierung: 5 = Einstellungen
         w.restore_window_layout()
         self.assertIs(w.tabs.currentWidget(), w.settings_tabs)
-        self.assertIs(w.current_page(), w.page_tasten)
+        self.assertIs(w.current_page(), w.page_hw)                     # Tasten stecken im Unterreiter Zange
         w.show_page(w.page_kalib)
         w.save_window_layout()
         w.show_page(w.page_db)
         w.restore_window_layout()
-        self.assertIs(w.current_page(), w.page_kalib)
+        self.assertIs(w.current_page(), w.page_settings)               # Ausrollversuch steckt in Rolle/Lauf
 
     def test_lauf_mit_ausrollen(self):
         """Ganzer Ablauf gegen SIM:ausrollen: Hinweis, Ausrollen, Auswertung im Reiter Kalibrierung."""

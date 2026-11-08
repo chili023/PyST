@@ -1,5 +1,5 @@
 """
-Unterreiter „Tasten“: Tasten-Setup der Funk-Zange, und das große Band über den Reitern für Hinweise an den Fahrer.
+Tasten der Zange (Einstellungen › Zange): Tasten-Setup der Funk-Zange, und das große Band über den Reitern für Hinweise an den Fahrer.
 Regeln und Übertragung stehen in tasten.py.
 """
 import time
@@ -62,12 +62,12 @@ class TastenPage(QtWidgets.QScrollArea):
         self.setWidgetResizable(True)
         inner = QtWidgets.QWidget()
         self.setWidget(inner)
+        self.setFrameShape(QtWidgets.QFrame.NoFrame)
         root = QtWidgets.QVBoxLayout(inner)
-        top = QtWidgets.QHBoxLayout()
-        root.addLayout(top)
-
-        g = QtWidgets.QGroupBox("Einstellbar (außerhalb des Blitzmodus)")
-        form = QtWidgets.QFormLayout(g)
+        root.setContentsMargins(0, 0, 0, 0)
+        # Entwurf 08.11.2026: eine Spalte in Zange › Tasten der Zange – Menüs, darunter die feste Belegung
+        form = QtWidgets.QFormLayout()
+        root.addLayout(form)
         self.combos: Dict[str, QtWidgets.QComboBox] = {}
         for geste, text in tasten.GESTEN:
             c = QtWidgets.QComboBox()
@@ -80,13 +80,6 @@ class TastenPage(QtWidgets.QScrollArea):
         self.b_standard = QtWidgets.QPushButton("Standard wiederherstellen")
         self.b_standard.clicked.connect(self.standard)
         form.addRow(self.b_standard)
-        top.addWidget(g, 1)
-
-        f = QtWidgets.QGroupBox("Fest in der Firmware, auch ohne PC")
-        ff = QtWidgets.QFormLayout(f)
-        for was, wirkung in tasten.FEST:
-            ff.addRow(was, QtWidgets.QLabel(wirkung))
-        top.addWidget(f, 1)
 
         self.doppelt = QtWidgets.QLabel("")
         self.doppelt.setWordWrap(True)
@@ -96,7 +89,9 @@ class TastenPage(QtWidgets.QScrollArea):
         self.status = QtWidgets.QLabel("")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
-        hint = QtWidgets.QLabel("Kurz = beim Loslassen, lang = 1,5 s gehalten, löst einmal aus. Ist ein PC verbunden, gilt dieses "
+        hint = QtWidgets.QLabel("Kurz = beim Loslassen, lang = 1,5 s gehalten. Ist ein PC verbunden, gilt dieses Setup, "
+                                "sonst der Standard (mehr im Tooltip).")
+        hint.setToolTip("Kurz = beim Loslassen, lang = 1,5 s gehalten, löst einmal aus. Ist ein PC verbunden, gilt dieses "
                                 "Setup, sonst der Standard. Die Zange speichert es nicht: Nach einem Neustart schickt PyST es "
                                 "neu. Neuer Lauf und Übersetzung brauchen PyST, Lambda die Basis: Fehlt das, zeigt die Zange "
                                 "das Fehlerbild (3 × lang). Übersetzung messen: Drehzahl halten, Taste startet 5 s Messung, "
@@ -105,6 +100,11 @@ class TastenPage(QtWidgets.QScrollArea):
         theme.rolle(hint, "neben")
         root.addWidget(hint)
         root.addStretch(1)
+        fest = QtWidgets.QLabel("Fest in der Firmware, auch ohne PC: " +
+                                " · ".join(f"{was} = {wirkung}" for was, wirkung in tasten.FEST))
+        fest.setWordWrap(True)
+        theme.rolle(fest, "neben")
+        root.addWidget(fest)
         self._zeige()
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self.poll)

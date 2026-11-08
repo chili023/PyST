@@ -326,13 +326,20 @@ class Gui(unittest.TestCase):
         sub = [w.settings_tabs.tabText(i) for i in range(w.settings_tabs.count())]
         self.assertEqual(sub, ["Rolle/Lauf", "Verbindung", "Zange", "Lambda", "ECU", "Firmware", "WiFi"])
         s = w.page_settings
-        self.assertIs(w.settings_tabs.widget(1), w.verbindung_tabs)
-        self.assertIs(w.verbindung_tabs.widget(0), s.conn_page)
+        # Entwurf 08.11.2026: keine Reiter in den Unterreitern, die Teile stecken als Gruppen in ihren Seiten
+        self.assertEqual([type(w.settings_tabs.widget(i)) for i in range(7) if isinstance(
+            w.settings_tabs.widget(i), type(w.settings_tabs))], [])
+        self.assertIs(w.settings_tabs.widget(0), s)
+        self.assertIs(w.settings_tabs.widget(1), s.conn_page)
+        self.assertIs(w.settings_tabs.widget(2), w.page_hw)
         self.assertIs(w.settings_tabs.widget(4), w.page_rusefi)
-        self.assertIs(w.zange_tabs.widget(1), w.page_tasten)
+        self.assertIs(w.settings_tabs.widget(5), w.page_flash)
+        self.assertTrue(w.page_hw.isAncestorOf(w.page_tasten) and w.page_hw.isAncestorOf(w.page_pruef_zange))
+        self.assertTrue(s.conn_page.isAncestorOf(w.page_pruef) and s.conn_page.isAncestorOf(w.dev_settings_btn))
         self.assertTrue(w.page_lambda.isAncestorOf(w.page_hw.box_lambda))
+        self.assertTrue(w.page_lambda.isAncestorOf(s.lambda_radio) and w.page_lambda.isAncestorOf(w.page_pruef_lambda))
         self.assertTrue(w.page_wifi.isAncestorOf(w.page_hw.box_net) and w.page_wifi.isAncestorOf(w.page_hw.box_plugs))
-        self.assertTrue(w.rolle_tabs.isAncestorOf(w.page_kalib))
+        self.assertTrue(s.isAncestorOf(w.page_kalib) and s.isAncestorOf(s.ratio_btn) and s.isAncestorOf(s.start_nachfrage))
         self.assertTrue(s.conn_page.isAncestorOf(s.port_combo) and s.conn_page.isAncestorOf(s.connect_btn))
         self.assertFalse(s.isAncestorOf(s.port_combo))
         self.assertTrue(s.isAncestorOf(s.fields["inkr"]))
@@ -395,22 +402,22 @@ class Gui(unittest.TestCase):
         w.show_page(w.page_tasten)
         w.save_window_layout()
         f = w.settings["fenster"]
-        self.assertEqual(f["seite"], "tasten")
+        self.assertEqual(f["seite"], "zange")                        # Tasten stecken im Unterreiter Zange
         w.show_page(w.page_oszi)
         w.settings_tabs.setCurrentIndex(0)
         w.restore_window_layout()
-        self.assertIs(w.current_page(), w.page_tasten)
+        self.assertIs(w.current_page(), w.page_hw)
         self.assertIs(w.tabs.currentWidget(), w.settings_tabs)
         # gespeichert von der Version ohne Unterreiter
-        for alt, page in ((6, w.page_flash), (4, w.page_hw), (5, w.page_pruef), (8, w.page_settings),
+        for alt, page in ((6, w.page_flash), (4, w.page_hw), (5, w.page_settings.conn_page), (8, w.page_settings),
                           (7, w.page_rusefi), (2, w.viewer)):
             w.show_page(w.page_db)
             w.settings["fenster"] = {"reiter": alt}
             w.restore_window_layout()
             self.assertIs(w.current_page(), page, alt)
         # gespeichert von PyST 1.4 (Reiter ECU und Kalibrierung oben, Einstellungen mit sechs Unterreitern)
-        for f, page in (({"reiter_neu": [6, 3], "reiter_kalib": True}, w.page_tasten),
-                        ({"reiter_neu": [5, 0], "reiter_kalib": True}, w.page_kalib),
+        for f, page in (({"reiter_neu": [6, 3], "reiter_kalib": True}, w.page_hw),
+                        ({"reiter_neu": [5, 0], "reiter_kalib": True}, w.page_settings),
                         ({"reiter_neu": [4, 0], "reiter_kalib": True}, w.page_rusefi),
                         ({"reiter_neu": [6, 1], "reiter_kalib": True}, w.page_settings.conn_page)):
             w.show_page(w.page_db)

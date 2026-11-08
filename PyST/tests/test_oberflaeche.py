@@ -427,9 +427,9 @@ class Hauptfenster(unittest.TestCase):
         try:
             self.assertEqual([w.tabs.tabText(i) for i in range(w.tabs.count())],
                              ["Messen", "Fahrzeuge && Setups", "Auswertung", "Oszi / Dauermessung", "Einstellungen"])
-            self.assertEqual(set(w.seiten), {"messen", "fahrzeuge", "auswertung", "oszi", "rolle", "verluste",
-                                             "verbindung", "pruefen", "zange", "tasten", "lambda", "ecu", "firmware",
-                                             "wifi"})
+            self.assertEqual(set(w.seiten), {"messen", "fahrzeuge", "auswertung", "oszi", "rolle", "verbindung",
+                                             "zange", "lambda", "ecu", "firmware", "wifi"})
+            self.assertEqual(set(w.unterseiten), {"verluste", "pruefen", "tasten"})
             for key, page in w.seiten.items():                 # jede Seite laesst sich zeigen
                 w.show_page(page)
                 self.assertEqual(w.current_page_key(), key)

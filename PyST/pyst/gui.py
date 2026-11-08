@@ -154,6 +154,8 @@ LOSS_KEYS = ("m0", "m1", "n1", "m2")
 
 
 class SettingsPage(QtWidgets.QScrollArea):
+    """Unterreiter Rolle/Lauf (oben Prüfstand, Lauf, Filter, Klima; unten Verluste mit dem Ausrollversuch) und, als
+    eigene Seiten, Verbindung (conn_page) und die Gruppe Gemisch (box_gemisch, Unterreiter Lambda)."""
     losses_changed = QtCore.Signal()
 
     def __init__(self, settings: dict):
@@ -161,39 +163,12 @@ class SettingsPage(QtWidgets.QScrollArea):
         self.setWidgetResizable(True)
         inner = QtWidgets.QWidget()
         self.setWidget(inner)
+        # oben Prüfstand | Lauf | Filter | Klima, unten Verluste (Werte) | Ausrollversuch (KalibPage, Hauptfenster)
         grid = QtWidgets.QGridLayout(inner)
-
-        g = QtWidgets.QGroupBox("Verbindung")      # eigener Unterreiter, gehört aber zu den Einstellungen dieser Seite
-        gl = QtWidgets.QGridLayout(g)
-        self.port_combo = QtWidgets.QComboBox()
-        self.port_combo.setEditable(True)
-        self.refresh_btn = QtWidgets.QPushButton("↻")
-        self.refresh_btn.setFixedWidth(32)
-        self.connect_btn = QtWidgets.QPushButton("Verbinden")
-        self.replay_btn = QtWidgets.QPushButton("Lauf-Datei im Simulator abspielen …")
-        self.live_check = QtWidgets.QCheckBox("Live-Anzeige auch ohne Lauf")
-        self.live_check.setChecked(settings.get("live", True))
-        self.fw_label = QtWidgets.QLabel("nicht verbunden")
-        self.fw_label.setWordWrap(True)
-        theme.rolle(self.fw_label, "neben")
-        gl.addWidget(QtWidgets.QLabel("Port"), 0, 0)
-        gl.addWidget(self.port_combo, 0, 1)
-        gl.addWidget(self.refresh_btn, 0, 2)
-        gl.addWidget(self.connect_btn, 1, 1, 1, 2)
-        gl.addWidget(self.replay_btn, 2, 1, 1, 2)
-        gl.addWidget(self.live_check, 3, 1, 1, 2)
-        self.auto_connect = QtWidgets.QCheckBox("Messboard automatisch verbinden (Prüfung alle 5 s)")
-        self.auto_connect.setChecked(settings.get("auto_connect", True))
-        gl.addWidget(self.auto_connect, 4, 1, 1, 2)
-        gl.addWidget(self.fw_label, 5, 0, 1, 3)
-        gl.setColumnStretch(1, 1)
-        self.conn_page = QtWidgets.QScrollArea()
-        self.conn_page.setWidgetResizable(True)
-        conn = QtWidgets.QWidget()
-        cl = QtWidgets.QVBoxLayout(conn)
-        cl.addWidget(g)
-        cl.addStretch(1)
-        self.conn_page.setWidget(conn)
+        self.verluste_lay = QtWidgets.QVBoxLayout()
+        grid.addLayout(self.verluste_lay, 1, 1, 1, 3)
+        grid.setRowStretch(1, 1)
+        self._build_verbindung(settings)
 
         self.fields: Dict[str, QtWidgets.QDoubleSpinBox] = {}
         defaults = physics.DynoParams(**{k: v for k, v in settings.get("params", {}).items()
@@ -203,17 +178,23 @@ class SettingsPage(QtWidgets.QScrollArea):
             defaults.ma_s = settings.get("ma_s", FILTER_S_DEFAULT[0])
         if defaults.dq_s <= 0:
             defaults.dq_s = settings.get("dq_s", FILTER_S_DEFAULT[1])
-        pos = [(0, 0), (0, 1), (1, 0), (1, 1)]
-        for (group, fields), (r, c) in zip(PARAM_FIELDS.items(), pos):
-            box = QtWidgets.QGroupBox(group)
-            fl = QtWidgets.QFormLayout(box)
-            if group == "Filter && Verluste":
-                self.filter_form = fl
-                self.filter_mode = QtWidgets.QComboBox()
-                self.filter_mode.addItems(["Sekunden (passt sich der Messfrequenz an)",
-                                           "Messpunkte (wie LabVIEW)"])
-                self.filter_mode.setCurrentIndex(0 if self.filter_seconds else 1)
-                fl.addRow("Filter in", self.filter_mode)
+        boxes: Dict[str, QtWidgets.QFormLayout] = {}
+        for group, pos in (("Prüfstand", (0, 0)), ("Lauf", (0, 1)), ("Filter", (0, 2)), ("Klima", (0, 3)),
+                           ("Verluste", (1, 0))):
+            box = QtWidgets.QGroupBox("Verluste (Werte für die Rechnung)" if group == "Verluste" else group)
+            boxes[group] = QtWidgets.QFormLayout(box)
+            grid.addWidget(box, *pos, QtCore.Qt.AlignTop if group == "Verluste" else QtCore.Qt.Alignment())
+            if group == "Verluste":
+                self.verluste_box = box
+        self.filter_form = boxes["Filter"]
+        self.filter_mode = QtWidgets.QComboBox()
+        self.filter_mode.addItems(["Sekunden", "Messpunkte (wie LabVIEW)"])
+        self.filter_mode.setToolTip("Sekunden: passt sich der Messfrequenz an. Messpunkte: feste Anzahl wie LabVIEW.")
+        self.filter_mode.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.filter_mode.setMinimumContentsLength(12)
+        self.filter_mode.setCurrentIndex(0 if self.filter_seconds else 1)
+        self.filter_form.addRow("Filter in", self.filter_mode)
+        for group, fields in PARAM_FIELDS.items():
             for key, label, lo, hi, dec in fields:
                 sp = QtWidgets.QDoubleSpinBox()
                 sp.setRange(lo, hi)
@@ -223,47 +204,61 @@ class SettingsPage(QtWidgets.QScrollArea):
                 sp.setValue(float(getattr(defaults, key)))
                 sp.setKeyboardTracking(False)
                 self.fields[key] = sp
-                if key == "ratio":                 # wird im Dialog "Übersetzung" (Reiter Messen) gesetzt
+                ziel = "Verluste" if key in LOSS_KEYS else "Filter" if group.startswith("Filter") else group
+                if key == "ratio":                 # neben dem Knopf „Übersetzung einmessen …“
+                    self.ratio_btn = QtWidgets.QPushButton("Übersetzung einmessen …")
+                    self.ratio_btn.setToolTip("Übersetzung nKW/nRolle aus Zündung oder rusEFI einmessen "
+                                              "(auch unter Messen)")
+                    boxes[ziel].addRow(label, sp)
+                    boxes[ziel].addRow("", self.ratio_btn)
                     continue
-                fl.addRow(label, sp)
-            if group == "Lauf":
-                note = QtWidgets.QLabel("n vom Gas: ab hier wird auf fallende Drehzahl (= Laufende) geprüft. "
-                                        "Muss über der Haltedrehzahl liegen.")
-                note.setWordWrap(True)
-                theme.rolle(note, "neben")
-                fl.addRow(note)
-            if group == "Filter && Verluste":
-                self.filter_label = QtWidgets.QLabel()
-                self.filter_label.setWordWrap(True)
-                theme.rolle(self.filter_label, "neben")
-                fl.addRow(self.filter_label)
-                self.loss_label = QtWidgets.QLabel()
-                self.loss_label.setWordWrap(True)
-                theme.rolle(self.loss_label, "neben")
-                fl.addRow(self.loss_label)
-            if group == "Klima":
-                self.climate_auto = QtWidgets.QCheckBox("vor jedem Lauf vom Sensor lesen")
-                self.climate_auto.setChecked(settings.get("climate_auto", True))
-                self.climate_btn = QtWidgets.QPushButton("Klima jetzt lesen")
-                self.ka_label = QtWidgets.QLabel()
-                fl.addRow(self.climate_auto)
-                fl.addRow(self.climate_btn, self.ka_label)
-            grid.addWidget(box, r, c)
+                boxes[ziel].addRow(label, sp)
+        fl = boxes["Lauf"]
+        note = QtWidgets.QLabel("n vom Gas: ab hier wird auf fallende Drehzahl (= Laufende) geprüft. "
+                                "Muss über der Haltedrehzahl liegen.")
+        note.setWordWrap(True)
+        theme.rolle(note, "neben")
+        fl.addRow(note)
+        self.start_nachfrage = QtWidgets.QCheckBox("Bei geändertem Setup vor START nachfragen")
+        self.start_nachfrage.setToolTip("Weicht das Setup vom letzten Lauf ab, fragt PyST vor dem Start nach "
+                                        "(Messen). Einstellung „start_nachfrage_setup“.")
+        self.start_nachfrage.setChecked(bool(settings.get("start_nachfrage_setup", True)))
+        self.start_nachfrage.setStyleSheet("font-weight: 600;")
+        fl.addRow(self.start_nachfrage)
+        self.filter_label = QtWidgets.QLabel()
+        self.filter_label.setWordWrap(True)
+        theme.rolle(self.filter_label, "neben")
+        self.filter_form.addRow(self.filter_label)
+        self.loss_label = QtWidgets.QLabel()
+        self.loss_label.setWordWrap(True)
+        theme.rolle(self.loss_label, "neben")
+        boxes["Verluste"].addRow(self.loss_label)
+        fl = boxes["Klima"]
+        self.climate_auto = QtWidgets.QCheckBox("vor jedem Lauf vom Sensor lesen")
+        self.climate_auto.setChecked(settings.get("climate_auto", True))
+        self.climate_btn = QtWidgets.QPushButton("Klima jetzt lesen")
+        self.ka_label = QtWidgets.QLabel()
+        fl.addRow(self.climate_auto)
+        fl.addRow(self.climate_btn, self.ka_label)
+        klima_note = QtWidgets.QLabel("Der Klimasensor (BME280) sitzt auf dem Messboard; seine Adresse (bme_addr) "
+                                      "steht unter Verbindung › Geräte-Einstellungen.")
+        klima_note.setWordWrap(True)
+        theme.rolle(klima_note, "neben")
+        fl.addRow(klima_note)
+        for c in range(4):
+            grid.setColumnStretch(c, 1)
 
-        box = QtWidgets.QGroupBox("Anzeige")
-        fl = QtWidgets.QFormLayout(box)
+        # Gemisch als λ / AFR: steht im Unterreiter Lambda
+        self.box_gemisch = QtWidgets.QGroupBox("Anzeige")
+        fl = QtWidgets.QFormLayout(self.box_gemisch)
         self.lambda_radio = QtWidgets.QRadioButton("Lambda λ")
         self.afr_radio = QtWidgets.QRadioButton("AFR")
         (self.lambda_radio if settings.get("lambda", True) else self.afr_radio).setChecked(True)
         hb = QtWidgets.QHBoxLayout()
         hb.addWidget(self.lambda_radio)
         hb.addWidget(self.afr_radio)
+        hb.addStretch(1)
         fl.addRow("Gemisch als", hb)
-        self.data_label = QtWidgets.QLabel()
-        self.data_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        fl.addRow("Datenbank", self.data_label)
-        grid.addWidget(box, 2, 0)
-        grid.setRowStretch(3, 1)
 
         for k in ("temp_c", "p_mbar"):
             self.fields[k].valueChanged.connect(self.update_ka)
@@ -277,6 +272,71 @@ class SettingsPage(QtWidgets.QScrollArea):
         self.filter_mode.currentIndexChanged.connect(lambda i: self.set_filter_seconds(i == 0))
         self.set_filter_seconds(self.filter_seconds)
         self._rate = 60.0
+
+    def _build_verbindung(self, settings: dict):
+        """Unterreiter Verbindung: Messboard (links), Prüfen (rechts, setzt das Hauptfenster ein), Datenbank unten."""
+        g = self.box_messboard = QtWidgets.QGroupBox("Messboard")
+        gl = QtWidgets.QGridLayout(g)
+        self.port_combo = QtWidgets.QComboBox()
+        self.port_combo.setEditable(True)
+        self.port_combo.setMinimumWidth(280)
+        self.refresh_btn = QtWidgets.QPushButton("↻")
+        self.refresh_btn.setFixedWidth(32)
+        self.refresh_btn.setToolTip("Ports neu suchen")
+        self.connect_btn = QtWidgets.QPushButton("Verbinden")
+        theme.rolle(self.connect_btn, "primaer")
+        self.replay_btn = QtWidgets.QPushButton("Lauf-Datei im Simulator abspielen …")
+        self.live_check = QtWidgets.QCheckBox("Live-Anzeige auch ohne Lauf")
+        self.live_check.setChecked(settings.get("live", True))
+        self.fw_label = QtWidgets.QLabel("nicht verbunden")
+        self.fw_label.setWordWrap(True)
+        self.fw_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        self.fw_label.setStyleSheet("font-weight: 600;")
+        self.auto_connect = QtWidgets.QCheckBox("Messboard automatisch verbinden (Prüfung alle 5 s)")
+        self.auto_connect.setChecked(settings.get("auto_connect", True))
+        art = QtWidgets.QLabel("PST Basis (USB oder WLAN), Arduino Mega (PST 3.x), STM32 (F446) oder Simulator")
+        art.setWordWrap(True)
+        theme.rolle(art, "neben")
+        gl.addWidget(art, 0, 0, 1, 4)
+        gl.addWidget(QtWidgets.QLabel("Port"), 1, 0)
+        gl.addWidget(self.port_combo, 1, 1)
+        gl.addWidget(self.refresh_btn, 1, 2)
+        gl.addWidget(self.connect_btn, 1, 3)
+        gl.addWidget(QtWidgets.QLabel("Zustand"), 2, 0)
+        gl.addWidget(self.fw_label, 2, 1, 1, 3)
+        gl.addWidget(self.auto_connect, 3, 1, 1, 3)
+        gl.addWidget(self.live_check, 4, 1, 1, 3)
+        sim = QtWidgets.QLabel("Simulator")
+        theme.rolle(sim, "titel")
+        gl.addWidget(sim, 5, 0)
+        gl.addWidget(self.replay_btn, 5, 1, 1, 3, QtCore.Qt.AlignLeft)
+        gl.setColumnStretch(1, 1)
+        geraete = QtWidgets.QGroupBox("Geräte-Einstellungen der Basis (PST-Diag 1)")
+        self.messboard_lay = QtWidgets.QVBoxLayout(geraete)      # Knopf setzt das Hauptfenster ein
+        self.conn_page = QtWidgets.QScrollArea()
+        self.conn_page.setWidgetResizable(True)
+        conn = QtWidgets.QWidget()
+        cl = QtWidgets.QVBoxLayout(conn)
+        row = QtWidgets.QHBoxLayout()
+        links = QtWidgets.QVBoxLayout()
+        links.addWidget(g)
+        links.addWidget(geraete)
+        links.addStretch(1)
+        row.addLayout(links, 9)
+        self.pruefen_box = QtWidgets.QGroupBox("Prüfen")
+        self.pruefen_lay = QtWidgets.QVBoxLayout(self.pruefen_box)
+        row.addWidget(self.pruefen_box, 11)
+        cl.addLayout(row, 1)
+        db = QtWidgets.QHBoxLayout()
+        dbt = QtWidgets.QLabel("Datenbank")
+        theme.rolle(dbt, "neben")
+        self.data_label = QtWidgets.QLabel()
+        self.data_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        theme.rolle(self.data_label, "neben")
+        db.addWidget(dbt)
+        db.addWidget(self.data_label, 1)
+        cl.addLayout(db)
+        self.conn_page.setWidget(conn)
 
     def set_filter_seconds(self, on: bool):
         self.filter_seconds = on
@@ -334,7 +394,7 @@ class SettingsPage(QtWidgets.QScrollArea):
     def _show_loss_source(self):
         v = {k: self.fields[k].value() for k in LOSS_KEYS}
         if not (v["m0"] or v["m1"] or v["m2"]):
-            text = "Keine Verluste: Ergebnis = Radleistung. Verluste aus dem Ausrollversuch (Rolle/Lauf › Verluste)."
+            text = "Keine Verluste: Ergebnis = Radleistung. Verluste aus dem Ausrollversuch (rechts daneben)."
         else:
             text = ("Verluste: " + (self.verlust_quelle or "von Hand eingetragen")
                     + ". Ergebnis = Motorleistung (Rad + Verluste).")
@@ -2427,14 +2487,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------ Einstellungen: Unterreiter
     @staticmethod
-    def _unterreiter(*seiten) -> QtWidgets.QTabWidget:
-        t = QtWidgets.QTabWidget()
-        t.setDocumentMode(True)
-        for page, text in seiten:
-            t.addTab(page, text)
-        return t
-
-    @staticmethod
     def _seite(*widgets, stretch_last: bool = False) -> QtWidgets.QScrollArea:
         """Scrollbare Seite aus vorhandenen Gruppen (werden dabei aus ihrer alten Seite herausgenommen)."""
         area = QtWidgets.QScrollArea()
@@ -2442,38 +2494,110 @@ class MainWindow(QtWidgets.QMainWindow):
         inner = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(inner)
         for i, w in enumerate(widgets):
-            lay.addWidget(w, 1 if stretch_last and i == len(widgets) - 1 else 0)
+            if isinstance(w, QtWidgets.QLayout):
+                lay.addLayout(w, 1 if stretch_last and i == len(widgets) - 1 else 0)
+            else:
+                lay.addWidget(w, 1 if stretch_last and i == len(widgets) - 1 else 0)
         if not stretch_last:
             lay.addStretch(1)
         area.setWidget(inner)
         return area
 
+    @staticmethod
+    def _einbetten(area: QtWidgets.QScrollArea):
+        """Seite als Gruppe in einer anderen Seite: ohne Rahmen, Hintergrund der Gruppe (Tag/Nacht)."""
+        area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        area.viewport().setAutoFillBackground(False)
+        if area.widget() is not None:
+            area.widget().setAutoFillBackground(False)
+
     def _build_settings_tabs(self):
-        """Einstellungen: Rolle/Lauf | Verbindung | Zange | Lambda | ECU | Firmware | WiFi.
-        Geruest der Stufe 1: die bisherigen Seiten unveraendert in den passenden Unterreitern (Feinarbeit folgt)."""
+        """Einstellungen: Rolle/Lauf | Verbindung | Zange | Lambda | ECU | Firmware | WiFi (Entwurf 08.11.2026).
+        Jede Seite ist ein Unterreiter ohne weitere Reiter darin; die Teile (Ausrollversuch, Prüfen, Tasten) stecken
+        als Gruppen in ihren Seiten."""
+        from . import einst_widgets as ew
+        from .pruef_page import LAMBDA, ZANGE
         s, hw = self.page_settings, self.page_hw
-        box = QtWidgets.QGroupBox("Messboard (PST-Diag 1)")
-        bl = QtWidgets.QVBoxLayout(box)
-        self.dev_settings_btn = QtWidgets.QPushButton("Geräte-Einstellungen des Messboards …")
-        self.dev_settings_btn.setToolTip("#GET/#SET der Basis bzw. des Messboards (Messfrequenz, AFR-Eingang, BME280 …)")
+        # Rolle/Lauf: rechts Verluste mit dem Ausrollversuch (früher Hauptreiter Kalibrierung)
+        kalib_box = QtWidgets.QGroupBox("Verluste – Ausrollversuch")
+        kl = QtWidgets.QVBoxLayout(kalib_box)
+        kl.setContentsMargins(4, 4, 4, 4)
+        self._einbetten(self.page_kalib)
+        kl.addWidget(self.page_kalib)
+        s.verluste_lay.addWidget(kalib_box, 1)
+        s.ratio_btn.clicked.connect(self.on_measure_ratio)
+        self.settings.setdefault("start_nachfrage_setup", True)
+        s.start_nachfrage.toggled.connect(self._start_nachfrage_geaendert)
+        # Verbindung: Messboard mit den Geräte-Einstellungen der Basis, Prüfen (Sammelknopf)
+        self.dev_settings_btn = QtWidgets.QPushButton("Geräte-Einstellungen der Basis …")
+        self.dev_settings_btn.setToolTip("#GET/#SET der Basis bzw. des Messboards (PST-Diag 1): Messfrequenz, Flanken, "
+                                         "Filter, AFR-Eingang, BME280 …")
         self.dev_settings_btn.clicked.connect(self._messboard_einstellungen)
-        bl.addWidget(self.dev_settings_btn, 0, QtCore.Qt.AlignLeft)
-        s.conn_page.widget().layout().insertWidget(1, box)
-        self.rolle_tabs = self._unterreiter((s, "Allgemein"), (self.page_kalib, "Verluste (Ausrollversuch)"))
-        self.verbindung_tabs = self._unterreiter((s.conn_page, "Messboard"), (self.page_pruef, "Prüfen"))
-        self.zange_tabs = self._unterreiter((hw, "Zange"), (self.page_tasten, "Tasten"))
-        self.page_lambda = self._seite(hw.box_lambda)
-        self.page_wifi = self._seite(hw.box_net, hw.box_plugs, stretch_last=True)
-        for page, text in ((self.rolle_tabs, "Rolle/Lauf"), (self.verbindung_tabs, "Verbindung"),
-                           (self.zange_tabs, "Zange"), (self.page_lambda, "Lambda"), (self.page_rusefi, "ECU"),
-                           (self.page_flash, "Firmware"), (self.page_wifi, "WiFi")):
+        s.messboard_lay.addWidget(self.dev_settings_btn, 0, QtCore.Qt.AlignLeft)
+        s.messboard_lay.addWidget(ew.neben("Gilt für PST-Diag-Geräte: PyST-Basis, Arduino Mega ab 3.1, STM32 (F446) "
+                                           "ab 1.1. Lambda/AFR-Werte auch unter Lambda."))
+        s.pruefen_lay.addWidget(self.page_pruef)
+        s.pruefen_lay.addWidget(ew.neben("„Alles prüfen“ sammelt die Prüfungen aller Unterreiter (Basis, Klima, "
+                                         "ESP/WLAN, Lambda, Zange). Einzeln: Zange › Tests, Lambda › Prüfen."))
+        # Zange: Tasten und Tests als Spalten
+        t = self.page_tasten                       # ganze Spalte ohne eigene Rollbalken
+        self._einbetten(t)
+        t.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        t.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        t.setMinimumHeight(t.widget().sizeHint().height() + 40)
+        hw.tasten_lay.addWidget(t)
+        self.page_pruef_zange = PruefPage(self.page_pruef.get_link, hw.pair, self.page_pruef.aufnahme, bereich=ZANGE)
+        hw.tests_lay.addWidget(self.page_pruef_zange)
+        hw.zur_firmware.connect(lambda: self.show_page(self.page_flash))
+        self.page_flash.zange_verfuegbar.connect(hw.set_fw_verfuegbar)
+        self.page_flash.get_info = lambda: self.firmware
+        self.page_flash.get_zange = lambda: f"Zange {hw.zst.id}" if hw.zst is not None and hw.zst.id else ""
+        # Lambda: Heizung, Anzeige λ/AFR, AFR-Eingang links; Prüfen und Firmware rechts
+        self.page_pruef_lambda = PruefPage(self.page_pruef.get_link, hw.pair, self.page_pruef.aufnahme, bereich=LAMBDA)
+        pr = QtWidgets.QGroupBox("Prüfen: Wideband (F042) und Heizung")
+        QtWidgets.QVBoxLayout(pr).addWidget(self.page_pruef_lambda)
+        fw = QtWidgets.QGroupBox("Firmware")
+        fl = QtWidgets.QVBoxLayout(fw)
+        fl.addWidget(ew.neben("Der Wideband-Controller (F042) wird beim Basis-Update automatisch mit aktualisiert; "
+                              "einzeln im Expertenmodus unter Firmware."))
+        b = QtWidgets.QPushButton("Zur Firmware …")
+        b.clicked.connect(lambda: self.show_page(self.page_flash))
+        fl.addWidget(b, 0, QtCore.Qt.AlignLeft)
+        cols = QtWidgets.QHBoxLayout()
+        links = QtWidgets.QVBoxLayout()
+        for g in (hw.box_lambda, s.box_gemisch, hw.box_afr):
+            links.addWidget(g)
+        links.addStretch(1)
+        rechts = QtWidgets.QVBoxLayout()
+        rechts.addWidget(pr, 1)
+        rechts.addWidget(fw)
+        cols.addLayout(links, 11)
+        cols.addLayout(rechts, 9)
+        self.page_lambda = self._seite(cols, stretch_last=True)
+        # WiFi: WLAN der Basis links, Steckdosen rechts
+        row = QtWidgets.QHBoxLayout()
+        net = QtWidgets.QVBoxLayout()
+        net.addWidget(hw.box_net)
+        net.addStretch(1)
+        row.addLayout(net, 4)
+        row.addWidget(hw.box_plugs, 7)
+        self.page_wifi = self._seite(row, stretch_last=True)
+        for page, text in ((s, "Rolle/Lauf"), (s.conn_page, "Verbindung"), (hw, "Zange"), (self.page_lambda, "Lambda"),
+                           (self.page_rusefi, "ECU"), (self.page_flash, "Firmware"), (self.page_wifi, "WiFi")):
             self.settings_tabs.addTab(page, text)
-        # Schluessel der Seiten (gespeicherter Reiterstand, show_page)
+        self.settings_tabs.setStyleSheet("QTabBar::tab { min-width: 110px; }")
+        # Schluessel der Seiten (gespeicherter Reiterstand, show_page); Unterseiten stecken in einer Seite
         self.seiten: Dict[str, QtWidgets.QWidget] = {
             "messen": self.tabs.widget(0), "fahrzeuge": self.page_db, "auswertung": self.viewer, "oszi": self.page_oszi,
-            "rolle": s, "verluste": self.page_kalib, "verbindung": s.conn_page, "pruefen": self.page_pruef,
-            "zange": hw, "tasten": self.page_tasten, "lambda": self.page_lambda, "ecu": self.page_rusefi,
+            "rolle": s, "verbindung": s.conn_page, "zange": hw, "lambda": self.page_lambda, "ecu": self.page_rusefi,
             "firmware": self.page_flash, "wifi": self.page_wifi}
+        self.unterseiten: Dict[str, QtWidgets.QWidget] = {
+            "verluste": self.page_kalib, "pruefen": self.page_pruef, "tasten": self.page_tasten}
+
+    def _start_nachfrage_geaendert(self, on: bool):
+        """Rolle/Lauf: „Bei geändertem Setup vor START nachfragen“ (gelesen beim START unter Messen)."""
+        self.settings["start_nachfrage_setup"] = bool(on)
+        save_settings(self.settings)
 
     def _messboard_einstellungen(self):
         if self.link is None or not getattr(self.link, "has_diag", False):
@@ -2545,12 +2669,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------ Fenster-Layout
     def show_page(self, page: QtWidgets.QWidget):
-        """Seite zeigen, auch wenn sie ein Unterreiter (von Unterreitern) von Einstellungen ist."""
+        """Seite zeigen, auch wenn sie ein Unterreiter von Einstellungen ist oder als Gruppe in einer Seite steckt
+        (Ausrollversuch, Prüfen, Tasten): dann dorthin scrollen."""
         w = page
         while w is not None:
             par = w.parentWidget()
             if isinstance(par, QtWidgets.QStackedWidget) and isinstance(par.parentWidget(), QtWidgets.QTabWidget):
                 par.parentWidget().setCurrentWidget(w)
+            if isinstance(w, QtWidgets.QScrollArea) and w is not page and w.widget() is not None \
+                    and w.widget().isAncestorOf(page):
+                w.ensureWidgetVisible(page, 0, 0)
             w = par
 
     def current_page(self) -> QtWidgets.QWidget:
@@ -2600,8 +2728,9 @@ class MainWindow(QtWidgets.QMainWindow):
             for c, wd in enumerate(f.get("laufliste_spalten", [])[:self.run_tree.columnCount()]):
                 if wd > 0:
                     self.run_tree.setColumnWidth(c, wd)
-            key = f.get("seite") if f.get("seite") in self.seiten else self.alte_seite(f)
-            self.show_page(self.seiten.get(key, self.seiten["messen"]))
+            alle = {**self.seiten, **self.unterseiten}
+            key = f.get("seite") if f.get("seite") in alle else self.alte_seite(f)
+            self.show_page(alle.get(key, self.seiten["messen"]))
             return bool(f.get("geometrie")) and self.restoreGeometry(ba(f["geometrie"]))
         except (TypeError, ValueError, AttributeError):
             return False
