@@ -32,6 +32,7 @@ from .basis import (LAMBDA_GRUND, MAX_PLUGS, PLUG_TYPE_TEXT, PLUG_TYPES, ZANGE_K
                     NetState, ZangeStatus, main_zange, net_commands)
 from .kv_dialog import KvDialog
 from .plugs import NO_FALLBACK, PlugConfig, PlugManager, start_demo_plugs
+from .umbruch import UmbruchLayout
 
 
 
@@ -191,9 +192,8 @@ class WerteFormular(QtWidgets.QWidget):
         self.felder: Dict[str, QtWidgets.QWidget] = {}
         self.arten: Dict[str, tuple] = {}
         self.gelesen: Dict[str, str] = {}
-        lay = QtWidgets.QHBoxLayout(self)
+        lay = UmbruchLayout(self, abstand=28, zeilenabstand=12)   # Spalten; schmal untereinander
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(28)
         for titel, felder in gruppen:
             col = QtWidgets.QVBoxLayout()
             col.setSpacing(6)                      # sonst erben Spalte und Formular die 28 px der Zeile
@@ -211,7 +211,7 @@ class WerteFormular(QtWidgets.QWidget):
                 self.arten[key] = art
             col.addLayout(form)
             col.addStretch(1)
-            lay.addLayout(col)
+            lay.add(col)
         lay.addStretch(1)
 
     @staticmethod
@@ -333,13 +333,13 @@ class HardwarePage(QtWidgets.QScrollArea):
         self.box_geraet = self._build_geraet()
         self.box_net = self._build_net()
         self.box_lambda, self.box_plugs = self._build_lambda(), self._build_plugs()
-        mitte = QtWidgets.QHBoxLayout()
+        mitte = UmbruchLayout(abstand=root.spacing(), zeilenabstand=root.spacing())   # schmal: Tests darunter
         links = QtWidgets.QVBoxLayout()
         links.addWidget(self.box_zange, 1)
         links.addWidget(self.box_log)
-        mitte.addLayout(links, 10)
-        mitte.addWidget(self.box_tasten, 8)
-        mitte.addWidget(self.box_tests, 10)
+        mitte.add(links, 10)
+        mitte.add(self.box_tasten, 8)
+        mitte.add(self.box_tests, 10)
         root.addLayout(mitte, 1)
         root.addWidget(self.box_geraet)
         mode = settings.get("steckdosen_weg", "direkt")
@@ -422,13 +422,13 @@ class HardwarePage(QtWidgets.QScrollArea):
             row.addWidget(b, 1)
         lay.addLayout(row)
         lay.addWidget(ew.abschnitt("per USB an der Zange"))
-        row = QtWidgets.QHBoxLayout()
+        row = UmbruchLayout(abstand=lay.spacing(), zeilenabstand=lay.spacing())   # schmal: untereinander
         self.b_log = QtWidgets.QPushButton("Log auslesen … (als Dauermessung)")
         self.b_log.setToolTip("Zange per USB: Log auslesen und als Dauermessung (und .pyst) speichern")
         self.b_log_csv = QtWidgets.QPushButton("Log herunterladen … (CSV + Bericht)")
         self.b_log_csv.setToolTip("Zange per USB: ganzes Log als CSV speichern, dazu ein Bericht mit allen Starts")
-        row.addWidget(self.b_log, 1)
-        row.addWidget(self.b_log_csv, 1)
+        row.add(self.b_log, 1)
+        row.add(self.b_log_csv, 1)
         lay.addLayout(row)
         warn = QtWidgets.QLabel("⚠ " + ZANGE_USB_WARNUNG.replace("\n", " "))
         warn.setWordWrap(True)

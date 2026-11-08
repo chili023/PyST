@@ -16,6 +16,7 @@ from . import theme
 from . import pruef
 from .bg import Bg
 from .pruef import Check
+from .umbruch import UmbruchLayout
 
 def farbe(ergebnis) -> str:
     """Schriftfarbe eines Pruefergebnisses im aktiven Thema."""
@@ -80,9 +81,9 @@ class PruefPage(QtWidgets.QWidget):
         self.b_pair.setVisible(False)                   # Koppeln steht unter Zange › Kopplung
         self.b_log.setVisible(bereich == ZANGE)
         self.b_tasten.setVisible(bereich == ZANGE)
-        tools = QtWidgets.QHBoxLayout()
-        tools.addWidget(self._build_funken())
-        tools.addWidget(self._build_blitz(), 1)
+        tools = UmbruchLayout(abstand=root.spacing(), zeilenabstand=root.spacing())   # schmal: untereinander
+        tools.add(self._build_funken())
+        tools.add(self._build_blitz(), 1)
         root.addLayout(tools)
         self.funken_box.setVisible(bereich == ZANGE)
         self.tree = QtWidgets.QTreeWidget()

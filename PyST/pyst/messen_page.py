@@ -37,6 +37,7 @@ from .kacheln import GROSS, KLEIN, Kanal, SeitenLeiste, WertKachel, farb_icon, s
 from .plots import EXTRA_PREFIX, DynoPlot, fmt_value, run_color
 from .runner import ACTIVE, COAST, DONE, RUN, WAIT
 from .statusleiste import StatusFeld
+from .umbruch import UmbruchLayout
 
 LIVE_KEY = "live"                          # Schluessel der laufenden Messung im Diagramm
 START_NACHFRAGE = "start_nachfrage_setup"  # Einstellung (bool, Standard True), Schalter unter Rolle/Lauf
@@ -392,7 +393,9 @@ class SetupZeile(QtWidgets.QFrame):
     def __init__(self):
         super().__init__()
         self.setObjectName("setupzeile")
-        self.setFixedHeight(self.HOEHE)
+        # eine Zeile ist HOEHE hoch; bei schmalem Fenster bricht die Zeile um (Gruppen untereinander)
+        self.setMinimumHeight(self.HOEHE)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
         self.sid: Optional[int] = None
         self.name = ""
         self.basis: Dict[str, Any] = {}
@@ -402,11 +405,10 @@ class SetupZeile(QtWidgets.QFrame):
         self.fahrzeug = ""
         self.gemisch = ""
         self._geladen = False
-        lay = QtWidgets.QHBoxLayout(self)
+        lay = UmbruchLayout(self, abstand=6, zeilenabstand=6)
         lay.setContentsMargins(10, 4, 10, 4)
-        lay.setSpacing(6)
         self.titel = QtWidgets.QLabel("SETUP-WERTE")
-        lay.addWidget(self.titel)
+        lay.add(self.titel)
         lay.addSpacing(4)
         self.titel_knoepfe: List[QtWidgets.QToolButton] = []
         self.edits: List[QtWidgets.QLineEdit] = []
@@ -425,21 +427,20 @@ class SetupZeile(QtWidgets.QFrame):
             e.textEdited.connect(lambda _t, i=i: self._editiert(i))
             v = QtWidgets.QLabel("")
             v.hide()
-            lay.addWidget(b)
-            lay.addWidget(e)
-            lay.addWidget(v)
+            lay.add_gruppe(b, e, v)                    # Feld, Wert und „vorher“ bleiben beim Umbruch zusammen
             lay.addSpacing(10)
             self.titel_knoepfe.append(b)
             self.edits.append(e)
             self.vorher.append(v)
         lay.addStretch(1)
         self.ruhe = QtWidgets.QLabel("")
-        lay.addWidget(self.ruhe)
+        lay.add(self.ruhe)
         self.marke = QtWidgets.QLabel("")
         self.marke.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
         self.marke.setMinimumWidth(160)
         self.marke.installEventFilter(self)
-        lay.addWidget(self.marke, 3)
+        aktion = lay.neue_gruppe()                     # Marke und Knoepfe brechen gemeinsam um
+        lay.add(self.marke, 3, gruppe=aktion)
         self.b_neu = QtWidgets.QPushButton("Als neues Setup speichern …")
         theme.rolle(self.b_neu, "primaer")
         self.b_neu.setToolTip("Neues Setup aus dem gewählten und den geänderten Werten anlegen")
@@ -447,7 +448,7 @@ class SetupZeile(QtWidgets.QFrame):
         self.b_lauf.setToolTip("Setup bleibt, die Werte werden nur beim Lauf gespeichert")
         self.b_weg = QtWidgets.QPushButton("Verwerfen")
         for b in (self.b_neu, self.b_lauf, self.b_weg):
-            lay.addWidget(b)
+            lay.add(b, gruppe=aktion)
         self.b_neu.clicked.connect(self.neu_speichern.emit)
         self.b_lauf.clicked.connect(lambda: self.set_nur_lauf(True))
         self.b_weg.clicked.connect(self.verwerfen)
@@ -744,6 +745,8 @@ class CursorZeile(QtWidgets.QFrame):
     """Schmale Zeile „▸ Werte am Cursor …“ unter dem Diagramm; Klick klappt die Tabelle auf. Rechts der
     Ergebnis-/Hinweistext."""
     HINWEIS = "Maus ins Diagramm – Werte aller sichtbaren Läufe erscheinen hier (Klick: Tabelle)"
+    HINWEIS_KURZ = "Maus ins Diagramm – Werte am Cursor (Klick: Tabelle)"
+    TRENN = " &nbsp;·&nbsp; "
 
     def __init__(self):
         super().__init__()
@@ -761,6 +764,7 @@ class CursorZeile(QtWidgets.QFrame):
         self.werte = QtWidgets.QLabel("")
         self.werte.setTextFormat(QtCore.Qt.RichText)
         self.werte.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        self.werte.installEventFilter(self)
         lay.addWidget(self.werte, 3)
         self.spalten = QtWidgets.QToolButton()
         self.spalten.setText("Spalten …")
@@ -788,12 +792,34 @@ class CursorZeile(QtWidgets.QFrame):
         self.spalten.setVisible(auf)
 
     def set_werte(self, html: str):
+        """Werte am Cursor („n … · Lauf 1 … · Lauf 2 …“, Teile mit TRENN) oder leer = Hinweis. Bei wenig Platz
+        fallen hintere Laeufe ganz weg („· …“), die Tabelle (Klick) zeigt alle."""
         self._html = html or ""
         T = theme.tokens()
+        platz = self.werte.width()
         if self._html:
-            self.werte.setText(f"<span style='color:{T['text']}'>{self._html}</span>")
+            teile = self._html.split(self.TRENN)
+            html = self._html
+            for n in range(len(teile), 0, -1):
+                html = self.TRENN.join(teile[:n]) + ("" if n == len(teile) else self.TRENN + "…")
+                if n == 1 or self._breite(html) <= platz:
+                    break
+            self.werte.setText(f"<span style='color:{T['text']}'>{html}</span>")
         else:
-            self.werte.setText(f"<span style='color:{T['text2']}'>{self.HINWEIS}</span>")
+            text = self.HINWEIS if self._breite(self.HINWEIS) <= platz else self.HINWEIS_KURZ
+            self.werte.setText(f"<span style='color:{T['text2']}'>{text}</span>")
+
+    def _breite(self, html: str) -> float:
+        doc = QtGui.QTextDocument()
+        doc.setDocumentMargin(0)
+        doc.setDefaultFont(self.werte.font())
+        doc.setHtml(html)
+        return doc.idealWidth()
+
+    def eventFilter(self, obj, ev):
+        if obj is self.werte and ev.type() == QtCore.QEvent.Resize and ev.size().width() != ev.oldSize().width():
+            self.set_werte(self._html)
+        return super().eventFilter(obj, ev)
 
     def mousePressEvent(self, ev):
         if ev.button() == QtCore.Qt.LeftButton:
@@ -931,14 +957,14 @@ class MessenMixin:
         lay.setSpacing(5)
 
         # ---- Kopfzeile
-        kopf = QtWidgets.QHBoxLayout()
-        kopf.setSpacing(6)
+        kopf = UmbruchLayout(abstand=6)
         self.vehicle_combo = QtWidgets.QComboBox()
         self.setup_combo = QtWidgets.QComboBox()
-        # Breiten: bei 1366 px passt alles knapp, breitere Fenster geben Setup, Notiz und Zustand mehr Platz
-        self.vehicle_combo.setMinimumWidth(150)
+        # Breiten: ab 1280 px passt alles in eine Zeile, breitere Fenster geben Setup, Notiz und Zustand mehr
+        # Platz; schmaler bricht die Zeile um (Laufzustand und Knoepfe in die zweite Zeile)
+        self.vehicle_combo.setMinimumWidth(120)
         self.vehicle_combo.setMaximumWidth(260)
-        self.setup_combo.setMinimumWidth(200)
+        self.setup_combo.setMinimumWidth(170)
         self.setup_combo.setMaximumWidth(340)              # Name + „✎ geändert“
         self.run_note = QtWidgets.QLineEdit()
         self.run_note.setPlaceholderText("Notiz zu diesem Lauf (z.B. Änderung gegenüber vorher)")
@@ -946,24 +972,24 @@ class MessenMixin:
         self.autosave = QtWidgets.QCheckBox("Auto-Speichern")
         self.autosave.setChecked(self.settings.get("autosave", True))
         for label, wdg in (("Fahrzeug", self.vehicle_combo), ("Setup", self.setup_combo)):
-            kopf.addWidget(QtWidgets.QLabel(label))
-            kopf.addWidget(wdg, 1 if wdg is self.vehicle_combo else 2)
-        kopf.addWidget(self.run_note, 1)
-        kopf.addWidget(self.autosave)
+            kopf.add_gruppe(QtWidgets.QLabel(label), wdg, stretch={wdg: 1 if wdg is self.vehicle_combo else 2})
+        kopf.add(self.run_note, 1)
+        kopf.add(self.autosave)
         kopf.addSpacing(6)
+        rechts = kopf.neue_gruppe()                        # Laufzustand + Knoepfe bleiben zusammen
         self.zustand = StatusFeld("", hoehe=36, schrift_px=15)
         self.zustand.setMinimumWidth(190)
         self.zustand.setMaximumWidth(300)
         self.zustand.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         self.status = self.zustand                 # frueher die grosse Statuszeile (text())
-        kopf.addWidget(self.zustand, 3)
+        kopf.add(self.zustand, 3, breite=260, gruppe=rechts)     # bei Platzmangel nicht zuerst auf 190
         self.connect_main = QtWidgets.QPushButton("Verbinden")
         self.start_btn = QtWidgets.QPushButton("START  (F1)")
         self.abort_btn = QtWidgets.QPushButton("Abbrechen  (Esc)")
         for b, breite in ((self.connect_main, 100), (self.start_btn, 130), (self.abort_btn, 130)):
             b.setFixedHeight(36)
             b.setMinimumWidth(breite)
-            kopf.addWidget(b)
+            kopf.add(b, gruppe=rechts)
         self.start_btn.setStyleSheet("QPushButton { font-size: 16px; font-weight: 800; }")
         lay.addLayout(kopf)
 

@@ -25,6 +25,7 @@ from . import theme
 from .kv_dialog import KvDialog
 from .physics import DynoParams
 from .recorder import Recorder
+from .umbruch import UmbruchLayout
 
 # Kanaele des Linienschreibers: Name -> (Einheit, Farbe)
 LIVE_CHANNELS = {
@@ -249,7 +250,7 @@ class OsziPage(QtWidgets.QWidget):
 
     # ------------------------------------------------------------------ Aufbau
     def _build_top(self):
-        top = QtWidgets.QHBoxLayout()
+        top = UmbruchLayout(abstand=6)                     # bricht bei schmalem Fenster in Gruppen um
         self.rec_btn = QtWidgets.QPushButton("●  Dauermessung starten")
         self.rec_btn.setCheckable(True)
         self.rec_btn.setFixedHeight(32)
@@ -258,28 +259,26 @@ class OsziPage(QtWidgets.QWidget):
             "QPushButton { font-weight: 700; } QPushButton:checked { background: %s; color: %s; border-color: %s; }"
             % (theme.farbe("err_bg"), theme.farbe("err_text"), theme.farbe("err_bg"))))
         self.rec_btn.toggled.connect(self.toggle_recording)
-        top.addWidget(self.rec_btn)
         self.rec_label = QtWidgets.QLabel("keine Aufzeichnung")
         self.rec_label.setMinimumWidth(260)
-        top.addWidget(self.rec_label)
+        top.add_gruppe(self.rec_btn, self.rec_label)
         self.marker_edit = QtWidgets.QLineEdit()
         self.marker_edit.setPlaceholderText("Marker-Text, z.B. „Kabel bewegt“")
+        self.marker_edit.setMinimumWidth(160)
         self.marker_edit.returnPressed.connect(self.add_marker)
-        top.addWidget(self.marker_edit, 1)
         self.marker_btn = QtWidgets.QPushButton("Marker setzen (F2)")
         self.marker_btn.clicked.connect(self.add_marker)
-        top.addWidget(self.marker_btn)
+        top.add_gruppe(self.marker_edit, self.marker_btn, stretch={self.marker_edit: 1})
         self.mode_d = QtWidgets.QCheckBox("Diagnose-Telegramm (Modus D)")
         self.mode_d.setToolTip("Gerät sendet zusätzlich Flanken je Telegramm, kürzeste/längste Periode, verworfene "
                                "Flanken und Flags (nur PST-Diag 1). Normale Läufe sind davon unabhängig.")
         self.mode_d.setChecked(True)
         self.mode_d.toggled.connect(self._mode_changed)
-        top.addWidget(self.mode_d)
+        top.add(self.mode_d)
         self.dev_label = QtWidgets.QLabel("")
-        top.addWidget(self.dev_label)
         self.dev_btn = QtWidgets.QPushButton("Geräte-Einstellungen …")
         self.dev_btn.clicked.connect(self.device_settings)
-        top.addWidget(self.dev_btn)
+        top.add_gruppe(self.dev_label, self.dev_btn)
         QtGui.QShortcut(QtGui.QKeySequence("F2"), self, activated=self.add_marker,
                         context=QtCore.Qt.WidgetWithChildrenShortcut)
         return top
@@ -312,11 +311,13 @@ class OsziPage(QtWidgets.QWidget):
         bar.addWidget(self.view_label, 1)
         lay.addLayout(bar)
         self.glw = pg.GraphicsLayoutWidget()
+        self.glw.setMinimumHeight(170)                   # zwei Spuren lesbar, auch bei 800 px Hoehe
         self.glw.setBackground(theme.farbe("plot"))
         theme.diagramm(self.glw, self._thema)
         lay.addWidget(self.glw, 1)
         hint = QtWidgets.QLabel("Mausrad = Zoom · ziehen = verschieben (hält die Anzeige an, „Live“ = weiter) · "
                                 "Ereignis doppelklicken = Stelle anzeigen")
+        hint.setWordWrap(True)
         theme.rolle(hint, "neben")
         lay.addWidget(hint)
         return w
@@ -427,7 +428,7 @@ class OsziPage(QtWidgets.QWidget):
     def _build_burst(self):
         w = QtWidgets.QGroupBox("Flanken-Ansicht (Burst, Geräte mit PST-Diag 1)")
         lay = QtWidgets.QVBoxLayout(w)
-        bar = QtWidgets.QHBoxLayout()
+        bar = UmbruchLayout(abstand=6)                     # bricht bei schmalem Fenster um
         self.b_ch = QtWidgets.QComboBox()
         self.b_ch.addItem("Zündung", "I")
         self.b_ch.addItem("Rolle", "R")
@@ -449,24 +450,23 @@ class OsziPage(QtWidgets.QWidget):
         self.b_pre.setValue(100)
         for label, x in (("Kanal", self.b_ch), ("Anzahl", self.b_n), ("Flanke", self.b_edge),
                          ("Trigger", self.b_trig), ("Vorlauf", self.b_pre)):
-            bar.addWidget(QtWidgets.QLabel(label))
-            bar.addWidget(x)
+            bar.add_gruppe(QtWidgets.QLabel(label), x)
         self.b_go = QtWidgets.QPushButton("Burst anfordern")
         self.b_go.clicked.connect(self.request_burst)
         self.b_stop = QtWidgets.QPushButton("Abbrechen")
         self.b_stop.clicked.connect(self.stop_burst)
-        bar.addWidget(self.b_go)
-        bar.addWidget(self.b_stop)
         self.b_list = QtWidgets.QComboBox()
         self.b_list.setMinimumWidth(160)
         self.b_list.currentIndexChanged.connect(lambda i: self.show_burst(self.bursts[i]) if 0 <= i < len(self.bursts)
                                                 else None)
-        bar.addWidget(self.b_list)
+        bar.add_gruppe(self.b_go, self.b_stop, self.b_list)
         bar.addStretch(1)
         lay.addLayout(bar)
         self.b_state = QtWidgets.QLabel("")
+        self.b_state.setWordWrap(True)
         lay.addWidget(self.b_state)
         self.bglw = pg.GraphicsLayoutWidget()
+        self.bglw.setMinimumHeight(150)                  # Pegel und Periode lesbar, auch bei 800 px Hoehe
         self.bglw.setBackground(theme.farbe("plot"))
         lay.addWidget(self.bglw, 1)
         self.p_logic = self.bglw.addPlot(row=0, col=0)

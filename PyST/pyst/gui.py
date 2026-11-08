@@ -25,6 +25,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import farben
 from . import theme
 from .statusleiste import Eingang, Statusleiste, zustaende
+from .umbruch import UmbruchLayout
 from . import __version__, ausrollen, htmlexport, physics, report, storage, tasten
 from .channels import fault_text, lambda_from_afr, run_channels, run_faults
 from .db import SETUP_SUMMARY_KEYS, VEHICLE_FIELDS, Database, base_dir, field_label
@@ -163,11 +164,16 @@ class SettingsPage(QtWidgets.QScrollArea):
         self.setWidgetResizable(True)
         inner = QtWidgets.QWidget()
         self.setWidget(inner)
-        # oben Prüfstand | Lauf | Filter | Klima, unten Verluste (Werte) | Ausrollversuch (KalibPage, Hauptfenster)
-        grid = QtWidgets.QGridLayout(inner)
+        # oben Prüfstand | Lauf | Filter | Klima (schmales Fenster: 2 x 2), unten Verluste (Werte) | Ausrollversuch
+        # (KalibPage, Hauptfenster)
+        root = QtWidgets.QVBoxLayout(inner)
+        oben = UmbruchLayout(abstand=root.spacing(), zeilenabstand=root.spacing())
+        root.addLayout(oben)
+        unten = QtWidgets.QHBoxLayout()
+        root.addLayout(unten, 1)
         self.verluste_lay = QtWidgets.QVBoxLayout()
-        grid.addLayout(self.verluste_lay, 1, 1, 1, 3)
-        grid.setRowStretch(1, 1)
+        paare = {"Prüfstand": oben.neue_gruppe(), "Filter": oben.neue_gruppe()}
+        paare["Lauf"], paare["Klima"] = paare["Prüfstand"], paare["Filter"]
         self._build_verbindung(settings)
 
         self.fields: Dict[str, QtWidgets.QDoubleSpinBox] = {}
@@ -179,13 +185,15 @@ class SettingsPage(QtWidgets.QScrollArea):
         if defaults.dq_s <= 0:
             defaults.dq_s = settings.get("dq_s", FILTER_S_DEFAULT[1])
         boxes: Dict[str, QtWidgets.QFormLayout] = {}
-        for group, pos in (("Prüfstand", (0, 0)), ("Lauf", (0, 1)), ("Filter", (0, 2)), ("Klima", (0, 3)),
-                           ("Verluste", (1, 0))):
+        for group in ("Prüfstand", "Lauf", "Filter", "Klima", "Verluste"):
             box = QtWidgets.QGroupBox("Verluste (Werte für die Rechnung)" if group == "Verluste" else group)
             boxes[group] = QtWidgets.QFormLayout(box)
-            grid.addWidget(box, *pos, QtCore.Qt.AlignTop if group == "Verluste" else QtCore.Qt.Alignment())
             if group == "Verluste":
+                unten.addWidget(box, 1, QtCore.Qt.AlignTop)
+                unten.addLayout(self.verluste_lay, 3)
                 self.verluste_box = box
+            else:
+                oben.add(box, 1, gruppe=paare[group])
         self.filter_form = boxes["Filter"]
         self.filter_mode = QtWidgets.QComboBox()
         self.filter_mode.addItems(["Sekunden", "Messpunkte (wie LabVIEW)"])
@@ -245,8 +253,6 @@ class SettingsPage(QtWidgets.QScrollArea):
         klima_note.setWordWrap(True)
         theme.rolle(klima_note, "neben")
         fl.addRow(klima_note)
-        for c in range(4):
-            grid.setColumnStretch(c, 1)
 
         # Gemisch als λ / AFR: steht im Unterreiter Lambda
         self.box_gemisch = QtWidgets.QGroupBox("Anzeige")
@@ -1992,6 +1998,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         t.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         t.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         t.setMinimumHeight(t.widget().sizeHint().height() + 40)
+        t.setMinimumWidth(t.widget().minimumSizeHint().width())     # ohne Rollbalken nie schmaler als der Inhalt
         hw.tasten_lay.addWidget(t)
         self.page_pruef_zange = PruefPage(self.page_pruef.get_link, hw.pair, self.page_pruef.aufnahme, bereich=ZANGE)
         hw.tests_lay.addWidget(self.page_pruef_zange)

@@ -147,6 +147,7 @@ class LaufLeiste(QtWidgets.QWidget):
         kopf.setSpacing(6)
         self.titel = theme.rolle(QtWidgets.QLabel("ANGEZEIGTE LÄUFE"), "abschnitt")
         self.info_label = theme.rolle(QtWidgets.QLabel(""), "neben")
+        self.info_label.setWordWrap(True)                 # schmales Fenster: zweizeilig statt breiter
         kopf.addWidget(self.titel)
         kopf.addWidget(self.info_label, 1)
         self.klapp_btn = QtWidgets.QPushButton("")
@@ -165,7 +166,10 @@ class LaufLeiste(QtWidgets.QWidget):
         self.scroll = QtWidgets.QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
-        self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        # schmales Fenster: waagerecht rollen (Notiz, Setup …, ✕ bleiben erreichbar), die Hoehe waechst um den Balken
+        self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        self._scroll_h = 0
+        self.scroll.installEventFilter(self)
         rl.addWidget(self.scroll)
         self.chips = QtWidgets.QWidget()
         self.chips_lay = QtWidgets.QHBoxLayout(self.chips)
@@ -353,9 +357,28 @@ class LaufLeiste(QtWidgets.QWidget):
             old.deleteLater()
         self.scroll.setWidget(inner)
         zeilen = min(len(self.eintraege), SICHTBARE_ZEILEN)
-        self.scroll.setFixedHeight(22 + zeilen * ZEILE_PX + 4)
+        self._scroll_h = 22 + zeilen * ZEILE_PX + 4
+        self._scroll_hoehe()
         self.scroll.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded if len(self.eintraege) > SICHTBARE_ZEILEN
                                                else QtCore.Qt.ScrollBarAlwaysOff)
+
+    def _scroll_hoehe(self):
+        """Hoehe des Rollbereichs: Zeilen, dazu der waagerechte Rollbalken, wenn die Tabelle breiter ist."""
+        inner = self.scroll.widget()
+        if inner is None or self._scroll_h <= 0:
+            return
+        frei = self.scroll.maximumViewportSize().width()
+        if len(self.eintraege) > SICHTBARE_ZEILEN:
+            frei -= self.scroll.verticalScrollBar().sizeHint().width()
+        breit = inner.minimumSizeHint().width() > frei
+        h = self._scroll_h + (self.scroll.horizontalScrollBar().sizeHint().height() if breit else 0)
+        if (self.scroll.minimumHeight(), self.scroll.maximumHeight()) != (h, h):
+            self.scroll.setFixedHeight(h)
+
+    def eventFilter(self, obj, ev):
+        if obj is self.scroll and ev.type() in (QtCore.QEvent.Resize, QtCore.QEvent.Show):
+            self._scroll_hoehe()
+        return super().eventFilter(obj, ev)
 
     def _farbfeld(self, e: Eintrag) -> QtWidgets.QLabel:
         c = theme.laufarbe(e.farbe)

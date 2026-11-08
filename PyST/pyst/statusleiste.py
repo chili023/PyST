@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import theme
 
@@ -198,6 +198,19 @@ def anzeige(zust: Dict[str, Tuple[str, str]], thema: Optional[str] = None) -> Li
 
 
 # =============================================================================================== Widgets
+def kurz_text(text: str, fm: QtGui.QFontMetrics, platz: int) -> str:
+    """Text fuer platz Pixel: passt er nicht, fallen hintere Teile „ · …“ ganz weg (kein halber Wert), erst zuletzt
+    wird mit „…“ gekuerzt. Der volle Text steht im Tooltip."""
+    if platz <= 0 or fm.horizontalAdvance(text) <= platz:
+        return text
+    teile = text.split(" · ")
+    for n in range(len(teile) - 1, 0, -1):
+        t = " · ".join(teile[:n]) + " …"
+        if fm.horizontalAdvance(t) <= platz:
+            return t
+    return fm.elidedText(teile[0], QtCore.Qt.ElideRight, platz)
+
+
 class StatusFeld(QtWidgets.QFrame):
     """Farbige Flaeche mit Symbol, Name (fett) und Text. Auch als Laufzustand neben START verwendbar:
     StatusFeld(name="") und set_zustand("warn", "GAS WEG")."""
@@ -215,6 +228,8 @@ class StatusFeld(QtWidgets.QFrame):
         self.text_label = QtWidgets.QLabel("")
         self.text_label.setTextFormat(QtCore.Qt.PlainText)
         self.text_label.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        self.text_label.installEventFilter(self)
+        self._voll = ""
         lay.addWidget(self.symbol)
         lay.addWidget(self.name_label)
         lay.addWidget(self.text_label, 1)
@@ -225,15 +240,27 @@ class StatusFeld(QtWidgets.QFrame):
 
     def set_zustand(self, stufe: str, text: str):
         stufe = stufe if stufe in theme.STUFEN else theme.AUS
-        if (stufe, text) == (self.stufe, self.text_label.text()) and self.styleSheet():
+        if (stufe, text) == (self.stufe, self._voll) and self.styleSheet():
             return
         self.stufe = stufe
-        self.text_label.setText(text)
+        self._voll = text
         self.setToolTip(f"{self.name}: {text}" if self.name else text)
         self._stil()
 
     def text(self) -> str:
-        return self.text_label.text()
+        """Voller Text (angezeigt wird er bei wenig Platz gekuerzt, siehe kurz_text)."""
+        return self._voll
+
+    def _kuerzen(self):
+        f = QtGui.QFont(self.text_label.font())
+        f.setPixelSize(self.schrift_px)
+        f.setWeight(QtGui.QFont.DemiBold)
+        self.text_label.setText(kurz_text(self._voll, QtGui.QFontMetrics(f), self.text_label.width()))
+
+    def eventFilter(self, obj, ev):
+        if obj is self.text_label and ev.type() == QtCore.QEvent.Resize:
+            self._kuerzen()
+        return super().eventFilter(obj, ev)
 
     def _stil(self):
         bg, fg, sym = theme.status_farben(self.stufe)
@@ -244,6 +271,7 @@ class StatusFeld(QtWidgets.QFrame):
         self.symbol.setStyleSheet(f"font-size: {px + 6}px; font-weight: 800;")
         self.name_label.setStyleSheet("font-weight: 800;")
         self.text_label.setStyleSheet("font-weight: 600;")
+        self._kuerzen()
 
 
 class ThemaUmschalter(QtWidgets.QWidget):

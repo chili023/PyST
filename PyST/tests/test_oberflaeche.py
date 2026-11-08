@@ -447,6 +447,134 @@ class Hauptfenster(unittest.TestCase):
             close_window(w, APP)
             theme.manager().setze(theme.TAG, speichern=False)
 
+    def test_passt_auf_macbook(self):
+        """MacBook (1280 Punkte breit, rund 760 nutzbar hoch): Fenster und jeder Reiter/Unterreiter brauchen hoechstens
+        1240 px Breite – auch mit geaenderten Setup-Werten (Marke + Knoepfe in der Setup-Zeile) und Laeufen in der
+        Auswertung; bei 1280 x 760 wird das Fenster nicht groesser erzwungen."""
+        from conftest import close_window
+        from pyst import gui
+        w = gui.MainWindow()
+        try:
+            vid = w.db.save_vehicle({"hersteller": "Aprilia", "modell": "RS 125", "gemisch": "Vergaser"})
+            sid = w.db.save_setup(vid, "Serie, HD 135, Auspuff Arrow, Luftfilter offen",
+                                  {"hauptduese": "135", "clip": "3", "zzp": "18"})
+            data = os.path.join(os.path.dirname(__file__), "data")
+            ids = [w.db.import_file(os.path.join(data, f), vid, sid)
+                   for f in sorted(os.listdir(data)) if f.endswith(".xml")][:4]
+            w._reload_vehicle_combo(vid, sid)
+            w._reload_runs()
+            w.resize(1280, 760)
+            w.show()
+            w.setup_zeile.set_wert("hauptduese", "138")
+            w.setup_zeile.set_wert("clip", "4")
+            w.viewer.add_runs(ids)
+            for i in range(w.tabs.count()):
+                w.tabs.setCurrentIndex(i)
+                pump(0.05)
+            for j in range(w.settings_tabs.count()):
+                w.settings_tabs.setCurrentIndex(j)
+                pump(0.05)
+            pump(0.2)
+            ms = w.minimumSizeHint()
+            self.assertLessEqual(ms.width(), 1240)
+            self.assertLessEqual(ms.height(), 760)
+            for t in (w.tabs, w.settings_tabs):
+                for i in range(t.count()):
+                    self.assertLessEqual(t.widget(i).minimumSizeHint().width(), 1240, t.tabText(i))
+            self.assertEqual((w.width(), w.height()), (1280, 760))
+        finally:
+            close_window(w, APP)
+
+
+# ============================================================================================== Umbruch
+class Umbruch(unittest.TestCase):
+    """UmbruchLayout: breit wie ein QHBoxLayout, schmal in Gruppen umgebrochen; Statusfeld kuerzt ganze Teile."""
+
+    def _zeile(self):
+        from pyst.umbruch import UmbruchLayout
+        w = QtWidgets.QWidget()
+        lay = UmbruchLayout(w, abstand=6, zeilenabstand=4)
+        lay.setContentsMargins(0, 0, 0, 0)
+        teile = {}
+        for name in ("Fahrzeug", "Setup"):
+            lab, cb = QtWidgets.QLabel(name), QtWidgets.QComboBox()
+            cb.setMinimumWidth(150)
+            lay.add_gruppe(lab, cb, stretch={cb: 1})
+            teile[name] = (lab, cb)
+        lay.addSpacing(10)
+        notiz = QtWidgets.QLineEdit()
+        notiz.setMinimumWidth(100)
+        lay.add(notiz, 2)
+        knoepfe = [QtWidgets.QPushButton(t) for t in ("Verbinden", "START  (F1)", "Abbrechen  (Esc)")]
+        lay.add_gruppe(*knoepfe)
+        return w, lay, teile, notiz, knoepfe
+
+    def test_breit_eine_zeile_wie_hbox(self):
+        w, lay, teile, notiz, knoepfe = self._zeile()
+        ref = QtWidgets.QWidget()
+        hb = QtWidgets.QHBoxLayout(ref)
+        hb.setContentsMargins(0, 0, 0, 0)
+        hb.setSpacing(6)
+        r_teile = []
+        for name in ("Fahrzeug", "Setup"):
+            lab, cb = QtWidgets.QLabel(name), QtWidgets.QComboBox()
+            cb.setMinimumWidth(150)
+            hb.addWidget(lab)
+            hb.addWidget(cb, 1)
+            r_teile.append((lab, cb))
+        hb.addSpacing(10)
+        r_notiz = QtWidgets.QLineEdit()
+        r_notiz.setMinimumWidth(100)
+        hb.addWidget(r_notiz, 2)
+        r_knoepfe = [QtWidgets.QPushButton(t) for t in ("Verbinden", "START  (F1)", "Abbrechen  (Esc)")]
+        for b in r_knoepfe:
+            hb.addWidget(b)
+        for x in (w, ref):
+            x.resize(1600, 40)
+            x.show()
+        pump(0.05)
+        paare = list(zip([*teile["Fahrzeug"], *teile["Setup"], notiz, *knoepfe],
+                         [*r_teile[0], *r_teile[1], r_notiz, *r_knoepfe]))
+        for a, b in paare:                                  # bis auf Rundung (Qt rechnet in Festkomma)
+            self.assertLessEqual(abs(a.geometry().x() - b.geometry().x()), 1, a)
+            self.assertLessEqual(abs(a.geometry().width() - b.geometry().width()), 1, a)
+        self.assertEqual(len({a.geometry().y() for a, _b in paare if isinstance(a, QtWidgets.QPushButton)}), 1)
+        w.close()
+        ref.close()
+
+    def test_schmal_umbrechen_gruppen_zusammen(self):
+        w, lay, teile, notiz, knoepfe = self._zeile()
+        breitest = max(sum(b.minimumSizeHint().width() for b in knoepfe) + 12,
+                       teile["Setup"][0].minimumSizeHint().width() + 150 + 6)
+        self.assertEqual(lay.minimumSize().width(), breitest)
+        w.resize(520, 40)
+        w.show()
+        pump(0.05)
+        hoehe_schmal = lay.heightForWidth(520)
+        self.assertGreater(hoehe_schmal, lay.heightForWidth(1600))
+        for lab, cb in teile.values():                     # Beschriftung und Auswahl in derselben Zeile
+            self.assertEqual(lab.geometry().center().y(), cb.geometry().center().y())
+        ys = {b.geometry().y() for b in knoepfe}
+        self.assertEqual(len(ys), 1)                        # Knopfgruppe bleibt zusammen
+        self.assertGreater(min(ys), teile["Fahrzeug"][1].geometry().y())
+        for x in (*teile["Fahrzeug"], *teile["Setup"], notiz, *knoepfe):
+            self.assertGreaterEqual(x.width(), x.minimumSizeHint().width(), x)
+            self.assertLessEqual(x.geometry().right(), 520)
+        w.close()
+
+    def test_statusfeld_kuerzt_ganze_teile(self):
+        fm = QtGui.QFontMetrics(QtGui.QFont())
+        text = "verbunden USB · FW 0.4.0 · 60 Hz"
+        self.assertEqual(sl.kurz_text(text, fm, 10000), text)
+        platz = fm.horizontalAdvance("verbunden USB · FW 0.4.0 …") + 2
+        self.assertEqual(sl.kurz_text(text, fm, platz), "verbunden USB · FW 0.4.0 …")
+        kurz = sl.kurz_text(text, fm, fm.horizontalAdvance("verbunden") + 2)
+        self.assertTrue(kurz.endswith("…") and fm.horizontalAdvance(kurz) <= fm.horizontalAdvance("verbunden") + 2)
+        f = sl.StatusFeld("PST Basis")
+        f.set_zustand("ok", text)
+        self.assertEqual(f.text(), text)                    # voller Text bleibt abrufbar (Tooltip)
+        self.assertIn(text, f.toolTip())
+
 
 if __name__ == "__main__":
     unittest.main()

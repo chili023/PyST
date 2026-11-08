@@ -37,6 +37,7 @@ from .laufleiste import Eintrag, LaufLeiste, datum_text, reihenfolge, schnellwer
 from .mittelwert_dialog import (BAND_ARTEN, BAND_STANDARD, MittelwertDialog, band_text, fuell_band,
                                 kanaele_aus_mittelwert, zusatz_lesen, zusatz_schreiben)
 from .plots import run_color_basis
+from .umbruch import UmbruchLayout
 
 PALETTE = ["#c62828", "#1f5fbf", "#2e7d32", "#ef6c00", "#6a1b9a", "#00838f", "#ad1457", "#4e342e",
            "#9e9d24", "#37474f", "#d84315", "#0277bd", "#558b2f", "#8e24aa", "#00695c", "#f9a825"]
@@ -138,6 +139,7 @@ class LogViewer(QtWidgets.QWidget):
         self.glw.setBackground(theme.farbe("plot"))
         cl.addWidget(self.glw, 1)
         self.hint = theme.rolle(QtWidgets.QLabel(HINWEIS), "neben")
+        self.hint.setWordWrap(True)
         cl.addWidget(self.hint)
 
         self.seitenleiste = SeitenLeiste("Läufe & Kanäle", self._build_left(), center, breite=400)
@@ -202,9 +204,9 @@ class LogViewer(QtWidgets.QWidget):
         return v
 
     # ------------------------------------------------------------ Kopfzeile
-    def _build_bar(self) -> QtWidgets.QHBoxLayout:
-        bar = QtWidgets.QHBoxLayout()
-        bar.setSpacing(6)
+    def _build_bar(self) -> UmbruchLayout:
+        """Kopfzeile; bei schmalem Fenster bricht sie in Gruppen um (Import/Export in die zweite Zeile)."""
+        bar = UmbruchLayout(abstand=6)
         self.xaxis = QtWidgets.QComboBox()
         for text, kanal in X_ACHSEN:
             self.xaxis.addItem(text, kanal)
@@ -214,20 +216,18 @@ class LogViewer(QtWidgets.QWidget):
         self.panes_spin.setValue(4)
         self.only_seg = QtWidgets.QCheckBox("nur Kurvenbereich")
         for label, w_ in (("X-Achse", self.xaxis), ("Felder", self.panes_spin)):
-            bar.addWidget(QtWidgets.QLabel(label))
-            bar.addWidget(w_)
-        bar.addWidget(self.only_seg)
+            bar.add_gruppe(QtWidgets.QLabel(label), w_)
+        bar.add(self.only_seg)
         bar.addSpacing(16)
-        bar.addWidget(QtWidgets.QLabel("Layout"))
         self.layout_combo = QtWidgets.QComboBox()
-        self.layout_combo.setMinimumWidth(270)
+        self.layout_combo.setMinimumWidth(200)
         self.layout_combo.setToolTip("Gespeicherte Auswerte-Layouts (Felder, Kanäle, X-Achse)")
-        bar.addWidget(self.layout_combo)
         self.layout_save_btn = QtWidgets.QPushButton("Speichern")
         self.layout_save_as_btn = QtWidgets.QPushButton("Speichern unter …")
         self.layout_del_btn = QtWidgets.QPushButton("Löschen")
-        for b in (self.layout_save_btn, self.layout_save_as_btn, self.layout_del_btn):
-            bar.addWidget(b)
+        # Wunschbreite der Layout-Auswahl 270 bei genug Platz
+        bar.add_gruppe(QtWidgets.QLabel("Layout"), self.layout_combo, breite={self.layout_combo: 270})
+        bar.add_gruppe(self.layout_save_btn, self.layout_save_as_btn, self.layout_del_btn)
         bar.addStretch(1)
         # Import und Export (vom Hauptfenster verbunden), mit vollem Text
         self.import_btn = QtWidgets.QPushButton("Importieren …")
@@ -242,9 +242,9 @@ class LogViewer(QtWidgets.QWidget):
         self.csv_btn = QtWidgets.QPushButton("CSV-Export …", self)
         self.csv_btn.hide()
         self.csv_knopf.clicked.connect(self._csv)
-        for b in (self.import_btn, self.pdf_btn, self.csv_knopf):
-            b.setMinimumWidth(max(130, b.sizeHint().width()))
-            bar.addWidget(b)
+        knoepfe = (self.import_btn, self.pdf_btn, self.csv_knopf)
+        # Wunschbreite 130 bei genug Platz, sonst die Textbreite
+        bar.add_gruppe(*knoepfe, breite={b: 130 for b in knoepfe})
         return bar
 
     # ------------------------------------------------------------ Layout

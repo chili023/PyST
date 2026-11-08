@@ -190,6 +190,8 @@ class DualAxisPlot:
         self.pi.getAxis("right").linkToView(self.vb2)
         self.vb2.setXLink(self.pi)
         self.pi.vb.sigResized.connect(self._sync)
+        self.pi.vb.sigResized.connect(self._fit_labels)
+        self._label_shown = None
         for ax in ("left", "right"):
             self.pi.getAxis(ax).setWidth(58)
             self.pi.getAxis(ax).enableAutoSIPrefix(False)
@@ -199,13 +201,38 @@ class DualAxisPlot:
         self.end_labels = True          # False: Beschriftung am oberen/unteren Ende weglassen (dort sitzen Felder)
         self._scales = None
 
-    def set_labels(self, left: str, right: str, left_color: str, right_color: str):
-        """Farben: "#rrggbb" oder ein Token des Themas (z.B. "p_color"), dann folgt die Farbe dem Thema."""
+    def set_labels(self, left, right, left_color: str, right_color: str):
+        """Farben: "#rrggbb" oder ein Token des Themas (z.B. "p_color"), dann folgt die Farbe dem Thema.
+        left/right: Text oder Liste von Texten (laengster zuerst) – gezeigt wird der laengste, der in die Hoehe
+        des Diagramms passt (niedriges Diagramm bei kleinem Fenster: kuerzere Achsbeschriftung statt abgeschnitten)."""
         self._labels = (left, right, left_color, right_color)
+        self._label_shown = None
+        self._fit_labels()
+
+    def _fit_labels(self, *_a):
+        if not getattr(self, "_labels", None):
+            return
+        left, right, left_color, right_color = self._labels
+        hoehe = self.pi.vb.height()
+        f = QtGui.QFont()
+        f.setPixelSize(theme.SCHRIFT_PX)
+        f.setBold(True)
+        fm = QtGui.QFontMetrics(f)
+
+        def wahl(x):
+            kand = [x] if isinstance(x, str) else list(x) or [""]
+            if hoehe <= 0:
+                return kand[0]
+            return next((t for t in kand if fm.horizontalAdvance(t) <= hoehe - 6), kand[-1])
+
+        shown = (wahl(left), wahl(right))
+        if shown == self._label_shown:
+            return
+        self._label_shown = shown
         style = {"font-size": f"{theme.SCHRIFT_PX}px", "font-weight": "700"}
         T = theme.tokens()
-        self.pi.setLabel("left", left, color=T.get(left_color, left_color), **style)
-        self.pi.setLabel("right", right, color=T.get(right_color, right_color), **style)
+        self.pi.setLabel("left", shown[0], color=T.get(left_color, left_color), **style)
+        self.pi.setLabel("right", shown[1], color=T.get(right_color, right_color), **style)
 
     def apply_theme(self, thema: str):
         theme.plotitem_stil(self.pi, thema)
@@ -460,13 +487,24 @@ class DynoPlot(pg.GraphicsLayoutWidget):
         return self.lower_labels.get(key, (key, ""))
 
     def _lower_axis_labels(self):
+        def einheit(unit):
+            return f" [{unit}]" if unit and unit != "λ" else (" λ" if unit else "")
+
         def text(side):
-            parts = []
-            for i, key in enumerate(self.lower[side]):
-                label, unit = self.lower_title(key)
-                mark = LOWER_MARKS[i % MAX_LOWER] + " " if len(self.lower[side]) > 1 else ""
-                parts.append(f"{mark}{label}" + (f" [{unit}]" if unit and unit != "λ" else (" λ" if unit else "")))
-            return "   ".join(parts)
+            """Beschriftungen vom laengsten zum kuerzesten (DualAxisPlot nimmt die laengste, die passt)."""
+            titel = [self.lower_title(key) for key in self.lower[side]]
+            mehrere = len(titel) > 1
+            marke = [LOWER_MARKS[i % MAX_LOWER] + " " if mehrere else "" for i in range(len(titel))]
+            out = ["   ".join(f"{m}{label}{einheit(unit)}" for m, (label, unit) in zip(marke, titel))]
+            einheiten = {unit for _l, unit in titel}
+            if mehrere and len(einheiten) == 1:
+                out.append("   ".join(f"{m}{label}" for m, (label, _u) in zip(marke, titel))
+                           + einheit(next(iter(einheiten))))
+            if mehrere:
+                out.append(" / ".join(label for label, _u in titel))
+            if titel:
+                out.append(titel[0][0] + (" …" if mehrere else ""))
+            return out
         self.bottom.set_labels(text("left"), text("right"), self.LAM_COLOR, self.EGT_COLOR)
         self.bottom.pi.getAxis("left").setStyle(showValues=bool(self.lower["left"]))
         self.bottom.pi.getAxis("right").setStyle(showValues=bool(self.lower["right"]))
