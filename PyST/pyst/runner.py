@@ -3,6 +3,11 @@ Ablauf eines Laufs (von GUI und Kommandozeile gemeinsam genutzt).
 
   BEREIT --start()--> (Klima lesen) --> WARTEN ("GO, Vollgas") --n > n_min--> MESSUNG
   MESSUNG --Verzoegerung oder n >= n_stop--> FERTIG (Auswertung wie LabVIEW)
+
+Ausrollversuch (ausrollen = True): MESSUNG --Laufende--> AUSROLLEN ("Kupplung ziehen, ausrollen lassen"), die
+Aufzeichnung laeuft weiter, bis die Rolle unter n_ende (Motordrehzahl Rolle x i) faellt, die Drehzahl wieder
+steigt, t_max vergeht, keine Telegramme mehr kommen oder end_coast() (Knopf). Dann FERTIG: Lauf wie bisher
+ausgewertet, dazu coast = ausrollen.analyse(...) (Verlustmoment). Ausgeschaltet: Ablauf exakt wie bisher.
 """
 import time
 from dataclasses import dataclass
@@ -10,11 +15,17 @@ from typing import List, Optional
 
 import numpy as np
 
+from . import ausrollen as _ausrollen
 from . import physics
 from .link import DynoLink, Frame
 
 IDLE, WAIT, RUN, DONE, ABORTED = "Bereit", "GO – Vollgas", "Messung", "Fertig", "Abgebrochen"
+COAST = "Ausrollen"
+ACTIVE = (WAIT, RUN, COAST)          # Lauf laeuft (Aufzeichnung, Bedienung gesperrt)
 RUN_TIMEOUT_S = 120.0
+COAST_N_ENDE = 3000.0                # Ausrollen bis Motordrehzahl (Rolle x i) [1/min]
+COAST_T_MAX = 120.0                  # Ausrollen hoechstens [s]
+COAST_STILL_S = 2.0                  # so lange keine Telegramme = Ende der Daten
 
 
 @dataclass
@@ -47,10 +58,22 @@ class RunController:
         self._since_eval = 0
         self._last_eval = 0.0
         self.message = ""
+        # Ausrollversuch
+        self.ausrollen = False
+        self.coast_n_ende = COAST_N_ENDE
+        self.coast_t_max = COAST_T_MAX
+        self.coast_quadratisch = True
+        self.coast: Optional[_ausrollen.AusrollErgebnis] = None
+        self.coast_reason = ""
+        self._coast_t0 = 0.0
+        self._coast_last = 0.0
+        self._coast_min = float("inf")
+        self._coast_hist: List[float] = []
 
     # ---------------------------------------------------------------- Steuerung
     def start(self):
         self.result = self.live_result = None
+        self.coast, self.coast_reason = None, ""
         self.frames = []
         self.basis_events = []
         self.ecu_data = None
@@ -71,14 +94,22 @@ class RunController:
 
     def add_event(self, ev):
         """Ereignis der Basis (basis.BasisEvent) – gehoert zum Lauf, solange er laeuft."""
-        if self.state in (WAIT, RUN):
+        if self.state in ACTIVE:
             self.basis_events.append(ev)
 
     def abort(self):
+        if self.state == COAST:                      # Lauf ist schon fertig: Ausrollen beenden, nichts verwerfen
+            self.end_coast("Ausrollen von Hand beendet")
+            return
         if self.state in (WAIT, RUN):
             self.state = ABORTED
             self.message = "Lauf abgebrochen"
         self.link.stop()
+
+    def end_coast(self, reason: str = "Ausrollen von Hand beendet"):
+        if self.state == COAST:
+            self.coast_reason = reason
+            self.finish()
 
     # ---------------------------------------------------------------- Datenfluss
     def arrays(self):
@@ -95,6 +126,7 @@ class RunController:
         """Regelmaessig aufrufen (z.B. 20x pro Sekunde). Liefert neue Telegramme."""
         new = self.link.drain_frames()
         if not new:
+            self.check_stale()
             return new
         p = self.params
         last = new[-1]
@@ -103,6 +135,10 @@ class RunController:
                          v_kmh=n_roll / 60.0 * p.roll_circ * 3.6, rate=last.rate,
                          egt1=last.egt1, afr=last.afr, egt2=last.egt2)
 
+        if self.state == COAST:
+            self.frames.extend(new)
+            self._coast_tick(time.time(), new)
+            return new
         if self.state in (WAIT, RUN):
             self.frames.extend(new)
             self._since_eval += len(new)
@@ -123,17 +159,69 @@ class RunController:
         res = physics.evaluate(n_roll, dt, self.params, afr_raw=afr, egt_raw=egt, require_end=False)
         self.live_result = res
         if res is not None and res.end_index >= 0:
-            self.finish()
+            if self.ausrollen and self.state == RUN:
+                self._start_coast()
+            else:
+                self.finish()
+
+    # ---------------------------------------------------------------- Ausrollversuch
+    def _start_coast(self):
+        self.state = COAST
+        self.message = "Kupplung ziehen, ausrollen lassen"
+        self._coast_t0 = self._coast_last = time.time()
+        self._coast_min = float("inf")
+        self._coast_hist = []
+
+    def _coast_tick(self, now: float, new: List[Frame]):
+        """Ende des Ausrollens pruefen (bei jedem poll mit neuen Telegrammen waehrend AUSROLLEN).
+        Drehzahl = Median der letzten 0,3 s (Rolle x i), damit einzelne Ausreisser nichts beenden."""
+        p = self.params
+        self._coast_last = now
+        keep = max(3, int(round(0.3 * max(self.live.rate, 1.0))))
+        self._coast_hist = (self._coast_hist + [f.roll_hz * 60.0 / p.inkr * p.ratio for f in new])[-keep:]
+        n_med = float(np.median(self._coast_hist))
+        self._coast_min = min(self._coast_min, n_med)
+        if self.coast_n_ende > 0 and n_med < self.coast_n_ende:
+            self.end_coast(f"ausgerollt bis {self.coast_n_ende:.0f} 1/min")
+        elif n_med > self._coast_min * 1.03 + 50.0:
+            self.end_coast("Drehzahl steigt wieder – Ausrollen beendet")
+        elif n_med < 30.0 * p.ratio:
+            self.end_coast("Rolle steht")
+        elif now - self._coast_t0 > self.coast_t_max:
+            self.end_coast(f"Ausrollen nach {self.coast_t_max:.0f} s beendet")
+
+    def check_stale(self, now: Optional[float] = None) -> bool:
+        """Waehrend AUSROLLEN: kommen keine Telegramme mehr (Firmware-Autostopp bei Stillstand), Ausrollen beenden."""
+        now = time.time() if now is None else now
+        if self.state == COAST and now - self._coast_last > COAST_STILL_S:
+            self.end_coast("keine Messdaten mehr – Rolle steht")
+            return True
+        return False
+
+    def coast_text(self) -> str:
+        """Kurzfassung des Ausrollversuchs fuer Ergebnis-Zeile und Statusleiste."""
+        c = self.coast
+        if c is None:
+            return ""
+        if not c.ok:
+            return f"Ausrollversuch: {c.meldung}"
+        return (f"Ausrollversuch: Verlust M0 {c.m0:.2f} / M1 {c.m1:.2f} Nm bei {c.n1:.0f} 1/min"
+                + (f", m2 {c.m2:.3f}" if c.quadratisch else "") + f", R² {c.r2:.3f} – im Reiter Kalibrierung "
+                "übernehmen")
 
     def finish(self):
         n_roll, dt, n_meas, afr, egt = self.arrays()
         self.result = physics.evaluate(n_roll, dt, self.params, n_meas, afr, egt, require_end=False)
+        if self.state == COAST:
+            start = self.result.end_index if self.result is not None and self.result.end_index >= 0 else None
+            self.coast = _ausrollen.analyse(n_roll, dt, self.params, start=start, n_meas=n_meas,
+                                            n_ende=self.coast_n_ende, quadratisch=self.coast_quadratisch)
         self.state = DONE
         self.ecu_data = None
         if self.ecu is not None and self.frames:
             self.ecu_data = self.ecu.snapshot(self.frames[0].t - 1.0, self.frames[-1].t + 1.0)
         if self.result is not None:
-            self.message = self.result.end_reason
+            self.message = self.result.end_reason + (f" | {self.coast_reason}" if self.coast_reason else "")
         # Messung laeuft fuer die Live-Anzeige weiter; neuer Lauf mit start()
 
     def gas_off(self) -> bool:

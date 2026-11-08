@@ -5,6 +5,9 @@ und simuliert Motor + Rolle, damit PyST ohne Pruefstand getestet werden kann.
 
 Ablauf nach 'm': Motor haelt 3000 1/min, nach 3 s Vollgas bis 11500 1/min, dann Gas weg
 und die Rolle rollt aus. Motor ~ 32 PS bei 10000 1/min (wie die Referenzlaeufe vom 26.05.26).
+Ausrollversuch (SimEngine(ausrollen=True), Port 'SIM:ausrollen'): nach dem Gas-Wegnehmen bremst der Motor noch
+t_kupplung Sekunden mit, dann ist die Kupplung gezogen: Zuendung auf Leerlauf, die Rolle rollt mit Rad und Kette
+(Verlust loss_ab0 + loss_ab1 * w, auch beim Beschleunigen) bis n_bremse aus, erst dann bremst der Fahrer.
 
 PST-Diag 1: '#?', '#MODE', '#RUN', '#RATE', '#BURST' (mit Trigger), '#GET/#SET/#SAVE/#DEFAULTS'.
 Dafuer erzeugt der Simulator die einzelnen Flanken von Zuendung und Rolle (mit uint32-Zeitstempeln,
@@ -32,11 +35,15 @@ from . import bootproto
 class SimEngine:
     def __init__(self, inkr=100.0, imp=1.0, ratio=6.85, inertia=13.5, t_max=23.0, n_peak=9500.0,
                  span=9000.0, n_hold=3000.0, n_lift=11500.0, rate=60.0, noise=0.002, seed=1,
-                 loss0=0.5, loss2=0.0002):
+                 loss0=0.5, loss2=0.0002, ausrollen=False, t_kupplung=0.8, loss_ab0=0.0, loss_ab1=0.0,
+                 n_bremse=1200.0):
         self.inkr, self.imp, self.ratio, self.inertia = inkr, imp, ratio, inertia
         self.t_max, self.n_peak, self.span = t_max, n_peak, span
         self.n_hold, self.n_lift, self.rate, self.noise = n_hold, n_lift, rate, noise
         self.loss0, self.loss2 = loss0, loss2
+        # Ausrollversuch: Kupplung nach t_kupplung gezogen, Rad/Kette/Getriebeausgang verlieren loss_ab0 + loss_ab1*w
+        self.ausrollen, self.t_kupplung, self.n_bremse = ausrollen, t_kupplung, n_bremse
+        self.loss_ab0, self.loss_ab1 = loss_ab0, loss_ab1
         self.rng = random.Random(seed)
         self.reset()
 
@@ -54,10 +61,16 @@ class SimEngine:
         self.w_roll = self.n_hold / 60.0 * 2 * math.pi / self.ratio
         self.phase = "hold"
         self.t_phase = 0.0
+        self.kupplung_offen = False
+        self.n_motor = self.n_hold                         # Motordrehzahl bei gezogener Kupplung
+
+    def loss_total(self, w_roll: float) -> float:
+        """Verlustmoment an der Rolle [Nm]: Rolle (Lager/Luft) + Rad, Kette, Getriebeausgang."""
+        return self.loss0 + self.loss2 * w_roll ** 2 + (self.loss_ab0 + self.loss_ab1 * w_roll if w_roll > 0 else 0.0)
 
     def step(self, dt: float):
         n_e = self.w_roll * self.ratio * 60.0 / (2 * math.pi)
-        loss_roll = self.loss0 + self.loss2 * self.w_roll ** 2   # Lager/Luft an der Rolle [Nm]
+        loss_roll = self.loss_total(self.w_roll)
         if self.phase == "hold":
             # Drehzahl halten (P-Regler auf Motordrehzahl), nach 4 s Vollgas
             t_eng = min(self.torque_wot(n_e), max(0.0, 0.05 * (self.n_hold - n_e) + loss_roll / self.ratio))
@@ -67,6 +80,15 @@ class SimEngine:
             t_eng = self.torque_wot(n_e)
             if n_e >= self.n_lift:
                 self.phase, self.t_phase = "coast", 0.0
+        elif self.ausrollen:
+            # Motorbremse bis zur Kupplung, dann rollt die Rolle frei aus; gebremst wird erst unter n_bremse
+            self.kupplung_offen = self.t_phase >= self.t_kupplung
+            t_eng = 0.0 if self.kupplung_offen else (-2.0 if n_e > 1500 else 0.0)
+            if self.kupplung_offen:
+                self.n_motor += (1500.0 - self.n_motor) * min(1.0, dt / 0.3)    # Motor faellt auf Leerlauf
+            else:
+                self.n_motor = n_e
+            loss_roll += 15.0 if n_e < self.n_bremse else 0.0
         else:
             t_eng = -2.0 if n_e > 1500 else 0.0             # Motorbremse, Kupplung bei 1500 auf
             loss_roll += 15.0 if self.t_phase > 3.0 else 0.0  # Bremse nach 3 s
@@ -94,7 +116,9 @@ class SimEngine:
         w = acc / steps
         f_roll = w / (2 * math.pi) * self.inkr
         n_e = w * self.ratio * 60.0 / (2 * math.pi)
-        if self.phase == "coast" and n_e < 1500:
+        if self.kupplung_offen:
+            n_e = self.n_motor                                # Kupplung gezogen: Motor dreht fuer sich
+        elif self.phase == "coast" and n_e < 1500:
             n_e = 1500.0                                      # Leerlauf, Kupplung offen
         f_ign = n_e / 60.0 * self.imp
         f_roll *= 1.0 + self.rng.gauss(0.0, self.noise)
@@ -1848,6 +1872,13 @@ class LambdaSimDevice:
             port._out(f"#ERR;WBF;version;ver={ver};app=neu\r\n" if ver else f"#OK;WBF;END;ver={okv};n=5\r\n")
 
 
+def ausroll_engine(**kw) -> SimEngine:
+    """Simulator fuer den Ausrollversuch: Rad/Kette verlieren zusaetzlich 2 Nm + 0,04 Nm/(rad/s) an der Rolle."""
+    args = dict(ausrollen=True, loss_ab0=2.0, loss_ab1=0.04)
+    args.update(kw)
+    return SimEngine(**args)
+
+
 def open_sim(port: str, replay_file: str = ""):
     """Portname -> (Ersatz fuer den seriellen Port, abgespielter Lauf oder None).
     SIM[:mega|:mega300][:stoerung], SIM:basis[:ohne|:wlan|:stoerung], SIM:zange; replay_file spielt einen Lauf ab."""
@@ -1861,5 +1892,7 @@ def open_sim(port: str, replay_file: str = ""):
         return BasisSimSerial(paired="ohne" not in parts, tcp="wlan" in parts,
                               faults=BASIS_FAULTS if "stoerung" in parts else None), None
     mega = "mega" in parts or "mega300" in parts
+    if "ausrollen" in parts:
+        return SimSerial(engine=ausroll_engine(), faults=FAULT_PRESET if "stoerung" in parts else None), None
     return SimSerial(engine=SimEngine(rate=61.0) if mega else None, mega=mega, diag="mega300" not in parts,
                      faults=FAULT_PRESET if "stoerung" in parts else None), None
