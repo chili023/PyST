@@ -16,9 +16,15 @@ Python-Umgebung (`PyST/.venv`) an und installieren `pyserial`, `numpy`, `PySide6
 
 ```bash
 cd PyST
-./start_mac.command
+bash start_mac.command
 ```
-oder im Finder doppelklicken (beim ersten Mal: Rechtsklick → Öffnen, wegen Gatekeeper).
+macOS blockt beim ersten Mal Skripte aus dem Internet („Malware“-Meldung, Gatekeeper), vor allem nach dem Laden als ZIP.
+Einmal im entpackten Ordner (dem mit `INSTALL.md`) im Terminal:
+```bash
+xattr -dr com.apple.quarantine .
+```
+Danach geht auch der Doppelklick auf `start_mac.command` im Finder. Alternativ: einmal doppelklicken, Meldung schließen,
+Systemeinstellungen → Datenschutz & Sicherheit → „Dennoch öffnen“ (seit macOS 15 hilft Rechtsklick → Öffnen nicht mehr).
 Falls `python3` fehlt: `xcode-select --install` oder Python von python.org.
 Der Nucleo erscheint als `/dev/cu.usbmodem…`, ein Mega als `/dev/cu.usbmodem…` oder `/dev/cu.usbserial…`.
 
