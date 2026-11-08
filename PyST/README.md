@@ -1,4 +1,4 @@
-# PyST 1.4
+# PyST 1.4.1
 
 Einfaches Prüfstandsprogramm zum Testen der neuen PST-STM32-Firmware – ohne Windows und ohne LabVIEW.
 Läuft auf **Mac**, **Linux/Raspberry Pi** (und Windows).
