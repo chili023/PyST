@@ -138,6 +138,6 @@ Bitte Rückmeldungen über die [Issues](https://github.com/chili023/PyST/issues)
 ## Tests
 
 Automatische Tests unter Linux mit Python 3 und PySide6, dazu Oberflächen-Rauchtests im Simulator, in Tag und Nacht
-und bei 1280 × 800. Stand der Freigabe: 616 Tests bestanden, 1 übersprungen.
+und bei 1280 × 800. Stand der Freigabe: 630 Tests bestanden, 1 übersprungen.
 
 Der Stand 1.4.1 liegt unter dem Tag `v1.4.1`.
