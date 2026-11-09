@@ -19,7 +19,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import theme
 
 LEER = ""                         # Kanal-Schluessel fuer „leer lassen“
-GROSS, KLEIN = "gross", "klein"
+GROSS, KLEIN, MINI = "gross", "klein", "mini"     # MINI: zweispaltig, Titel gekuerzt, Balken ohne Skala
 QUELLEN = ("PST", "ECU")          # Reihenfolge der Gruppen im Auswahlmenue
 
 
@@ -254,13 +254,14 @@ class WertKachel(QtWidgets.QFrame):
     def _stil(self):
         T = theme.tokens()
         gross = self.groesse == GROSS
+        mini = self.groesse == MINI
         self.setStyleSheet(_kachel_css("wertkachel", "zone_warn" if self.hervorgehoben else "border"))
-        self.nr.setStyleSheet(f"QLabel {{ background: {T['track']}; border-radius: 9px; color: {T['text']};"
-                              " font-size: 12px; font-weight: 700; }")
-        self.titel.setStyleSheet(f"QToolButton {{ color: {T['text']}; font-size: {14 if gross else 13}px; font-weight: 700;"
-                                 " border: none; padding: 0 2px; background: transparent; }"
+        self.nr.setStyleSheet(f"QLabel {{ background: {T['track']}; border-radius: {7 if mini else 9}px;"
+                              f" color: {T['text']}; font-size: {11 if mini else 12}px; font-weight: 700; }}")
+        self.titel.setStyleSheet(f"QToolButton {{ color: {T['text']}; font-size: {14 if gross else (12 if mini else 13)}px;"
+                                 " font-weight: 700; border: none; padding: 0 2px; background: transparent; }"
                                  "QToolButton::menu-indicator { image: none; }")
-        self.quelle.setStyleSheet(f"color: {T['text2']}; font-size: 12px;")
+        self.quelle.setStyleSheet(f"color: {T['text2']}; font-size: {11 if mini else 12}px;")
         wert_farbe = T["dim"] if (self._fehlt_text or self.wert is None) else T["value"]
         self.wert_label.setStyleSheet(f"color: {wert_farbe}; font-size: {30 if gross else 20}px; font-weight: 700;")
         self.einheit.setStyleSheet(f"color: {T['text2']}; font-size: 13px; padding-bottom: {5 if gross else 3}px;")
@@ -292,12 +293,33 @@ class WertKachel(QtWidgets.QFrame):
         leer = not self.kanal
         if not hasattr(self, "_titel"):
             self._titel, self._einheit = "leer", ""
-        self.titel.setText(f"{'leer' if leer else self._titel}  ▾")
         self.einheit.setText("" if leer else self._einheit)
         self.quelle.setText(self._fehlt_text or self._quelle_text)
         self.wert_zeile.setVisible(not leer and not self.laeufe)
         self.balken.setVisible(not leer)
         self._stil()
+        self._titel_zeigen()
+
+    def _titel_zeigen(self):
+        """Titel mit ▾; MINI (schmale Kachel): auf die freie Breite gekuerzt, voller Titel im Tooltip."""
+        voll = "leer" if not self.kanal else getattr(self, "_titel", "leer")
+        if self.groesse != MINI:
+            self.titel.setText(f"{voll}  ▾")
+            self.titel.setMaximumWidth(16777215)
+            return
+        self.titel.ensurePolished()
+        frei = self.width() - 16 - (self.nr.width() + 4 if self.nr.isVisibleTo(self) else 0) \
+            - (self.quelle.sizeHint().width() + 4 if self.quelle.text() else 0) - 4
+        fm = self.titel.fontMetrics()
+        text = fm.elidedText(voll, QtCore.Qt.ElideRight, max(20, frei - fm.horizontalAdvance("  ▾") - 8))
+        self.titel.setMaximumWidth(max(30, frei))
+        self.titel.setText(f"{text}  ▾")
+        self.titel.setToolTip("Kanal wählen" + (f" ({voll})" if text != voll else ""))
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        if self.groesse == MINI:
+            self._titel_zeigen()
 
     def set_menue_hinweis(self, text: str):
         """Hinweis unten im Auswahlmenue, z.B. „Auswahl gilt für Aprilia RS 125“."""
@@ -354,6 +376,8 @@ class WertKachel(QtWidgets.QFrame):
             self._fehlt_text = ""
             self.quelle.setText(self._quelle_text)
             self.balken.set_fehlt(False)
+            if self.groesse == MINI:
+                self._titel_zeigen()
         self.wert_label.setText(text if text is not None else zahl(self.wert, self.dez))
         self.balken.set_wert(self.wert)
         self._stil()
@@ -367,6 +391,8 @@ class WertKachel(QtWidgets.QFrame):
         self.balken.set_wert(None)
         self.balken.set_fehlt(True)
         self._stil()
+        if self.groesse == MINI:
+            self._titel_zeigen()
 
     @property
     def fehlt(self) -> bool:
@@ -374,8 +400,10 @@ class WertKachel(QtWidgets.QFrame):
 
     def set_quelle(self, text: str):
         self._quelle_text = text
-        if not self._fehlt_text:
+        if not self._fehlt_text and self.quelle.text() != text:
             self.quelle.setText(text)
+            if self.groesse == MINI:
+                self._titel_zeigen()
 
     def set_hervorgehoben(self, on: bool):
         self.hervorgehoben = on

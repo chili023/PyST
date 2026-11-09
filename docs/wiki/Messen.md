@@ -93,7 +93,7 @@ Lauf. Wählt man ein anderes Setup, sind ungespeicherte Werte verworfen.
 
 ### UMGEBUNG  (PST-Basis, BME280)
 
-Kacheln **T Luft** und **p Luft** mit dem Alter des Werts („noch nicht gelesen“, „gelesen gerade eben“, „vor x min“,
+Eine schmale Zeile **T … °C  p … mbar** mit dem Alter des Werts („noch nicht gelesen“, „gelesen gerade eben“, „vor x min“,
 „von Hand eingetragen“). PyST liest das Klima nur zwischen den Läufen: beim START, von Hand und im Leerlauf alle 5 min,
 solange der Reiter Messen offen ist.
 
@@ -107,6 +107,8 @@ solange der Reiter Messen offen ist.
 - **Titel anklicken:** Kanal wählen oder **Platz entfernen**. Kanäle der PST: Motor (Rolle × i), Motor (Zündung),
   Rolle km/h, EGT 1/2, Lambda/AFR, Übersetzung Zündung/Rolle, Übersetzung ECU/Rolle, Messfrequenz. Dazu die Kanäle
   der ECU.
+- Bis 4 Plätze stehen die Kacheln untereinander, ab 5 Plätzen zweispaltig und kompakt (kurzer Titel, Zahl groß,
+  dünner Balken ohne Skala). Bei 1280×800 passen so 8 Plätze ohne Rollen.
 - UMGEBUNG und die Drehzahl bleiben oben stehen, die kleinen Kacheln rollen, wenn sie nicht alle passen.
 - **Maus im Diagramm** (kein Lauf aktiv): Die Kacheln zeigen die Werte des neuesten Laufs an der Cursor-Drehzahl,
   oben steht dann „LAUF 16:29 bei 9.500 1/min“ statt LIVE. Maus aus dem Diagramm: wieder live.
@@ -116,7 +118,7 @@ solange der Reiter Messen offen ist.
 
 ### ERGEBNIS
 
-**Pmax @ n** und **Mmax @ n** des laufenden, letzten, markierten oder Referenzlaufs.
+**Pmax** und **Mmax** nebeneinander in einer Zeile (Drehzahl klein darunter) des laufenden, letzten, markierten oder Referenzlaufs.
 
 ## Diagramm
 

@@ -52,7 +52,7 @@ from .bg import wait_in_thread, waiting
 from .channels import fault_text, lambda_from_afr
 from .db import (ART_LAUF, ECU_PREFIX, LIVE_KANAELE, LIVE_MAX, LIVE_STANDARD, MESSPLAETZE, SCHNELLWERT_MAX,
                  SCHNELLWERT_STANDARD, SETUP_FIELDS, field_label, messplaetze, wert_text)
-from .kacheln import GROSS, KLEIN, Kanal, SeitenLeiste, WertKachel, farb_icon, schloss_icon, zahl
+from .kacheln import GROSS, KLEIN, MINI, Kanal, SeitenLeiste, WertKachel, farb_icon, schloss_icon, zahl
 from .plots import EXTRA_PREFIX, DynoPlot, run_color
 from .runner import ACTIVE, COAST, DONE, RUN, WAIT
 from .statusleiste import StatusFeld
@@ -70,6 +70,7 @@ AUSROLLEN_TEXT = "Ausrollen beenden\n(Esc)"
 LEISTE_BREITE = 440                        # Laeufe-Liste (Overlay bzw. angepinnt)
 SPALTE_BREITE = 330                        # rechte Spalte
 MW_BREITE = 3.6                            # Linienbreite Mittelwert (Laeufe 2,0)
+LIVE_EINSPALTIG = 4                        # mehr Live-Plaetze: zweispaltig und kompakt (MINI)
 ANWEISUNG_HALTEN_S = 0.6                   # grosse Anweisung (ausser GAS WEG) so lange nach dem letzten Zustand
 # Anzeige beim Messen: Einstellung -> (Standard, Text im Menue Ansicht bzw. unter Einstellungen › Rolle/Lauf, Tooltip)
 ERGEBNIS_GROSS = "anzeige_ergebnis_gross"
@@ -211,85 +212,106 @@ def tick_dez(lo: float, hi: float) -> int:
     return 0 if st >= 1 else (1 if st >= 0.1 else 2)
 
 
-def kachel_groesse(k: WertKachel, gross: bool):
-    """Kachel zwischen gross (Messen) und kompakt (wenig Hoehe) umschalten."""
-    k.groesse = GROSS if gross else KLEIN
+def kachel_groesse(k: WertKachel, groesse):
+    """Kachel umschalten: GROSS (Messen, eine Spalte), KLEIN (wenig Hoehe) oder MINI (zweispaltig: kleine Schrift,
+    duenner Balken ohne Skala). True/False wie frueher = GROSS/KLEIN."""
+    if isinstance(groesse, bool):
+        groesse = GROSS if groesse else KLEIN
+    k.groesse = groesse
+    b = k.balken
     if isinstance(k, DrehzahlKachel):
-        k.balken.bar_h = 20 if gross else 14
+        b.bar_h = 20 if groesse == GROSS else 14
     else:
-        k.balken.bar_h = 14 if gross else 10
-    k.balken.setFixedHeight(k.balken.bar_h + 18)
+        b.bar_h = {GROSS: 14, KLEIN: 10, MINI: 6}.get(groesse, 10)
+    b.skala = groesse != MINI
+    b.setFixedHeight(b.bar_h + (18 if b.skala else 4))
+    mini = groesse == MINI
+    k.layout().setContentsMargins(*((6, 2, 6, 3) if mini else (8, 3, 8, 3)))
+    k.nr.setFixedSize(*((15, 15) if mini else (18, 18)))
     k._stil()
+    k._titel_zeigen()
 
 
-class KlimaKachel(QtWidgets.QFrame):
-    """Kleine Kachel T bzw. p der Basis: Titel, Wert mit Einheit, darunter das Alter („gelesen vor 3 min“)."""
+class KlimaZeile(QtWidgets.QFrame):
+    """UMGEBUNG als eine schmale Zeile: „T 22,3 °C   p 1.010 mbar   gelesen vor 3 min“ (Alter gekuerzt)."""
 
-    def __init__(self, titel: str, einheit: str):
+    def __init__(self):
         super().__init__()
-        lay = QtWidgets.QVBoxLayout(self)
+        self.setObjectName("klimazeile")
+        lay = QtWidgets.QHBoxLayout(self)
         lay.setContentsMargins(8, 3, 8, 3)
-        lay.setSpacing(0)
-        self.titel = QtWidgets.QLabel(titel)
-        lay.addWidget(self.titel)
-        row = QtWidgets.QHBoxLayout()
-        row.setSpacing(2)
-        row.addStretch(1)
-        self.wert = QtWidgets.QLabel("–")
-        self.einheit = QtWidgets.QLabel(einheit)
-        row.addWidget(self.wert)
-        row.addWidget(self.einheit, 0, QtCore.Qt.AlignBottom)
-        lay.addLayout(row)
-        self.alter = QtWidgets.QLabel("")
-        self.alter.setAlignment(QtCore.Qt.AlignRight)
-        lay.addWidget(self.alter)
+        lay.setSpacing(3)
+        self.labels: Dict[str, Tuple[QtWidgets.QLabel, QtWidgets.QLabel, QtWidgets.QLabel]] = {}
+        for key, titel, einheit in (("t", "T", "°C"), ("p", "p", "mbar")):
+            t, w, e = QtWidgets.QLabel(titel), QtWidgets.QLabel("–"), QtWidgets.QLabel(einheit)
+            for x in (t, w, e):
+                lay.addWidget(x, 0, QtCore.Qt.AlignBaseline)
+            lay.addSpacing(10)
+            self.labels[key] = (t, w, e)
+        self.alter = KurzText("")
+        self.alter.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        lay.addWidget(self.alter, 1)
         theme.bei_wechsel(self, lambda _t: self._stil())
 
     def _stil(self):
         T = theme.tokens()
-        _rahmen(self, "klimakachel")
-        self.titel.setStyleSheet(f"color: {T['text2']}; font-size: 13px;")
-        self.wert.setStyleSheet(f"color: {T['value']}; font-size: 20px; font-weight: 700;")
-        self.einheit.setStyleSheet(f"color: {T['text2']}; font-size: 13px; padding-bottom: 3px;")
+        _rahmen(self, "klimazeile")
+        for t, w, e in self.labels.values():
+            t.setStyleSheet(f"color: {T['text2']}; font-size: 13px; font-weight: 700;")
+            w.setStyleSheet(f"color: {T['value']}; font-size: 17px; font-weight: 700;")
+            e.setStyleSheet(f"color: {T['text2']}; font-size: 12px;")
         self.alter.setStyleSheet(f"color: {T['text2']}; font-size: 12px;")
 
-    def set(self, wert: str, alter: str):
-        if self.wert.text() != wert:
-            self.wert.setText(wert)
+    def set(self, t: str, p: str, alter: str):
+        for key, wert in (("t", t), ("p", p)):
+            lab = self.labels[key][1]
+            if lab.text() != wert:
+                lab.setText(wert)
         if self.alter.text() != alter:
             self.alter.setText(alter)
 
+    def text(self) -> str:
+        """„T 22,3 °C · p 1.010 mbar · gelesen …“ (fuer Tests)."""
+        return " · ".join([" ".join(x.text() for x in self.labels[k]) for k in ("t", "p")] + [self.alter.text()])
+
 
 class ErgebnisKachel(QtWidgets.QFrame):
-    """Pmax bzw. Mmax: Titel („Pmax @ 10.420“) und grosse Zahl in der Achsenfarbe."""
+    """Pmax bzw. Mmax kompakt in einer Zeile: links „Pmax“ und klein darunter „@ 10.420“, rechts die Zahl in
+    der Achsenfarbe."""
 
     def __init__(self, titel: str, einheit: str, token: str):
         super().__init__()
         self.token = token
-        lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(8, 3, 8, 3)
-        lay.setSpacing(0)
-        self.titel = QtWidgets.QLabel(titel)
-        lay.addWidget(self.titel)
-        row = QtWidgets.QHBoxLayout()
-        row.setSpacing(2)
-        row.addStretch(1)
+        lay = QtWidgets.QHBoxLayout(self)
+        lay.setContentsMargins(6, 2, 6, 2)
+        lay.setSpacing(3)
+        links = QtWidgets.QVBoxLayout()
+        links.setSpacing(0)
+        self.titel = KurzText(titel)
+        self.bei = KurzText("")
+        links.addWidget(self.titel)
+        links.addWidget(self.bei)
+        lay.addLayout(links, 1)
         self.wert = QtWidgets.QLabel("–")
         self.einheit = QtWidgets.QLabel(einheit)
-        row.addWidget(self.wert)
-        row.addWidget(self.einheit, 0, QtCore.Qt.AlignBottom)
-        lay.addLayout(row)
+        lay.addWidget(self.wert, 0, QtCore.Qt.AlignVCenter)
+        lay.addWidget(self.einheit, 0, QtCore.Qt.AlignVCenter)
         theme.bei_wechsel(self, lambda _t: self._stil())
 
     def _stil(self):
         T = theme.tokens()
         _rahmen(self, "ergebniskachel")
-        self.titel.setStyleSheet(f"color: {T['text2']}; font-size: 13px;")
-        self.wert.setStyleSheet(f"color: {T[self.token]}; font-size: 30px; font-weight: 800;")
-        self.einheit.setStyleSheet(f"color: {T['text2']}; font-size: 13px; padding-bottom: 5px;")
+        self.titel.setStyleSheet(f"color: {T['text2']}; font-size: 12px; font-weight: 700;")
+        self.bei.setStyleSheet(f"color: {T['text2']}; font-size: 11px;")
+        self.wert.setStyleSheet(f"color: {T[self.token]}; font-size: 22px; font-weight: 800;")
+        self.einheit.setStyleSheet(f"color: {T['text2']}; font-size: 12px;")
 
     def set(self, titel: str, wert: str):
-        self.titel.setText(titel)
+        """titel „Pmax @ 10.420“: Name oben, „@ 10.420“ klein darunter."""
+        name, _s, bei = titel.partition(" @ ")
+        self.titel.setText(name)
+        self.bei.setText(f"@ {bei}" if bei else "")
+        self.setToolTip(titel)
         self.wert.setText(wert)
 
 
@@ -1803,21 +1825,18 @@ class MessenMixin:
         return w
 
     def _rechte_spalte(self) -> QtWidgets.QWidget:
-        """UMGEBUNG und Drehzahl fest oben, die Live-Plaetze rollen (_Spalte), ERGEBNIS fest unten."""
+        """UMGEBUNG (eine Zeile) und Drehzahl (gross) fest oben, die Live-Plaetze darunter (bis LIVE_EINSPALTIG
+        untereinander, mehr zweispaltig und kompakt; rollen nur, wenn sie trotzdem nicht passen), ERGEBNIS
+        (eine Zeile Pmax | Mmax) fest unten."""
         spalte = QtWidgets.QWidget()
         lay = QtWidgets.QVBoxLayout(spalte)
         lay.setContentsMargins(0, 0, 2, 0)
         lay.setSpacing(5)
-        lay.addWidget(abschnitt("UMGEBUNG  (PST-Basis, BME280)"))
-        tp = QtWidgets.QHBoxLayout()
-        tp.setSpacing(6)
-        self.k_temp = KlimaKachel("T Luft", "°C")
-        self.k_druck = KlimaKachel("p Luft", "mbar")
-        for k in (self.k_temp, self.k_druck):
-            k.setToolTip("Gelesen wird nur zwischen den Läufen (beim START, von Hand unter Einstellungen › Rolle/Lauf "
-                         f"und alle {KLIMA_ALLE_S / 60:.0f} min, solange nichts läuft)")
-            tp.addWidget(k)
-        lay.addLayout(tp)
+        self.klima = KlimaZeile()
+        self.klima.setToolTip("UMGEBUNG (PST-Basis, BME280). Gelesen wird nur zwischen den Läufen (beim START, von "
+                              "Hand unter Einstellungen › Rolle/Lauf und alle "
+                              f"{KLIMA_ALLE_S / 60:.0f} min, solange nichts läuft)")
+        lay.addWidget(self.klima)
         self.live_titel = abschnitt("LIVE")
         lay.addWidget(self.live_titel)
         self.k_drehzahl = DrehzahlKachel()
@@ -1825,9 +1844,9 @@ class MessenMixin:
         self.k_drehzahl.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.k_drehzahl.customContextMenuRequested.connect(lambda _p: self._grenzen_menue(-1))
         lay.addWidget(self.k_drehzahl)
-        # Live-Plaetze: rollen bei vielen Feldern, „＋“ am Ende fuegt einen Platz an
+        # Live-Plaetze: „＋“ in der naechsten freien Zelle fuegt einen Platz an
         inner = QtWidgets.QWidget()
-        self.live_lay = QtWidgets.QVBoxLayout(inner)
+        self.live_lay = QtWidgets.QGridLayout(inner)
         self.live_lay.setContentsMargins(0, 0, 0, 0)
         self.live_lay.setSpacing(5)
         self.live_kacheln: List[WertKachel] = []
@@ -1846,8 +1865,6 @@ class MessenMixin:
             f" border: 1px dashed {theme.farbe('border_strong')}; border-radius: 4px; }}"
             f"QToolButton:hover {{ color: {theme.farbe('text')}; border-color: {theme.farbe('accent_border')}; }}"
             "QToolButton::menu-indicator { image: none; }"))
-        self.live_lay.addWidget(self.live_plus)
-        self.live_lay.addStretch(1)
         area = _Spalte(self._spalte_anpassen)
         area.setWidgetResizable(True)
         area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
@@ -1859,7 +1876,7 @@ class MessenMixin:
         self.ergebnis_titel = abschnitt("ERGEBNIS")
         lay.addWidget(self.ergebnis_titel)
         pm = QtWidgets.QHBoxLayout()
-        pm.setSpacing(6)
+        pm.setSpacing(5)
         self.k_pmax = ErgebnisKachel("Pmax", "PS", "p_color")
         self.k_mmax = ErgebnisKachel("Mmax", "Nm", "m_color")
         pm.addWidget(self.k_pmax)
@@ -1870,46 +1887,70 @@ class MessenMixin:
         self._live_kacheln_bauen(len(LIVE_STANDARD))
         return spalte
 
+    def _live_groesse(self) -> str:
+        """Groesse der Live-Kacheln: zweispaltig MINI, sonst GROSS bzw. KLEIN (wenig Hoehe)."""
+        if len(self.live_kacheln) > LIVE_EINSPALTIG:
+            return MINI
+        return GROSS if self._spalte_gross else KLEIN
+
     def _live_kacheln_bauen(self, anzahl: int):
-        """So viele Live-Kacheln wie Plaetze (Nummer 1 …), „＋“ nur unter LIVE_MAX."""
+        """So viele Live-Kacheln wie Plaetze (Nummer 1 …), anordnen, „＋“ nur unter LIVE_MAX."""
         while len(self.live_kacheln) < anzahl:
             i = len(self.live_kacheln)
-            k = WertKachel(platz=i + 1, groesse=GROSS if self._spalte_gross else KLEIN)
-            if not self._spalte_gross:
-                kachel_groesse(k, False)
+            k = WertKachel(platz=i + 1, groesse=GROSS)
             k.entfernbar = True
             k.kanal_gewaehlt.connect(lambda key, i=i: self._live_gewaehlt(i, key))
             k.entfernen.connect(lambda i=i: self.live_platz_entfernen(i))
             k.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
             k.customContextMenuRequested.connect(lambda _p, i=i: self._grenzen_menue(i))
             k.setToolTip("Klick auf den Titel: Kanal wählen oder Platz entfernen · Rechtsklick: Balkengrenzen")
-            self.live_lay.insertWidget(i, k)
             self.live_kacheln.append(k)
         while len(self.live_kacheln) > anzahl:
             k = self.live_kacheln.pop()
+            self.live_lay.removeWidget(k)
             k.hide()
             k.deleteLater()
-        self.live_plus.setVisible(anzahl < LIVE_MAX)
+        self._live_anordnen()
         QtCore.QTimer.singleShot(0, self.live_flaeche, lambda: self._spalte_anpassen(
             self.live_flaeche.viewport().height()))
 
+    def _live_anordnen(self):
+        """Kacheln ins Raster: bis LIVE_EINSPALTIG eine Spalte, sonst zwei; „＋“ in die naechste freie Zelle (neben
+        einer Kachel so hoch wie sie), darunter Luft."""
+        g = self.live_lay
+        groesse = self._live_groesse()
+        spalten = 2 if groesse == MINI else 1
+        for w in self.live_kacheln + [self.live_plus]:
+            g.removeWidget(w)
+        for r in range(g.rowCount()):
+            g.setRowStretch(r, 0)
+        for c in range(2):
+            g.setColumnStretch(c, 1 if c < spalten else 0)
+        for i, k in enumerate(self.live_kacheln):
+            if k.groesse != groesse:
+                kachel_groesse(k, groesse)
+            g.addWidget(k, i // spalten, i % spalten)
+            k.show()
+        n = len(self.live_kacheln)
+        self.live_plus.setVisible(n < LIVE_MAX)
+        neben = spalten == 2 and n % 2 == 1
+        self.live_plus.setFixedHeight(self.live_kacheln[-1].sizeHint().height() if neben else 26)
+        g.addWidget(self.live_plus, n // spalten, n % spalten if neben else 0, 1, 1 if neben else spalten)
+        g.setRowStretch(n // spalten + 1, 1)
+
     def _spalte_anpassen(self, h: int):
-        """Kacheln kompakt, solange die Live-Plaetze sonst rollen muessten (kleine Fenster), sonst gross. Die
-        Drehzahl (fest oben) wird mit kompakt: ihr Hoehenunterschied zaehlt beim Zurueckschalten mit."""
+        """Einspaltig: Kacheln kompakt, solange sie sonst rollen muessten (kleine Fenster), sonst gross.
+        Zweispaltig sind sie immer kompakt (MINI). Die Drehzahl oben bleibt gross."""
         area = getattr(self, "live_flaeche", None)
-        if area is None or area.widget() is None:
+        if area is None or area.widget() is None or len(self.live_kacheln) > LIVE_EINSPALTIG:
             return
-        inner = area.widget()
         if self._spalte_gross:
-            self._spalte_h_gross = inner.minimumSizeHint().height()
-            self._dz_gross_h = self.k_drehzahl.sizeHint().height()
-        frei = h if self._spalte_gross else h - (getattr(self, "_dz_gross_h", 0) - self.k_drehzahl.sizeHint().height())
-        gross = frei >= self._spalte_h_gross
+            self._spalte_h_gross = area.widget().minimumSizeHint().height()
+        gross = h >= self._spalte_h_gross
         if gross == self._spalte_gross:
             return
         self._spalte_gross = gross
-        for k in [self.k_drehzahl] + self.live_kacheln:
-            kachel_groesse(k, gross)
+        self._live_anordnen()
 
     def _leiste_gemerkt(self, *_a):
         self.settings["laeufe_leiste"] = self.laeufe_leiste.zustand()
@@ -2579,7 +2620,7 @@ class MessenMixin:
         self._klima_anzeigen()
 
     def _klima_anzeigen(self):
-        if not hasattr(self, "k_temp"):
+        if not hasattr(self, "klima"):
             return
         s = self.page_settings
         if self._klima_t:
@@ -2588,10 +2629,9 @@ class MessenMixin:
             alter = "von Hand eingetragen"
         else:
             alter = "noch nicht gelesen"
-        self.k_temp.set(zahl(s.fields["temp_c"].value(), 1), alter)
-        self.k_druck.set(zahl(s.fields["p_mbar"].value(), 0), alter)
+        self.klima.set(zahl(s.fields["temp_c"].value(), 1), zahl(s.fields["p_mbar"].value(), 0), alter)
         if self._klima_feuchte > 0:
-            self.k_temp.setToolTip(f"rel. Feuchte {self._klima_feuchte:.0f} %")
+            self.klima.labels["t"][1].setToolTip(f"rel. Feuchte {self._klima_feuchte:.0f} %")
 
     def _klima_lesen_moeglich(self) -> bool:
         L = self.link

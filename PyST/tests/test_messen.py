@@ -12,7 +12,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6 import QtWidgets  # noqa: E402
+from PySide6 import QtCore, QtWidgets  # noqa: E402
 
 from pyst import messen_page as mp, mittelwert, theme  # noqa: E402
 from pyst.plots import DynoPlot  # noqa: E402
@@ -866,6 +866,40 @@ class Messen(unittest.TestCase):
         self.assertEqual(w.db.live_plaetze(self.vid), [])
         self.assertTrue(w.live_plus.isVisibleTo(w.live_flaeche.widget()))
         pump(0.05)
+
+    def test_rechte_spalte_kompakt(self):
+        """Bis 4 Plaetze eine Spalte, darueber zweispaltig und kompakt (MINI); Drehzahl bleibt gross.
+        Bei 1280×800 sind 8 Plaetze ganz sichtbar; UMGEBUNG eine Zeile, ERGEBNIS Pmax | Mmax nebeneinander."""
+        from pyst.kacheln import GROSS, MINI
+        w = self.w
+        w.resize(1280, 800)
+        w.show()
+        pump(0.2)
+        self.assertEqual(w._live_groesse(), MINI)                    # 5 Standardplaetze
+        self.assertEqual(w.live_lay.getItemPosition(w.live_lay.indexOf(w.live_kacheln[1]))[:2], (0, 1))
+        self.assertEqual(w.k_drehzahl.groesse, GROSS)
+        while len(w.live_kacheln) > 4:
+            w.live_platz_entfernen(len(w.live_kacheln) - 1)
+        self.assertNotEqual(w._live_groesse(), MINI)
+        self.assertEqual(w.live_lay.getItemPosition(w.live_lay.indexOf(w.live_kacheln[1]))[:2], (1, 0))
+        for k in ("egt2", "rate", "ratio", "lam"):
+            w.live_platz_hinzufuegen(k)
+        pump(0.3)
+        w.live_flaeche.verticalScrollBar().setValue(0)
+        pump(0.05)
+        vp = w.live_flaeche.viewport()
+        ganz = [vp.rect().contains(QtCore.QRect(k.mapTo(vp, QtCore.QPoint(0, 0)), k.size())) for k in w.live_kacheln]
+        self.assertEqual(len(ganz), 8)
+        self.assertTrue(all(ganz), ganz)
+        self.assertTrue(all(k.groesse == MINI and not k.balken.skala for k in w.live_kacheln))
+        # UMGEBUNG eine Zeile, ERGEBNIS nebeneinander mit „@ Drehzahl“ klein darunter
+        w.klima.set("22,3", "1.010", "vor 20 s")
+        self.assertEqual(w.klima.text(), "T 22,3 °C · p 1.010 mbar · vor 20 s")
+        self.assertLess(w.klima.height(), 40)
+        w.k_pmax.set("Pmax @ 10.420", "32,0")
+        self.assertEqual((w.k_pmax.titel.text(), w.k_pmax.bei.text()), ("Pmax", "@ 10.420"))
+        self.assertEqual(w.k_pmax.y(), w.k_mmax.y())
+        w.hide()
 
 
 if __name__ == "__main__":
