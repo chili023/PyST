@@ -235,7 +235,15 @@ class OsziPage(QtWidgets.QWidget):
         split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
         left = QtWidgets.QSplitter(QtCore.Qt.Vertical)
         left.addWidget(self._build_recorder())
-        left.addWidget(self._build_burst())
+        # Flanken-Ansicht in einen Rollbereich: mit PST-Diag-Geraet waechst sie (Hinweise mit Umbruch) und soll das
+        # Fenster nicht ueber 800 px Hoehe zwingen (MacBook).
+        burst = QtWidgets.QScrollArea()
+        burst.setWidgetResizable(True)
+        burst.setFrameShape(QtWidgets.QFrame.NoFrame)
+        burst.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        burst.setWidget(self._build_burst())
+        burst.setMinimumHeight(200)
+        left.addWidget(burst)
         left.setSizes([520, 300])
         split.addWidget(left)
         split.addWidget(self._build_trigger())
