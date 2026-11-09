@@ -1,6 +1,7 @@
 """
-Ausrollversuch-Assistent (Einstellungen › Rolle/Lauf, Gruppe „Verluste – Ausrollversuch“, Knopf „Ausrollversuch
-(Assistent) …“): Ausrollversuch ohne Leistungslauf, mit abgehobenem Rad. Nicht modal, fuenf Schritte:
+Assistent Rollen-Kalibrierung (Einstellungen › Rolle/Lauf, Gruppe „Rollen-Kalibrierung (Ausrollen ohne Rad)“, Knopf
+„Rollen-Kalibrierung (Assistent) …“): Ausrollen ohne Leistungslauf, mit abgehobenem Rad. Einmal je Pruefstand,
+wiederholen nur nach Umbau an der Rolle. Nicht modal, fuenf Schritte:
 
   1 Vorbereitung   Messboard verbunden und Rollendaten kommen (sonst Hinweis und „Verbinden“), was gemessen wird
   2 Beschleunigen  Rolle mit dem Motorrad auf die Zieldrehzahl bringen: Rolle 1/min und km/h gross, Balken bis zum
@@ -12,20 +13,20 @@ Ausrollversuch-Assistent (Einstellungen › Rolle/Lauf, Gruppe „Verluste – A
                    keinen Daten mehr oder t_max; „Beenden und auswerten“ oder „Abbrechen“ jederzeit
   5 Ergebnis       ausrollen.analyse(..., start=0, kupplung=False): keine Kupplungserkennung, der kurze Uebergang
                    am Anfang wird verworfen. Diagramm und Werte wie die Gruppe „Letzter Ausrollversuch“
-                   (kalib_page.VerlustDiagramm, werte_html), Hinweise; „Übernehmen“ (Signal uebernehmen wie
-                   KalibPage.uebernehmen, das Hauptfenster traegt ein und speichert), „Nochmal“ (zurueck zu 2),
-                   „Schließen“
+                   (kalib_page.VerlustDiagramm mit der bisherigen Kalibrierung, werte_html), Hinweise; „Als
+                   Rollen-Kalibrierung speichern“ (Signal kalib_speichern, das Hauptfenster speichert sie in
+                   einstellungen.json „rollen_kalibrierung“), „Nochmal“ (zurueck zu 2), „Schließen“
 
 Physik: Mit abgehobenem Rad laeuft nur die Rolle aus, gemessen werden die Verluste der Rolle selbst (Lager, Luft),
-nicht Rad, Kette und Getriebeausgang. Uebernommen rechnet physics.evaluate „Motor = Rad + Verluste“ mit diesem
-Verlustmoment: Der Wert „Motor“ ist dann die Leistung, die der Reifen an die Rolle abgibt (die Rolle verbraucht beim
-Beschleunigen ja selbst Lager- und Luftverluste), noch nicht die Motorleistung. Das steht im Assistenten, in der
-Quelle („Ausrollversuch Rolle allein …“) und im Ergebnis.
+nicht Reifen, Kette und Getriebeausgang. Das Ergebnis geht NICHT in M0/M1 (die bleiben die Verluste gesamt aus dem
+Ausrollversuch nach dem Lauf), sondern ist die Rollen-Kalibrierung (ausrollen.RollenKalibrierung, DynoParams rk_*):
+Damit teilt PyST den Ausrollversuch nach dem Lauf in Rolle + Reifen/Kette/Getriebe auf und weist im Ergebnis
+„Reifen an Rolle“ (Rad + Rollenverlust) und den Antriebsverlust (Motor − Reifen an Rolle) aus.
 
 Daten: Das Hauptfenster reicht ausserhalb eines Laufs jedes Telegramm weiter (telegramme(frames), aus
 RunController.poll wie die Live-Anzeige); keine Laufaufzeichnung, kein Speichern als Lauf. Die Rohdaten der Messung
-landen in messungen/JJMMTT_HHMMSS_Ausrollversuch_Rolle/: roh.csv wie bei einem Lauf, lauf.json mit art
-"ausrollversuch_rolle", den Parametern und dem Ergebnis. Nachrechnen: r = storage.load_any(ordner);
+landen in messungen/JJMMTT_HHMMSS_Rollen-Kalibrierung/: roh.csv wie bei einem Lauf, lauf.json mit art
+"rollen_kalibrierung", den Parametern und dem Ergebnis; der Ordner steht in der Kalibrierung (rohdaten). Nachrechnen: r = storage.load_any(ordner);
 ausrollen.analyse(r["n_roll"], r["dt"], r["params"], start=0, n_ende=…, kupplung=False).
 Einstellungen (settings["ausrollen"], Gruppe Ausrollversuch): n_ende, t_max, quadratisch; dazu assistent_ziel
 (Zieldrehzahl der Rolle [1/min]).
@@ -45,24 +46,25 @@ from PySide6 import QtCore, QtWidgets
 
 from . import __version__, ausrollen, physics, storage, theme
 from .kacheln import ZonenBalken, zahl
-from .kalib_page import ROLLE_ALLEIN, VerlustDiagramm, werte_html
+from .kalib_page import VerlustDiagramm, werte_html
 from .runner import COAST_N_ENDE, COAST_STILL_S, COAST_T_MAX
 
-ART = "ausrollversuch_rolle"           # lauf.json "art"
-ORDNER_ENDUNG = "_Ausrollversuch_Rolle"
+ART = "rollen_kalibrierung"            # lauf.json "art"
+ORDNER_ENDUNG = "_Rollen-Kalibrierung"
 VERALTET_S = 1.0                       # so lange ohne Telegramm: keine Rollendaten
 MEDIAN_S = 0.3                         # Anzeige und Ende: Median der Rollendrehzahl ueber diese Zeit
 SCHRITTE = ("Vorbereitung", "Beschleunigen", "Rad von der Rolle", "Messung", "Ergebnis")
 VORBEREITUNG, BESCHLEUNIGEN, RAD_AB, MESSUNG, ERGEBNIS = range(5)
 FARBE_LIVE = "#1f5fbf"                 # Kurve der Messung (theme.kurvenfarbe passt sie dem Thema an)
 
-PHYSIK = ("<b>Gemessen werden nur die Verluste der Rolle selbst</b> (Lager, Luft). Rad, Kette und Getriebeausgang "
-          "drehen beim Auslaufen nicht mit und sind nicht enthalten. Für diese Verluste: Ausrollversuch nach dem "
-          "Lauf (Kupplung ziehen, Schalter „Ausrollversuch nach jedem Lauf“).")
-UEBERNEHMEN_HINWEIS = ("Übernehmen trägt M0, M1, n1 und m2 als Verluste ein. PyST rechnet dann „Motor = Rad + "
-                       "Verluste“ nur mit den Verlusten der Rolle: Der Wert „Motor“ ist die Leistung, die der Reifen "
-                       "an die Rolle abgibt (Rollenlager und Luft eingerechnet) – noch nicht die Motorleistung, denn "
-                       "Rad, Kette und Getriebeausgang fehlen.")
+TITEL = "Rollen-Kalibrierung (Ausrollen ohne Rad)"
+PHYSIK = ("<b>Einmalig: Wie schnell rollt die Rolle von allein aus?</b> Gemessen werden nur die Verluste der Rolle "
+          "selbst (Lager, Luft). Wiederholen nur nach einem Umbau an der Rolle. Danach teilt PyST den Ausrollversuch "
+          "nach dem Lauf (Kupplung ziehen) auf: Rolle und Reifen/Kette/Getriebe.")
+SPEICHERN_HINWEIS = ("„Als Rollen-Kalibrierung speichern“ legt das Ergebnis für den Prüfstand ab (nicht je Fahrzeug). "
+                     "M0/M1 bleiben die Verluste gesamt aus dem Ausrollversuch nach dem Lauf; mit der Kalibrierung "
+                     "zeigt PyST zusätzlich „Reifen an Rolle“ und den Antriebsverlust (Reifen, Kette, Getriebe).")
+SPEICHERN_KNOPF = "Als Rollen-Kalibrierung speichern"
 SICHERHEIT = ("⚠  Vorsicht: Rolle und Hinterrad drehen weiter. Gang heraus, nicht in Rolle, Rad oder Kette greifen, "
               "nichts dagegenhalten. Motorrad sicher abstützen.")
 
@@ -181,8 +183,8 @@ def speichern(base_dir: str, aufnahme: AuslaufAufnahme, res: Optional[ausrollen.
         "parameter": asdict(p), "telegramme": len(fr),
         "assistent": {"start_index": 0, "n_ende": aufnahme.n_ende_motor, "t_max": aufnahme.t_max,
                       "ende": aufnahme.grund, "rad_abgehoben": True, **(extra or {})},
-        "hinweis": ("Rad abgehoben: Verluste der Rolle allein (Lager, Luft). Nachrechnen: ausrollen.analyse(n_rolle, "
-                    "dt, parameter, start=0, n_ende=assistent.n_ende, kupplung=False)"),
+        "hinweis": ("Rollen-Kalibrierung, Rad abgehoben: Verluste der Rolle allein (Lager, Luft). Nachrechnen: "
+                    "ausrollen.analyse(n_rolle, dt, parameter, start=0, n_ende=assistent.n_ende, kupplung=False)"),
         "ausrollen": res.als_dict(punkte=True) if res is not None else None,
     }
     with open(os.path.join(folder, "lauf.json"), "w", encoding="utf-8") as fh:
@@ -258,14 +260,14 @@ class AusrollAssistent(QtWidgets.QDialog):
     ["ausrollen"] (n_ende, t_max, quadratisch, assistent_ziel), save(): Einstellungen speichern, runs_dir(): Ordner
     messungen, verbinden(): Messboard verbinden (True = verbunden), lauf_aktiv(): Leistungslauf laeuft.
     Daten kommen ueber telegramme(frames) vom Hauptfenster."""
-    uebernehmen = QtCore.Signal(object, object)        # AusrollErgebnis, None (wie KalibPage.uebernehmen)
+    kalib_speichern = QtCore.Signal(object)            # AusrollErgebnis (rohdaten = Ordner) -> Rollen-Kalibrierung
     ausgewertet = QtCore.Signal(object, str)           # AusrollErgebnis, Herkunft (Gruppe „Letzter Ausrollversuch“)
 
     def __init__(self, parent, ctrl: Callable[[], Any], params: Callable[[], physics.DynoParams], cfg: dict,
                  save: Callable[[], None], runs_dir: Callable[[], str], verbinden: Callable[[], bool],
                  lauf_aktiv: Callable[[], bool]):
         super().__init__(parent)
-        self.setWindowTitle("Ausrollversuch – Rolle allein (Assistent)")
+        self.setWindowTitle(TITEL + " – Assistent")
         self.setModal(False)
         self.ctrl, self.params, self.cfg, self.save = ctrl, params, cfg, save
         self.runs_dir, self.verbinden, self.lauf_aktiv = runs_dir, verbinden, lauf_aktiv
@@ -284,7 +286,7 @@ class AusrollAssistent(QtWidgets.QDialog):
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(18, 12, 18, 12)
         lay.setSpacing(10)
-        self.titel = QtWidgets.QLabel("Ausrollversuch – Rolle allein")
+        self.titel = QtWidgets.QLabel(TITEL)
         lay.addWidget(self.titel)
         leiste = QtWidgets.QHBoxLayout()
         leiste.setSpacing(6)
@@ -353,7 +355,7 @@ class AusrollAssistent(QtWidgets.QDialog):
 
     def _seite_vorbereitung(self) -> QtWidgets.QWidget:
         w, v = self._seite()
-        v.addWidget(self._anleitung("Verluste der Rolle messen – ohne Leistungslauf"))
+        v.addWidget(self._anleitung("Rolle kalibrieren: Verluste der Rolle allein messen – ohne Leistungslauf"))
         zeile = QtWidgets.QHBoxLayout()
         self.v_status = self._label(20, True)
         zeile.addWidget(self.v_status, 1)
@@ -369,7 +371,7 @@ class AusrollAssistent(QtWidgets.QDialog):
                        "2. Gas weg, Rad von der Rolle nehmen (anheben) – die Rolle läuft frei aus.<br>"
                        "3. „Messung starten“: PyST zeichnet das Auslaufen auf und bestimmt daraus das Verlustmoment "
                        "der Rolle (M0, M1, m2).<br>"
-                       "4. Ergebnis prüfen und übernehmen.")
+                       "4. Ergebnis prüfen und als Rollen-Kalibrierung speichern.")
         v.addWidget(ablauf)
         self.v_physik = QtWidgets.QLabel(PHYSIK)
         self.v_physik.setWordWrap(True)
@@ -466,7 +468,7 @@ class AusrollAssistent(QtWidgets.QDialog):
 
     def _seite_ergebnis(self) -> QtWidgets.QWidget:
         w, v = self._seite()
-        self.e_titel = self._anleitung("Verluste Rolle allein (Lager, Luft)")
+        self.e_titel = self._anleitung("Rollen-Kalibrierung: Verluste der Rolle allein (Lager, Luft)")
         v.addWidget(self.e_titel)
         self.e_meldung = QtWidgets.QLabel("")
         self.e_meldung.setWordWrap(True)
@@ -481,7 +483,7 @@ class AusrollAssistent(QtWidgets.QDialog):
         zeile.addWidget(self.e_diagramm, 1)
         v.addLayout(zeile, 1)
         self.e_physik = self._label(14)
-        self.e_physik.setText(ROLLE_ALLEIN + " " + UEBERNEHMEN_HINWEIS)
+        self.e_physik.setText(SPEICHERN_HINWEIS)
         theme.rolle(self.e_physik, "neben")
         v.addWidget(self.e_physik)
         self.e_datei = self._label(13)
@@ -690,17 +692,17 @@ class AusrollAssistent(QtWidgets.QDialog):
             self.ordner = ""
             self.e_datei.setText(f"Rohdaten nicht gespeichert: {exc}")
         else:
+            res.rohdaten = self.ordner
             self.e_datei.setText(f"Ende: {a.grund}.  Rohdaten: {os.path.join(self.ordner, 'roh.csv')}")
         self._ergebnis_zeigen(a)
         self.zeige(ERGEBNIS)
-        self.ausgewertet.emit(res, "Assistent: Rolle allein, Rad abgehoben"
+        self.ausgewertet.emit(res, "Rollen-Kalibrierung (Assistent): Rolle allein, Rad abgehoben"
                               + (f" · {os.path.basename(self.ordner)}" if self.ordner else ""))
 
     def _ergebnis_zeigen(self, a: AuslaufAufnahme):
         r = self.result
         self.e_werte.setText(werte_html(r))
-        cur = self.params()
-        self.e_diagramm.zeige(r, cur)
+        self._diagramm()
         self._ergebnis_meldung_stil()
 
     def _ergebnis_meldung_stil(self):
@@ -711,7 +713,8 @@ class AusrollAssistent(QtWidgets.QDialog):
         if r.ok:
             text = "<br>".join(r.hinweise) if r.hinweise else "Auswertung in Ordnung."
             if self.uebernommen:
-                text = "✔  Übernommen – gilt ab jetzt für neue Läufe." + ("<br>" + text if r.hinweise else "")
+                text = ("✔  Als Rollen-Kalibrierung gespeichert – gilt ab jetzt für neue Läufe und den Ausrollversuch "
+                        "nach dem Lauf." + ("<br>" + text if r.hinweise else ""))
             farbe = T["warn_fg"] if r.hinweise else T["ok_fg"]
         else:
             text = r.meldung
@@ -719,13 +722,19 @@ class AusrollAssistent(QtWidgets.QDialog):
         self.e_meldung.setText(text)
         self.e_meldung.setStyleSheet(f"color: {farbe}; font-size: 17px; font-weight: 700;")
 
+    def _diagramm(self):
+        """Ergebnis mit der bisherigen Rollen-Kalibrierung (aus params(), nach dem Speichern = dieses Ergebnis)."""
+        p = self.params()
+        self.e_diagramm.zeige(self.result, p, ausrollen.RollenKalibrierung.aus_params(p))
+
     def _uebernehmen(self):
+        """„Als Rollen-Kalibrierung speichern“ (das Hauptfenster speichert, nicht in M0/M1)."""
         r = self.result
         if r is None or not r.ok or self.uebernommen:
             return
-        self.uebernehmen.emit(r, None)
+        self.kalib_speichern.emit(r)
         self.uebernommen = True
-        self.e_diagramm.zeige(r, self.params())            # „aktuell gültig“ = jetzt dieses Ergebnis
+        self._diagramm()
         self._ergebnis_meldung_stil()
         self.takt()
 
@@ -813,7 +822,7 @@ class AusrollAssistent(QtWidgets.QDialog):
             z_an = True
         elif s == ERGEBNIS:
             r = self.result
-            weiter, zurueck = "Übernehmen", "Nochmal"
+            weiter, zurueck = SPEICHERN_KNOPF, "Nochmal"
             w_an = r is not None and r.ok and not self.uebernommen
             z_an = True
         if lauf and s != ERGEBNIS:

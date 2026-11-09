@@ -229,6 +229,11 @@ def run_channels(run: Dict, res: Optional[physics.RunResult], p: physics.DynoPar
                 # Motor = Rad + Verluste (Ausrollversuch oder von Hand): Anteile getrennt
                 ch["Leistung Rad"] = Channel(res.full_ps_rad, "PS", "Auswertung")
                 ch["Verlustleistung"] = Channel(res.full_ps - res.full_ps_rad, "PS", "Auswertung")
+            if getattr(res, "full_ps_reifen", None) is not None:
+                # Rollen-Kalibrierung: Reifen an Rolle = Rad + Verlust der Rolle, Rest = Reifen, Kette, Getriebe
+                ch["Leistung Reifen an Rolle"] = Channel(res.full_ps_reifen, "PS", "Auswertung")
+                if res.verluste:
+                    ch["Antriebsverlust"] = Channel(res.full_ps - res.full_ps_reifen, "PS", "Auswertung")
     afr = np.asarray(run["afr"], float)
     ch["Lambda"] = Channel(lambda_from_afr(afr), "λ", "Gemisch")
     ch["AFR"] = Channel(np.where(afr > 0.5, afr, np.nan), "AFR", "Gemisch")

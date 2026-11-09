@@ -25,6 +25,10 @@ Erweiterung PyST: Verlustmoment optional mit quadratischem Anteil m2 (Vorgabe 0 
   Mv = M0 + n (M1 - M0)/n1 + m2 (n/1000) ((n - n1)/1000)   -> Mv(0) = M0 und Mv(n1) = M1 bleiben erhalten.
   Radleistung = Anteil aus der Rollenbeschleunigung (Ka J/i^2 a), Motorleistung = Radleistung + Verlust (Mv/i).
   Die Verluste kommen aus dem Ausrollversuch (ausrollen.py) oder sind von Hand eingetragen (verlust_quelle).
+Erweiterung PyST: Rollen-Kalibrierung rk_m0/rk_m1/rk_n1/rk_m2 (Verlust der Rolle allein, Lager und Luft, aus dem
+  Assistenten mit abgehobenem Rad, ausrollen.RollenKalibrierung). Ist sie da, rechnet evaluate zusaetzlich
+  Reifen an Rolle = Rad + Rollenverlust (Ka J/i^2 a + Mv_Rolle/i) und Antriebsverlust = Motor - Reifen an Rolle
+  (Reifen, Kette, Getriebeausgang). Rad- und Motorkurven bleiben unveraendert. Alle 0 = keine Kalibrierung.
 """
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -118,6 +122,12 @@ class DynoParams:
     n1: float = 1.0               # Rollendrehzahl zu M1 [1/min]
     m2: float = 0.0               # quadratischer Anteil des Verlustmoments [Nm/(1000/min)^2], 0 = linear
     verlust_quelle: str = ""      # woher M0/M1/m2 kommen: "" = von Hand, sonst z.B. "Ausrollversuch 08.11.2026 14:30"
+    # Rollen-Kalibrierung (Verlust der Rolle allein, Pruefstand, nicht je Fahrzeug), alle 0 = nicht kalibriert
+    rk_m0: float = 0.0
+    rk_m1: float = 0.0
+    rk_n1: float = 1.0
+    rk_m2: float = 0.0
+    rk_quelle: str = ""           # z.B. "Rollen-Kalibrierung 09.11.2026 18:00, R² 0,998"
     temp_c: float = 20.0
     p_mbar: float = 1013.0
 
@@ -157,6 +167,16 @@ class RunResult:
     n_prad_max: float = 0.0
     verluste: bool = False                    # Verlustmoment eingerechnet (M0/M1/m2 nicht alle 0)
     verlust_quelle: str = ""                  # Herkunft der Verluste (DynoParams.verlust_quelle)
+    # mit Rollen-Kalibrierung: Reifen an Rolle = Rad + Verlust der Rolle; Antriebsverlust = Motor - Reifen an Rolle
+    rolle_kalibriert: bool = False
+    rk_quelle: str = ""
+    ps_reifen: Optional[np.ndarray] = None
+    nm_reifen: Optional[np.ndarray] = None
+    full_ps_reifen: Optional[np.ndarray] = None
+    p_reifen_max: float = 0.0
+    n_preifen_max: float = 0.0
+    reifen_ps_pmax: float = 0.0               # Reifen an Rolle bei n_pmax [PS]
+    antrieb_ps_pmax: float = 0.0              # Antriebsverlust (Motor - Reifen an Rolle) bei n_pmax [PS]
 
     @property
     def segment(self) -> slice:
@@ -168,15 +188,28 @@ class RunResult:
             return ""
         return "Verluste: " + (self.verlust_quelle or "von Hand eingetragen (M0/M1)")
 
+    def reifen_text(self) -> str:
+        """Zeile Reifen an Rolle / Antriebsverlust ("" ohne Rollen-Kalibrierung)."""
+        if not self.rolle_kalibriert:
+            return ""
+        t = f"Reifen an Rolle {self.p_reifen_max:.1f} PS bei {self.n_preifen_max:.0f} 1/min"
+        if self.verluste:
+            t += (f"   |   Antriebsverlust (Reifen, Kette, Getriebe) {self.antrieb_ps_pmax:.1f} PS bei "
+                  f"{self.n_pmax:.0f} 1/min")
+        else:
+            t += " (Rad + Verlust der Rolle)"
+        return t
+
     def summary(self) -> str:
         if self.verluste:
             kopf = (f"Motor {self.p_max:.1f} PS bei {self.n_pmax:.0f} 1/min   |   "
                     f"Rad {self.p_rad_max:.1f} PS bei {self.n_prad_max:.0f} 1/min   |   ")
-        else:
-            kopf = f"{self.p_max:.1f} PS bei {self.n_pmax:.0f} 1/min   |   "
+        else:                                   # mit Rollen-Kalibrierung: sagen, dass das die Radleistung ist
+            kopf = f"{'Rad ' if self.rolle_kalibriert else ''}{self.p_max:.1f} PS bei {self.n_pmax:.0f} 1/min   |   "
         return (kopf + f"{self.m_max:.1f} Nm bei {self.n_mmax:.0f} 1/min   |   vmax {self.v_max:.0f} km/h\n"
                 f"DIN 70020 k = {self.ka:.3f}   |   {self.distance_m:.0f} m"
-                + (f"   |   {self.verlust_text()}" if self.verluste else ""))
+                + (f"   |   {self.verlust_text()}" if self.verluste else "")
+                + (f"\n{self.reifen_text()}" if self.rolle_kalibriert else ""))
 
 
 def sample_rate(dt) -> float:
@@ -272,9 +305,12 @@ def evaluate(n_roll_raw, dt_raw, p: DynoParams, n_meas_raw=None, afr_raw=None, e
     mv = loss_torque(n_roll_f, p.m0, p.m1, p.n1, p.m2)
     m_rad = ka * p.inertia / i ** 2 * a
     m = m_rad + mv / i
+    rk = bool(p.rk_m0 or p.rk_m1 or p.rk_m2)
+    m_reifen = m_rad + loss_torque(n_roll_f, p.rk_m0, p.rk_m1, p.rk_n1, p.rk_m2) / i if rk else None
     with np.errstate(invalid="ignore"):
         ps = PS_PER_W * w * m
         ps_rad = PS_PER_W * w * m_rad
+        ps_reifen = PS_PER_W * w * m_reifen if rk else None
 
     # Laufende wie LabVIEW (erste Verzoegerung oberhalb n_min) ...
     with np.errstate(invalid="ignore"):
@@ -313,7 +349,9 @@ def evaluate(n_roll_raw, dt_raw, p: DynoParams, n_meas_raw=None, afr_raw=None, e
                     stop=e, ma_used=int(p.ma), dq_used=int(p.dq),
                     ps_rad=ps_rad[sl], nm_rad=m_rad[sl], full_ps_rad=ps_rad,
                     verluste=bool(p.m0 or p.m1 or p.m2),
-                    verlust_quelle=p.verlust_quelle or "")
+                    verlust_quelle=p.verlust_quelle or "", rolle_kalibriert=rk, rk_quelle=p.rk_quelle or "")
+    if rk:
+        res.ps_reifen, res.nm_reifen, res.full_ps_reifen = ps_reifen[sl], m_reifen[sl], ps_reifen
     finite = np.isfinite(res.ps)
     if finite.any():
         jp = int(np.nanargmax(np.where(finite, res.ps, -np.inf)))
@@ -324,6 +362,12 @@ def evaluate(n_roll_raw, dt_raw, p: DynoParams, n_meas_raw=None, afr_raw=None, e
         jr = int(np.nanargmax(np.where(fr, res.ps_rad, -np.inf))) if fr.any() else jp
         res.p_rad_max, res.n_prad_max = float(res.ps_rad[jr]), float(res.n[jr])
         res.v_max = float(np.max(res.n) / i * p.roll_circ * 0.06)
+        if rk:
+            fz = np.isfinite(res.ps_reifen)
+            jz = int(np.nanargmax(np.where(fz, res.ps_reifen, -np.inf))) if fz.any() else jp
+            res.p_reifen_max, res.n_preifen_max = float(res.ps_reifen[jz]), float(res.n[jz])
+            res.reifen_ps_pmax = float(res.ps_reifen[jp])
+            res.antrieb_ps_pmax = float(res.ps[jp] - res.ps_reifen[jp])
     res.distance_m = float(np.sum(n_roll_raw / 60.0 * p.roll_circ * dt_raw))
     return res
 

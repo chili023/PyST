@@ -218,9 +218,12 @@ class RunController:
             return ""
         if not c.ok:
             return f"Ausrollversuch: {c.meldung}"
+        auf = _ausrollen.aufteilen(c, _ausrollen.RollenKalibrierung.aus_params(self.params))
+        n_pmax = self.result.n_pmax if self.result is not None else None
         return (f"Ausrollversuch: Verlust M0 {c.m0:.2f} / M1 {c.m1:.2f} Nm bei {c.n1:.0f} 1/min"
-                + (f", m2 {c.m2:.3f}" if c.quadratisch else "") + f", R² {c.r2:.3f} – unter "
-                "Einstellungen › Rolle/Lauf › Verluste übernehmen")
+                + (f", m2 {c.m2:.3f}" if c.quadratisch else "") + f", R² {c.r2:.3f}"
+                + (f" – {auf.text(n_pmax)}" if auf is not None else "")
+                + " – unter Einstellungen › Rolle/Lauf › Verluste übernehmen")
 
     def ratio_aus_den_funken(self, n_roll: np.ndarray, n_meas: np.ndarray) -> Optional[float]:
         """Uebersetzung nKW/nRolle aus Zuendung und Rolle des Laufs (ohne Ausrollen), None = nicht bestimmbar."""

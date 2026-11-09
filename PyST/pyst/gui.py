@@ -302,6 +302,8 @@ class SettingsPage(QtWidgets.QScrollArea):
         self.update_ka()
         # Herkunft der Verluste: Ausrollversuch, bis jemand M0/M1/n1/m2 von Hand aendert
         self.verlust_quelle = defaults.verlust_quelle
+        # Rollen-Kalibrierung (Pruefstand, einstellungen.json "rollen_kalibrierung"): geht als rk_* in params()
+        self.rollen_kalib = ausrollen.RollenKalibrierung.aus_dict(settings.get(ausrollen.KALIB_KEY))
         self._loss_guard = False
         for k in LOSS_KEYS:
             self.fields[k].valueChanged.connect(self._loss_edited)
@@ -408,7 +410,14 @@ class SettingsPage(QtWidgets.QScrollArea):
         if not self.filter_seconds:
             d["ma_s"] = d["dq_s"] = 0.0
         d["verlust_quelle"] = self.verlust_quelle
-        return physics.DynoParams(**d)
+        p = physics.DynoParams(**d)
+        k = getattr(self, "rollen_kalib", None)
+        return k.in_params(p) if k is not None else p
+
+    def set_rollen_kalib(self, k):
+        """Neue Rollen-Kalibrierung (ausrollen.RollenKalibrierung oder None) fuer params()."""
+        self.rollen_kalib = k if k is not None and k.gueltig else None
+        self.losses_changed.emit()
 
     def set_params(self, p: physics.DynoParams):
         """Filter in Sekunden, wenn p sie hat, sonst Messpunkte (z.B. LabVIEW-Lauf im Simulator)."""
@@ -449,10 +458,8 @@ class SettingsPage(QtWidgets.QScrollArea):
         if not (v["m0"] or v["m1"] or v["m2"]):
             text = "Keine Verluste: Ergebnis = Radleistung. Verluste aus dem Ausrollversuch (rechts daneben)."
         else:
-            rolle = "Rolle allein" in (self.verlust_quelle or "")      # Ausrollversuch-Assistent, Rad abgehoben
             text = ("Verluste: " + (self.verlust_quelle or "von Hand eingetragen")
-                    + (". Ergebnis „Motor“ = Rad + Verluste der Rolle (ohne Rad, Kette, Getriebe)." if rolle else
-                       ". Ergebnis = Motorleistung (Rad + Verluste)."))
+                    + ". Ergebnis = Motorleistung (Rad + Verluste).")
         self.loss_label.setText(text)
 
     def update_ka(self):
@@ -652,7 +659,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.db = db or Database()
         self.link: Optional[DynoLink] = None
         self.ctrl: Optional[RunController] = None
-        self.ausroll_dlg: Optional[AusrollAssistent] = None      # Ausrollversuch-Assistent (offen: kein Lauf)
+        self.ausroll_dlg: Optional[AusrollAssistent] = None      # Assistent Rollen-Kalibrierung (offen: kein Lauf)
         self.firmware = ""
         self.cache = RunCache()                    # run_id -> (run, result, channels, params)
         self.last_keepalive = 0.0
@@ -816,6 +823,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.b_view.clicked.connect(lambda: self._open_in_viewer(self._current_run_id()))
         self.b_del.clicked.connect(self.on_delete)
         self.page_kalib.uebernehmen.connect(self._apply_coast)
+        self.page_kalib.kalib_speichern.connect(self._rollen_kalib_speichern)
         self.page_kalib.lauf_auswerten.connect(self._coast_from_run)
         self.page_kalib.assistent.connect(self.on_ausroll_assistent)
         s.losses_changed.connect(lambda: self.page_kalib.set_current(s.params()))
@@ -1033,7 +1041,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         busy = self.ctrl is not None and self.ctrl.state in ACTIVE
         self.page_flash.verbindung_geaendert()             # Verbinden/Trennen: Karten der Firmware neu
         connected = self.link is not None
-        # im Lauf: Abbrechen bzw. Ausrollen beenden; Ausrollversuch-Assistent offen: kein Lauf
+        # im Lauf: Abbrechen bzw. Ausrollen beenden; Assistent Rollen-Kalibrierung offen: kein Lauf
         self.start_btn.setEnabled((connected and self.ausroll_dlg is None) or busy)
         self._start_knopf_stil()
         self.lauf_btn.setEnabled(not busy)
@@ -1392,7 +1400,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         if not self.ctrl or self.ctrl.state in ACTIVE:
             return
         if self.ausroll_dlg is not None:
-            self._set_status("Ausrollversuch-Assistent offen – erst schließen, dann START", farben.BALKEN_FEHLER)
+            self._set_status("Rollen-Kalibrierung (Assistent) offen – erst schließen, dann START", farben.BALKEN_FEHLER)
             return
         s = self.page_settings
         p = s.params()
@@ -1460,11 +1468,16 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             self._legende_zeigen()
         self._ergebnis_gross_zeigen(r, rid)                # Option „Ergebnis groß nach dem Lauf“
         if coast is not None:
-            self.page_kalib.show_result(coast, self._coast_label(rid), rid)
+            self.page_kalib.show_result(coast, self._coast_label(rid), rid, n_pmax=r.n_pmax)
             self.statusBar().showMessage(self.ctrl.coast_text(), 10000)
-            self.band.zeige(("Ausrollversuch ausgewertet – unter Einstellungen › Rolle/Lauf › Verluste prüfen und übernehmen"
-                             if coast.ok else f"Ausrollversuch: {coast.meldung}"),
-                            farben.GUT if coast.ok else farben.FEHLER, 8.0)
+            auf = self.page_kalib.aufteilung()
+            if not coast.ok:
+                band = f"Ausrollversuch: {coast.meldung}"
+            elif auf is not None:
+                band = f"Ausrollversuch: {auf.kurz(r.n_pmax)}"
+            else:
+                band = "Ausrollversuch ausgewertet – unter Einstellungen › Rolle/Lauf › Verluste prüfen und übernehmen"
+            self.band.zeige(band, farben.GUT if coast.ok else farben.FEHLER, 8.0)
 
     def _ratio_aus_funken_uebernehmen(self) -> str:
         """Uebersetzung aus den Funken (Einstellung „uebersetzung_art“): gemessenen Wert eintragen. -> Hinweistext
@@ -1511,13 +1524,13 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         n_ende, _t_max, quad = self.page_kalib.config()
         c = wait_in_thread(lambda: ausrollen.analyse(run["n_roll"], run["dt"], p, start=start, n_meas=run["n_meas"],
                                                      n_ende=n_ende, quadratisch=quad))
-        self.page_kalib.show_result(c, self._coast_label(rid), rid)
+        self.page_kalib.show_result(c, self._coast_label(rid), rid, n_pmax=res.n_pmax if res is not None else None)
 
     def on_ausroll_assistent(self):
-        """Ausrollversuch-Assistent (Rad abgehoben, Rolle allein; nicht modal, schon offen: nach vorn). Nicht
+        """Assistent Rollen-Kalibrierung (Rad abgehoben, Rolle allein; nicht modal, schon offen: nach vorn). Nicht
         waehrend eines Laufs; solange er offen ist, startet kein Lauf."""
         if self._lauf_aktiv():
-            self.statusBar().showMessage("Ausrollversuch-Assistent: erst nach dem Lauf", 5000)
+            self.statusBar().showMessage("Rollen-Kalibrierung: erst nach dem Lauf", 5000)
             return
         d = self.ausroll_dlg
         if d is not None:
@@ -1527,7 +1540,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         d = self.ausroll_dlg = AusrollAssistent(
             self, lambda: self.ctrl, self.page_settings.params, self.settings.setdefault("ausrollen", {}),
             lambda: save_settings(self.settings), self.db.runs_dir, self._assistent_verbinden, self._lauf_aktiv)
-        d.uebernehmen.connect(self._apply_coast)
+        d.kalib_speichern.connect(self._rollen_kalib_speichern)
         d.ausgewertet.connect(lambda c, text: self.page_kalib.show_result(c, text))
 
         def fertig(_r, d=d):
@@ -1549,8 +1562,28 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             self.link.start()
         return self.link is not None
 
+    def _rollen_kalib_speichern(self, c):
+        """„Als Rollen-Kalibrierung speichern“ (Assistent bzw. Gruppe „Letzter Ausrollversuch“): Verluste der Rolle
+        allein als Pruefstands-Kalibrierung ablegen (einstellungen.json), nicht in M0/M1. Gilt ab jetzt fuer neue
+        Laeufe (Reifen an Rolle) und die Aufteilung der Ausrollversuche."""
+        if c is None or not c.ok or not c.rolle_allein:
+            return
+        k = ausrollen.RollenKalibrierung.aus_ergebnis(c)
+        self.settings[ausrollen.KALIB_KEY] = k.als_dict()
+        self.page_settings.set_rollen_kalib(k)
+        self.page_kalib.set_kalibrierung(k)
+        self._persist()
+        save_settings(self.settings)
+        text = "Rollen-Kalibrierung gespeichert: " + k.kurztext(self.page_settings.params().ratio)
+        self._set_status(text, "#b8e6b8")
+        self.statusBar().showMessage(text, 8000)
+
     def _apply_coast(self, c, rid):
-        """„Übernehmen“: Verluste eintragen, speichern und den Lauf des Ausrollversuchs damit neu rechnen."""
+        """„Übernehmen“: Verluste eintragen, speichern und den Lauf des Ausrollversuchs damit neu rechnen. Ein
+        Ergebnis mit abgehobenem Rad gehoert nicht in M0/M1: es wird Rollen-Kalibrierung."""
+        if c is not None and c.rolle_allein:
+            self._rollen_kalib_speichern(c)
+            return
         s = self.page_settings
         s.set_losses(c.m0, c.m1, c.n1, c.m2, c.quelle())
         self._persist()
@@ -1561,6 +1594,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             e = self._entry(rid)
             if e is not None:
                 q = c.params_fuer(e[3])
+                if s.rollen_kalib is not None:             # Pruefstand ist kalibriert: auch fuer diesen Lauf
+                    q = s.rollen_kalib.in_params(q)
                 self.db.update_run(rid, params=asdict(q))
                 self.cache.pop(rid, None)
                 self.viewer.invalidate(rid)
@@ -1845,6 +1880,9 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
                             f"{row.m_max:.1f} Nm (Motor) bei {row.n_mmax:.0f} 1/min")
             else:
                 ergebnis = f"{row.p_max:.1f} PS bei {row.n_pmax:.0f} 1/min\n{row.m_max:.1f} Nm bei {row.n_mmax:.0f} 1/min"
+            if res is not None and res.rolle_kalibriert:
+                ergebnis += f"\nReifen an Rolle {res.p_reifen_max:.1f} PS" + (
+                    f", Antrieb {res.antrieb_ps_pmax:.1f} PS" if res.verluste else "")
             rows.append({
                 "farbe": run_color(row, theme.TAG),       # Bericht auf weissem Papier
                 "name": self._run_label(row) + (f"\n{row.notiz}" if row.notiz else ""),
@@ -1855,6 +1893,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
                 "details": ("" if p is None else
                             f"i = {p.ratio:.3f}, J = {p.inertia:.2f}\n{physics.filter_text(p, row.rate)}")
                 + (f"\n{res.verlust_text()}" if res is not None and res.verluste else "")
+                + (f"\n{res.rk_quelle or 'Rollen-Kalibrierung'}" if res is not None and res.rolle_kalibriert else "")
                 + (f"\nMessfehler: {fault_text(row.fehler)}" if row.fehler else ""),
             })
         return rows
@@ -1907,7 +1946,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         new = self.ctrl.poll()
         lv = self.ctrl.live
         if new and self.ausroll_dlg is not None and self.ctrl.state not in ACTIVE:
-            self.ausroll_dlg.telegramme(new)               # Ausrollversuch-Assistent: Rolle ohne Lauf
+            self.ausroll_dlg.telegramme(new)               # Assistent Rollen-Kalibrierung: Rolle ohne Lauf
         if new:
             f = new[-1]
             ecu_rpm = self.page_rusefi.live("RPMValue")
@@ -1974,7 +2013,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
     def _taste_lauf(self):
         """Wie der Start-Knopf, nur wenn ein Lauf möglich ist. Abbrechen geht nur am PC."""
         grund = self._taste_sperre() or ("Übersetzung wird gerade gemessen" if self.ratio_mess.aktiv else "") \
-            or ("Ausrollversuch-Assistent offen" if self.ausroll_dlg is not None else "") \
+            or ("Rollen-Kalibrierung (Assistent) offen" if self.ausroll_dlg is not None else "") \
             or physics.check_params(self.page_settings.params())
         if grund:
             self._taste_abgelehnt("Neuer Lauf", grund)

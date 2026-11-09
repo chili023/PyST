@@ -7,10 +7,11 @@ Ablauf nach 'm': Motor haelt 3000 1/min, nach 3 s Vollgas bis 11500 1/min, dann 
 und die Rolle rollt aus. Motor ~ 32 PS bei 10000 1/min (wie die Referenzlaeufe vom 26.05.26).
 Ausrollversuch (SimEngine(ausrollen=True), Port 'SIM:ausrollen'): nach dem Gas-Wegnehmen bremst der Motor noch
 t_kupplung Sekunden mit, dann ist die Kupplung gezogen: Zuendung auf Leerlauf, die Rolle rollt mit Rad und Kette
-(Verlust loss_ab0 + loss_ab1 * w, auch beim Beschleunigen) bis n_bremse aus, erst dann bremst der Fahrer.
-Ausrollversuch-Assistent (RadAbEngine, Port 'SIM:rolle'): Halten, Vollgas bis n_lift, dort t_oben Sekunden halten,
-dann Rad von der Rolle: die Rolle laeuft frei aus, nur mit ihrem eigenen, bekannten Verlust (rolle_m0/m1/n1/m2 wie
-physics.loss_torque); unter n_wieder kommt das Rad wieder auf die Rolle und alles beginnt von vorn.
+(Verlust Rolle rolle_m0/m1/n1/m2 + Reifen/Kette loss_ab0 + loss_ab1 * w, auch beim Beschleunigen, RollenEngine) bis
+n_bremse aus, erst dann bremst der Fahrer.
+Rollen-Kalibrierung (Assistent, RadAbEngine, Port 'SIM:rolle'): Halten, Vollgas bis n_lift, dort t_oben Sekunden
+halten, dann Rad von der Rolle: die Rolle laeuft frei aus, nur mit ihrem eigenen, bekannten Verlust (dasselbe
+Rollenmodell wie 'SIM:ausrollen'); unter n_wieder kommt das Rad wieder auf die Rolle und alles beginnt von vorn.
 
 PST-Diag 1: '#?', '#MODE', '#RUN', '#RATE', '#BURST' (mit Trigger), '#GET/#SET/#SAVE/#DEFAULTS'.
 Dafuer erzeugt der Simulator die einzelnen Flanken von Zuendung und Rolle (mit uint32-Zeitstempeln,
@@ -2420,34 +2421,21 @@ class LambdaSimDevice:
             port._out(f"#ERR;WBF;version;ver={ver};app=neu\r\n" if ver else f"#OK;WBF;END;ver={okv};n=5\r\n")
 
 
-def ausroll_engine(**kw) -> SimEngine:
-    """Simulator fuer den Ausrollversuch: Rad/Kette verlieren zusaetzlich 2 Nm + 0,04 Nm/(rad/s) an der Rolle."""
-    args = dict(ausrollen=True, loss_ab0=2.0, loss_ab1=0.04)
-    args.update(kw)
-    return SimEngine(**args)
+RAD_KETTE = (4.0, 0.08)        # Reifen, Kette, Getriebeausgang: loss_ab0 [Nm] + loss_ab1 [Nm/(rad/s)] an der Rolle
 
 
-class RadAbEngine(SimEngine):
-    """Simulator fuer den Ausrollversuch-Assistenten (Port 'SIM:rolle'), Ablauf in Schleife:
-    hold (Haltedrehzahl, 3 s) -> wot (Vollgas bis n_lift) -> oben (n_lift t_oben Sekunden halten) -> frei (Rad
-    abgehoben, Motor im Leerlauf, Rolle laeuft allein aus) -> unter n_wieder (Motordrehzahl Rolle x i) Rad wieder
-    auf die Rolle -> hold …
-    Verlust der Rolle allein (Lager, Luft) = loss_rolle(w) mit rolle_m0/m1/n1/m2 wie physics.loss_torque (n1 und
-    Drehzahlen an der Rolle in 1/min) – das Ergebnis des Assistenten muss das treffen. Mit Rad auf der Rolle kommen
-    Rad und Kette dazu (loss_ab0 + loss_ab1 * w wie ausroll_engine)."""
+class RollenEngine(SimEngine):
+    """SimEngine mit dem Rollenverlust wie physics.loss_torque (rolle_m0/m1/n1/m2, Drehzahlen an der Rolle in 1/min)
+    statt loss0/loss2, dazu Reifen/Kette/Getriebe loss_ab0 + loss_ab1 * w. Gemeinsames Modell von 'SIM:ausrollen'
+    (gesamt = Rolle + Reifen/Kette) und 'SIM:rolle' (Rad abgehoben = Rolle allein): Die Rollen-Kalibrierung aus
+    SIM:rolle trifft so genau den Rollenanteil des Ausrollversuchs in SIM:ausrollen, die Differenz ist Reifen/Kette."""
 
     def __init__(self, rolle_m0: float = 8.0, rolle_m1: float = 30.0, rolle_n1: float = 1600.0,
-                 rolle_m2: float = 5.0, t_oben: float = 4.0, n_wieder: float = 2000.0, **kw):
-        kw.setdefault("loss_ab0", 2.0)
-        kw.setdefault("loss_ab1", 0.04)
+                 rolle_m2: float = 5.0, **kw):
+        kw.setdefault("loss_ab0", RAD_KETTE[0])
+        kw.setdefault("loss_ab1", RAD_KETTE[1])
         self.rolle_m0, self.rolle_m1, self.rolle_n1, self.rolle_m2 = rolle_m0, rolle_m1, rolle_n1, rolle_m2
-        self.t_oben, self.n_wieder = t_oben, n_wieder
-        self.rad_ab = False
         super().__init__(**kw)
-
-    def reset(self):
-        super().reset()
-        self.rad_ab = False
 
     def loss_rolle(self, w_roll: float) -> float:
         """Verlustmoment der Rolle allein [Nm] bei w_roll [rad/s] (Modell wie physics.loss_torque)."""
@@ -2456,6 +2444,40 @@ class RadAbEngine(SimEngine):
         mv = self.rolle_m0 + n * (self.rolle_m1 - self.rolle_m0) / n1
         mv += self.rolle_m2 * (n / 1000.0) * ((n - n1) / 1000.0)
         return mv if w_roll > 0 else 0.0
+
+    def loss_rad(self, w_roll: float) -> float:
+        """Reifen, Kette, Getriebeausgang [Nm an der Rolle]."""
+        return self.loss_ab0 + self.loss_ab1 * w_roll if w_roll > 0 else 0.0
+
+    def loss_total(self, w_roll: float) -> float:
+        return self.loss_rolle(w_roll) + self.loss_rad(w_roll)
+
+
+def ausroll_engine(**kw) -> SimEngine:
+    """Simulator fuer den Ausrollversuch (Port 'SIM:ausrollen'): Rolle wie RollenEngine, Reifen/Kette/Getriebe
+    verlieren zusaetzlich RAD_KETTE (4 Nm + 0,08 Nm/(rad/s)) an der Rolle."""
+    args = dict(ausrollen=True)
+    args.update(kw)
+    return RollenEngine(**args)
+
+
+class RadAbEngine(RollenEngine):
+    """Simulator fuer die Rollen-Kalibrierung (Assistent, Port 'SIM:rolle'), Ablauf in Schleife:
+    hold (Haltedrehzahl, 3 s) -> wot (Vollgas bis n_lift) -> oben (n_lift t_oben Sekunden halten) -> frei (Rad
+    abgehoben, Motor im Leerlauf, Rolle laeuft allein aus) -> unter n_wieder (Motordrehzahl Rolle x i) Rad wieder
+    auf die Rolle -> hold …
+    Verlust der Rolle allein (Lager, Luft) = loss_rolle(w) wie RollenEngine (dieselben Werte wie 'SIM:ausrollen') –
+    das Ergebnis des Assistenten muss das treffen. Mit Rad auf der Rolle kommen Reifen und Kette dazu (loss_rad)."""
+
+    def __init__(self, rolle_m0: float = 8.0, rolle_m1: float = 30.0, rolle_n1: float = 1600.0,
+                 rolle_m2: float = 5.0, t_oben: float = 4.0, n_wieder: float = 2000.0, **kw):
+        self.t_oben, self.n_wieder = t_oben, n_wieder
+        self.rad_ab = False
+        super().__init__(rolle_m0=rolle_m0, rolle_m1=rolle_m1, rolle_n1=rolle_n1, rolle_m2=rolle_m2, **kw)
+
+    def reset(self):
+        super().reset()
+        self.rad_ab = False
 
     def loss_total(self, w_roll: float) -> float:
         rad = 0.0 if self.rad_ab or w_roll <= 0 else self.loss_ab0 + self.loss_ab1 * w_roll

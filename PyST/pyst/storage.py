@@ -145,9 +145,19 @@ def save_run(ctrl, vehicle: str = "", firmware: str = "", base_dir: str = "") ->
             "verluste": res.verlust_text(),
         },
     }
+    if res is not None and getattr(res, "rolle_kalibriert", False):
+        # mit Rollen-Kalibrierung: Reifen an Rolle = Rad + Verlust der Rolle, Antriebsverlust = Motor - Reifen
+        meta["ergebnis"].update({
+            "rollen_kalibrierung": res.rk_quelle or "Rollen-Kalibrierung",
+            "p_reifen_max_ps": res.p_reifen_max, "n_preifen_max": res.n_preifen_max,
+            "reifen_ps_bei_pmax": res.reifen_ps_pmax, "antriebsverlust_ps_bei_pmax": res.antrieb_ps_pmax})
     coast = getattr(ctrl, "coast", None)
     if coast is not None:
         meta["ausrollen"] = coast.als_dict(punkte=True)
+        from . import ausrollen as _ausrollen
+        auf = _ausrollen.aufteilen(coast, _ausrollen.RollenKalibrierung.aus_params(p))
+        if auf is not None:
+            meta["ausrollen"]["aufteilung"] = auf.als_dict(res.n_pmax if res is not None else None)
     with open(os.path.join(folder, "lauf.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=2, ensure_ascii=False)
     # LabVIEW-Datei mit Filtern in Messpunkten (LabVIEW kennt keine Sekunden)

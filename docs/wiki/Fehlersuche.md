@@ -89,8 +89,8 @@ sie gelten für diesen Lauf. Sind die SETUP-WERTE schon geändert, kommt die Fra
 fragt nie. Abschaltbar mit **Vor START nachfragen, ob sich das Setup geändert hat** (Einstellungen › Rolle/Lauf).
 Siehe [Messen](Messen.md#start-nachfrage).
 
-**START geht nicht: „Ausrollversuch-Assistent offen – erst schließen, dann START“.**
-Solange das Fenster des Ausrollversuch-Assistenten offen ist, startet kein Lauf. Assistent schließen.
+**START geht nicht: „Rollen-Kalibrierung (Assistent) offen – erst schließen, dann START“.**
+Solange das Fenster der Rollen-Kalibrierung offen ist, startet kein Lauf. Assistent schließen.
 
 **Ein alter Lauf oder ein Mittelwert soll ins Messdiagramm.**
 In Messen die Seitenleiste **Läufe** öffnen und oben **＋** drücken („Läufe hinzufügen“, Art z. B. „nur

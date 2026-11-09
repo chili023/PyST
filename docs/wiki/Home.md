@@ -21,7 +21,7 @@ Datenbank und hilft beim Vergleichen von Setups.
 | **Auswertung** | Läufe überlagern wie in MegaLogViewer, bis zu 4 Felder, Werte am Cursor, Setup-Vergleich, Mittelwert aus mehreren Läufen, PDF- und CSV-Export |
 | **Weitergeben** | `.pyst`-Datei (öffnet in PyST) oder HTML-Datei (öffnet in jedem Browser, offline) |
 | **Oszi / Dauermessung** | Fehlersuche an Zündung und Rolle: Linienschreiber, Software-Trigger, Ereignisliste, Flanken-Ansicht |
-| **Ausrollversuch** | Verluste von Rolle, Rad, Kette bestimmen, dann Motorleistung neben der Radleistung. Assistent für die Verluste der Rolle allein (Rad abgehoben) |
+| **Ausrollversuch** | Verluste von Rolle, Rad, Kette bestimmen, dann Motorleistung neben der Radleistung. Einmalige Rollen-Kalibrierung (Rad abgehoben) teilt sie in Rolle und Reifen/Kette/Getriebe auf |
 | **PyST-Basis & Zange** | Funk-Zündzange mit Tasten, Lambda-Heizung, WLAN, WLAN-Steckdosen |
 | **Software & Firmware** | installierte und neueste PyST-Version; Basis, Zange, Arduino Mega und STM32 (F446) aus PyST heraus aktualisieren |
 | **Darstellung** | Tag, Nacht oder Auto, Fenstergröße einstellbar |
@@ -54,8 +54,9 @@ Weitere Seiten: [Installation](Installation.md) · [Erste Schritte](Erste-Schrit
 - **Fähnchen am Cursor:** Jede Kurve zeigt ihren Wert in der Farbe des Laufs. Die Live-Kacheln rechts zeigen dabei die
   Werte des letzten Laufs an der Cursor-Drehzahl. Die Zeile „Werte am Cursor“ unter dem Diagramm ist weg.
 - **Rechte Spalte:** bis 12 Live-Felder, ab 5 zweispaltig und kompakt; UMGEBUNG in einer Zeile, ERGEBNIS kompakt.
-- **Ausrollversuch-Assistent** (Einstellungen › Rolle/Lauf): Rad von der Rolle nehmen und die Verluste der Rolle
-  allein messen. Siehe [Ausrollversuch](Ausrollversuch.md#ohne-lauf-assistent-mit-abgehobenem-rad).
+- **Rollen-Kalibrierung** (Einstellungen › Rolle/Lauf): einmal das Rad von der Rolle nehmen und messen, wie schnell
+  die Rolle allein ausrollt. Danach teilt PyST den Ausrollversuch nach dem Lauf in Rolle und Reifen/Kette/Getriebe
+  auf. Siehe [Ausrollversuch](Ausrollversuch.md#rollen-kalibrierung-ausrollen-ohne-rad).
 - **Software & Firmware:** neuer Name des Unterreiters, Kachel **PyST (Software)** mit installierter und verfügbarer
   Version. Nicht angeschlossene Geräte sind ausgegraut.
 
@@ -82,7 +83,7 @@ Alle Änderungen: [Release Notes 1.4.2](https://github.com/chili023/PyST/blob/ma
 - Mega und F446 aus PyST flashen.
 - Übersetzungsart **Funkenmessung**.
 - **Zangentasten** im Fenster „Übersetzung live abgleichen“.
-- **Ausrollversuch-Assistent** mit abgehobenem Rad (1.4.2).
+- **Rollen-Kalibrierung** mit abgehobenem Rad und Aufteilung der Verluste (1.4.2).
 
 Diese Funktionen sind nur im Simulator bzw. mit Tests geprüft. Rückmeldungen bitte über die
 [Issues](https://github.com/chili023/PyST/issues).
