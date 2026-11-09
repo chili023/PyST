@@ -251,9 +251,10 @@ class SettingsPage(QtWidgets.QScrollArea):
         note.setWordWrap(True)
         theme.rolle(note, "neben")
         fl.addRow(note)
-        self.start_nachfrage = QtWidgets.QCheckBox("Bei geändertem Setup vor START nachfragen")
-        self.start_nachfrage.setToolTip("Weicht das Setup vom letzten Lauf ab, fragt PyST vor dem Start nach "
-                                        "(Messen). Einstellung „start_nachfrage_setup“.")
+        self.start_nachfrage = QtWidgets.QCheckBox("Vor START nachfragen, ob sich das Setup geändert hat")
+        self.start_nachfrage.setToolTip("Ist in SETUP-WERTE (Messen) nichts geändert, zeigt START kurz die Schnellwerte "
+                                        "zum Eintragen von Änderungen. Die Zangentaste „Neuer Lauf“ fragt nie. "
+                                        "Einstellung „start_nachfrage_setup“.")
         self.start_nachfrage.setChecked(bool(settings.get("start_nachfrage_setup", True)))
         self.start_nachfrage.setStyleSheet("font-weight: 600;")
         fl.addRow(self.start_nachfrage)
@@ -1038,7 +1039,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.vehicle_combo.setEnabled(not busy)
         self.setup_combo.setEnabled(not busy)
         self.setup_zeile.setEnabled(not busy)
-        self.b_ref.setEnabled(not busy)
+        self.b_hinzu.setEnabled(not busy)
 
     def _persist(self):
         s = self.page_settings
@@ -1369,8 +1370,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------ Lauf
     def on_start(self, *_a, nachfrage: bool = True):
-        """START (F1). nachfrage=False: bei geaendertem Setup nicht fragen (Taste der Zange), die Werte gelten
-        dann nur fuer diesen Lauf."""
+        """START (F1). nachfrage=False (Taste „Neuer Lauf“ der Zange): nicht nach dem Setup fragen
+        (MessenMixin._setup_vor_start), geaenderte Werte gelten fuer diesen Lauf."""
         if not self.ctrl or self.ctrl.state in ACTIVE:
             return
         s = self.page_settings
@@ -2087,7 +2088,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             "verluste": self.page_kalib, "pruefen": self.page_pruef, "tasten": self.page_tasten}
 
     def _start_nachfrage_geaendert(self, on: bool):
-        """Rolle/Lauf: „Bei geändertem Setup vor START nachfragen“ (gelesen beim START unter Messen)."""
+        """Rolle/Lauf: „Vor START nachfragen, ob sich das Setup geändert hat“ (gelesen beim START unter Messen)."""
         self.settings["start_nachfrage_setup"] = bool(on)
         save_settings(self.settings)
 
