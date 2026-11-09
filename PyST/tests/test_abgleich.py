@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 
-from pyst import abgleich_dialog as ad, physics, theme  # noqa: E402
+from pyst import abgleich_dialog as ad, physics, tasten, theme  # noqa: E402
 from pyst.kacheln import zahl  # noqa: E402
 from pyst.runner import IDLE, RUN, Live  # noqa: E402
 
@@ -105,6 +105,15 @@ class Rechnen(unittest.TestCase):
         self.assertEqual(ad.tasten_schritt(K.Key_Up, C.ControlModifier), 1.0)
         self.assertEqual(ad.tasten_schritt(K.Key_Down, C.ControlModifier), -1.0)
         self.assertEqual(ad.tasten_schritt(K.Key_A, C.NoModifier), 0.0)
+
+    def test_zangen_kennung(self):
+        self.assertEqual(tasten.abgleich_kennung("T4"), "T4")
+        self.assertEqual(tasten.abgleich_kennung("T1/Z2"), "T1")
+        self.assertEqual(tasten.abgleich_kennung("t3"), "T3")
+        self.assertIsNone(tasten.abgleich_kennung("Marker"))
+        self.assertIsNone(tasten.abgleich_kennung(""))
+        self.assertEqual(tasten.packen(tasten.ABGLEICH_SETUP), 0x111111)      # Marker auf allen sechs Gesten
+        self.assertEqual(tasten.ABGLEICH_SCHRITTE, {"T1": -0.1, "T2": 0.1, "T3": -0.05, "T4": 0.05})
 
     def test_skala(self):
         from pyst.messen_page import DREHZAHL_STANDARD
@@ -274,6 +283,50 @@ class Dialog(unittest.TestCase):
         self.assertEqual(self.seite.fields["ratio"].value(), 6.85)
         self.assertIn("Lauf", d.hinweis.text())
 
+    def test_zangen_tasten(self):
+        d = self.dlg
+        f = self.seite.fields["ratio"]
+        self.assertFalse(d.zange_zeile.isVisibleTo(d))              # ohne Zange keine Zeile
+        for k, soll in (("T4", 6.9), ("T4", 6.95), ("T2", 7.05), ("T1", 6.95), ("T3", 6.9)):
+            self.assertTrue(d.zange_taste(k))
+            self.assertEqual(f.value(), soll, k)
+        self.assertEqual(d.zange_meldung.text(), "Zange T3: −0,05")
+        self.assertEqual(d.spin.property("hervor"), True)            # Wert springt sichtbar
+        d._blink_bis = time.time() - 1
+        d.takt()
+        self.assertEqual(d.spin.property("hervor"), False)
+        self.assertFalse(d.zange_taste("T9"))
+        f.setValue(0.55)
+        self.assertTrue(d.zange_taste("T3"))
+        self.assertEqual(f.value(), 0.5)
+        self.assertFalse(d.zange_taste("T1"))                      # Grenze
+        self.assertEqual(f.value(), 0.5)
+        self.assertIn("Grenze", d.zange_meldung.text())
+        f.setValue(49.95)
+        d.zange_taste("T2")
+        self.assertFalse(d.zange_taste("T4"))
+        self.assertEqual(f.value(), 50.0)
+        self.ctrl.state = RUN                                        # im Lauf gesperrt
+        d.takt()
+        self.assertFalse(d.zange_taste("T3"))
+        self.assertEqual(f.value(), 50.0)
+        self.assertIn("gesperrt", d.zange_meldung.text())
+
+    def test_zangen_zeile(self):
+        text = ["Zange nicht verbunden"]
+        d = ad.AbgleichDialog(None, self.seite, lambda: self.c, zange=lambda: text[0])
+        try:
+            d.show()
+            pump(0.02)
+            self.assertEqual(d.zange_zeile.text(), "Zange nicht verbunden")
+            text[0] = tasten.ABGLEICH_TEXT
+            d.takt()
+            self.assertEqual(d.zange_zeile.text(), "Zange: T1 −0,1 · T2 +0,1 · T3 −0,05 · T4 +0,05")
+            self.assertTrue(d.zange_zeile.isVisible())
+        finally:
+            d.done(0)
+            d.deleteLater()
+
     def test_passt_auf_1280x800_tag_und_nacht(self):
         d = self.dlg
         ms = d.minimumSizeHint()
@@ -364,6 +417,123 @@ class ImHauptfenster(unittest.TestCase):
             self.assertEqual(w.ctrl.params.ratio, 6.85)
         finally:
             w.on_connect()
+
+
+class MitZange(unittest.TestCase):
+    """Hauptfenster gegen SIM:basis mit gekoppelter Zange: Tasten-Override, Tasten T1–T4, keine Marker."""
+
+    def setUp(self):
+        from pyst import gui
+        from pyst.tasten import TastenSync
+        self.gui, self.Sync = gui, TastenSync
+        self.w = gui.MainWindow()
+        self.w.resize(1280, 760)
+        self.w.show()
+        pump(0.1)
+
+    def tearDown(self):
+        from conftest import close_window
+        close_window(self.w, APP)
+        theme.manager().setze(theme.TAG, speichern=False)
+        gc.collect()
+        APP.processEvents()
+
+    def warte(self, cond, sec=5.0):
+        ende = time.time() + sec
+        while time.time() < ende:
+            APP.processEvents()
+            if cond():
+                return True
+            time.sleep(0.01)
+        return False
+
+    def verbinden(self):
+        w = self.w
+        w.page_settings.port_combo.setEditText("SIM:basis")
+        self.assertTrue(w.on_connect())
+        ser = w.link.ser
+        ser.settings["sim_zange_mark"] = "0"                    # keine zufälligen Tasten
+        self.assertTrue(self.warte(lambda: w.page_tasten.sync.zustand == self.Sync.OK))
+        return ser
+
+    def test_override_tasten_und_keine_marker(self):
+        w = self.w
+        ser = self.verbinden()
+        try:
+            eigen = tasten.packen(w.page_tasten.setup)
+            self.assertEqual(int(ser.z_tasten), eigen)
+            s = w.page_settings
+            s.fields["ratio"].setValue(6.85)
+            w.on_abgleich_live()
+            d = w.abgleich_dlg
+            self.assertTrue(self.warte(lambda: ser.z_tasten == 0x111111))       # Override an der Zange
+            self.assertEqual(w.settings.get("zange_tasten", {}).get("t3_kurz", "lauf"), "lauf")  # nicht gespeichert
+            self.assertTrue(self.warte(lambda: d.zange_zeile.text() == tasten.ABGLEICH_TEXT))
+            marker = len(w.page_oszi.markers)
+            ereignisse = len(w.ctrl.basis_events)
+            ser.z_led.clear()
+            ser.sim_taste("t4_kurz")
+            self.assertTrue(self.warte(lambda: s.fields["ratio"].value() == 6.9))
+            self.assertTrue(self.warte(lambda: tasten.LED_OK in ser.z_led))
+            self.assertEqual(d.zange_meldung.text(), "Zange T4: +0,05")
+            ser.sim_taste("t4_lang")                                  # lang = dieselbe Kennung
+            self.assertTrue(self.warte(lambda: s.fields["ratio"].value() == 6.95))
+            ser.sim_taste("t2_kurz")
+            self.assertTrue(self.warte(lambda: s.fields["ratio"].value() == 7.05))
+            ser.sim_taste("t1_kurz")
+            self.assertTrue(self.warte(lambda: s.fields["ratio"].value() == 6.95))
+            ser.sim_taste("t3_lang")
+            self.assertTrue(self.warte(lambda: s.fields["ratio"].value() == 6.9))
+            ser._event("MARK", "zange", "T2/Z2")                    # zweite Zange
+            self.assertTrue(self.warte(lambda: s.fields["ratio"].value() == 7.0))
+            pump(0.3)
+            self.assertEqual(len(w.page_oszi.markers), marker)          # keine Marker
+            self.assertEqual(len(w.ctrl.basis_events), ereignisse)
+            self.assertNotIn("Marker", w.statusBar().currentMessage())
+            # Neustart der Zange bei offenem Fenster: Override wieder hinaus
+            ser.sim_zange_neustart()
+            self.assertTrue(self.warte(lambda: ser.z_tasten == 0x111111 and
+                                       w.page_tasten.sync.zustand == self.Sync.OK))
+            # Abbrechen: Wert zurück, eigenes Setup wieder an der Zange
+            d.b_abbrechen.click()
+            self.assertEqual(s.fields["ratio"].value(), 6.85)
+            self.assertIsNone(w.page_tasten.override)
+            self.assertTrue(self.warte(lambda: ser.z_tasten == eigen))
+            # danach sind Zangen-Marker wieder Marker
+            n = len(w.page_oszi.markers)
+            ser.sim_taste("t1_kurz")
+            self.assertTrue(self.warte(lambda: len(w.page_oszi.markers) == n + 1))
+            self.assertEqual(s.fields["ratio"].value(), 6.85)
+            # Übernehmen nimmt den Override ebenso zurück
+            w.on_abgleich_live()
+            self.assertTrue(self.warte(lambda: ser.z_tasten == 0x111111))
+            ser.sim_taste("t2_kurz")
+            self.assertTrue(self.warte(lambda: s.fields["ratio"].value() == 6.95))
+            w.abgleich_dlg.b_ok.click()
+            self.assertTrue(self.warte(lambda: ser.z_tasten == eigen))
+            self.assertAlmostEqual(w.settings["params"]["ratio"], 6.95)
+        finally:
+            w.on_connect()
+
+    def test_blitzmodus_und_ohne_zange(self):
+        from pyst.basis import ZangeStatus
+        w = self.w
+        w.on_abgleich_live()
+        d = w.abgleich_dlg
+        d.takt()
+        self.assertEqual(d.zange_zeile.text(), "Zange nicht verbunden")
+        w.page_tasten.sync.zange(True)
+        w.page_hw.zst = ZangeStatus(blitz=1)
+        d.takt()
+        self.assertEqual(d.zange_zeile.text(), "Zange im Blitzmodus – Tasten wirken dort nicht")
+        from pyst.basis import parse_event
+        self.assertFalse(w._abgleich_marker(parse_event("E;100;MARK;zange;T1")))   # fester Marker im Blitzmodus
+        w.page_hw.zst = None
+        self.assertTrue(w._abgleich_marker(parse_event("E;100;MARK;zange;T4")))
+        self.assertFalse(w._abgleich_marker(parse_event("E;100;MARK;pyst;Marker")))
+        self.assertEqual(w.page_settings.fields["ratio"].value(), round(d.start_wert + 0.05, 3))
+        d.reject()
+        self.assertFalse(w._abgleich_marker(parse_event("E;100;MARK;zange;T4")))   # Fenster zu: wieder Marker
 
 
 if __name__ == "__main__":

@@ -13,6 +13,11 @@ Jede Aenderung geht sofort in das Feld „ratio“ der Rolle/Lauf-Seite (dieselb
 damit auch die Drehzahl-Kachel gleich mitrechnet. „Übernehmen“ stellt die Übersetzungsart auf „von Hand“, meldet
 uebernommen(wert) (das Hauptfenster speichert) und schliesst; „Abbrechen“ (auch Esc/Schliessen) stellt den Wert vom
 Oeffnen wieder her. Nicht modal: das Hauptfenster laeuft weiter und liefert die Live-Werte (ctrl.live).
+
+Tasten der Funk-Zange (ohne Firmware-Aenderung): Solange das Fenster offen ist, schickt das Hauptfenster der Zange
+voruebergehend „Marker“ auf allen Gesten (tasten.ABGLEICH_SETUP, TastenPage.set_override) und faengt deren
+MARK-Ereignisse ab (kein Marker in Lauf/Oszi/Ereignisliste): T1 −0,1, T2 +0,1, T3 −0,05, T4 +0,05 (zange_taste),
+Rueckmeldung LED_OK an der Zange und „Zange T4: +0,05“ im Fenster. Beim Schliessen gilt wieder das eigene Setup.
 """
 import math
 import time
@@ -20,7 +25,7 @@ from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import theme
+from . import tasten, theme
 from .kacheln import zahl
 from .runner import ACTIVE
 
@@ -70,6 +75,11 @@ def skala_bereich(hi_fahrzeug: Optional[float], zonen: Sequence[Zone]) -> Tuple[
     zz = [(float(a), float(b), str(s)) for a, b, s in zonen if float(a) < hi]
     ende = max((b for _a, b, _s in zz), default=0.0)
     return hi, [(a, hi if b >= ende else min(b, hi), s) for a, b, s in zz]
+
+
+def _betrag(d: float) -> str:
+    """Schrittweite ohne Vorzeichen: 1, 0,1, 0,05."""
+    return zahl(abs(d), 0 if abs(d) >= 1 else (1 if abs(d) >= 0.1 else 2))
 
 
 # =============================================================================================== Drehzahlmesser
@@ -209,17 +219,21 @@ class Drehzahlmesser(QtWidgets.QWidget):
 # =============================================================================================== Dialog
 class AbgleichDialog(QtWidgets.QDialog):
     """seite: SettingsPage (fields["ratio"], ratio_art). ctrl(): aktueller RunController oder None (Hauptfenster).
-    hi, zonen: Skala des Drehzahlmessers (skala_bereich)."""
+    hi, zonen: Skala des Drehzahlmessers (skala_bereich). zange(): Zeile zu den Tasten der Zange ("" = keine);
+    die Tasten selbst kommen vom Hauptfenster ueber zange_taste("T1" … "T4")."""
     uebernommen = QtCore.Signal(float)
 
     def __init__(self, parent, seite, ctrl: Callable[[], Any], hi: float = SKALA_STANDARD,
-                 zonen: Optional[Sequence[Zone]] = None):
+                 zonen: Optional[Sequence[Zone]] = None, zange: Optional[Callable[[], str]] = None):
         super().__init__(parent)
         self.setWindowTitle("Übersetzung live abgleichen")
         self.setModal(False)
         self.seite = seite
         self.feld: QtWidgets.QDoubleSpinBox = seite.fields["ratio"]
         self.ctrl = ctrl
+        self.zange = zange
+        self._blink_bis = 0.0                       # Wert nach einer Zangen-Taste kurz hervorheben
+        self._meldung_bis = 0.0
         self.start_wert = round(self.feld.value(), 3)
         self._ctrl_gesehen = None
         self._empfangen = (-1, 0.0)                # (link.received, Zeitpunkt der letzten Aenderung)
@@ -265,6 +279,14 @@ class AbgleichDialog(QtWidgets.QDialog):
         self.hinweis.setWordWrap(True)
         al.addWidget(self.hinweis)
         al.addStretch(1)
+        self.zange_meldung = QtWidgets.QLabel("")
+        self.zange_meldung.setAccessibleName("Taste der Zange")
+        al.addWidget(self.zange_meldung)
+        self.zange_zeile = QtWidgets.QLabel("")
+        self.zange_zeile.setWordWrap(True)
+        self.zange_zeile.setToolTip("Solange dieses Fenster offen ist, sind alle Tasten der Zange vorübergehend Marker; "
+                                    "PyST macht daraus die Schritte. Beim Schließen gilt wieder das eigene Tasten-Setup.")
+        al.addWidget(self.zange_zeile)
         self.tasten = QtWidgets.QLabel(TASTEN_HINWEIS)
         self.tasten.setWordWrap(True)
         al.addWidget(self.tasten)
@@ -327,7 +349,7 @@ class AbgleichDialog(QtWidgets.QDialog):
 
     # ------------------------------------------------------------------ Aufbau
     def _knopf(self, d: float) -> QtWidgets.QPushButton:
-        betrag = zahl(abs(d), 0 if abs(d) >= 1 else (1 if abs(d) >= 0.1 else 2))
+        betrag = _betrag(d)
         txt = ("▲  +" if d > 0 else "▼  −") + betrag
         b = QtWidgets.QPushButton(txt)
         b.setFocusPolicy(QtCore.Qt.NoFocus)          # Tasten bleiben beim Feld (Pfeil hoch/runter)
@@ -355,16 +377,24 @@ class AbgleichDialog(QtWidgets.QDialog):
         self.hinweis.setStyleSheet(f"color: {T['warn_fg']}; font-size: 17px; font-weight: 700;")
         self.tasten.setStyleSheet(f"color: {T['text2']}; font-size: 14px;")
         self.l_i.setStyleSheet(f"color: {T['text2']}; font-size: 15px; font-weight: 700;")
-        self.spin.setStyleSheet(f"QDoubleSpinBox {{ font-size: 34px; font-weight: 800; color: {T['input_text']};"
-                                f" background: {T['field']}; border: 2px solid {T['accent_border']};"
-                                " border-radius: 5px; padding: 2px 6px; min-height: 54px; }"
-                                " QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 0px; border: none; }"
-                                " QDoubleSpinBox::up-arrow, QDoubleSpinBox::down-arrow { image: none; width: 0px; }")
+        self.zange_meldung.setStyleSheet(f"color: {T['ok_fg']}; font-size: 24px; font-weight: 800;")
+        self.zange_zeile.setStyleSheet(f"color: {T['text']}; font-size: 16px; font-weight: 600;")
+        self._spin_stil()
         for b in self.knoepfe.values():               # min-height: das Stylesheet der Anwendung setzt 20 px
             b.setStyleSheet("QPushButton { font-size: 22px; font-weight: 800; min-height: 44px; min-width: 150px; }")
         for b in (self.b_ok, self.b_abbrechen):
             b.setStyleSheet("QPushButton { font-size: 15px; font-weight: 700; min-height: 34px; min-width: 120px; }")
         self._zahl_stil()
+
+    def _spin_stil(self, hervor: bool = False):
+        T = theme.tokens()
+        fg, bg = (T['changed_text'], T['changed_bg']) if hervor else (T['input_text'], T['field'])
+        self.spin.setProperty("hervor", hervor)
+        self.spin.setStyleSheet(f"QDoubleSpinBox {{ font-size: 34px; font-weight: 800; color: {fg};"
+                                f" background: {bg}; border: 2px solid {T['accent_border']};"
+                                " border-radius: 5px; padding: 2px 6px; min-height: 54px; }"
+                                " QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 0px; border: none; }"
+                                " QDoubleSpinBox::up-arrow, QDoubleSpinBox::down-arrow { image: none; width: 0px; }")
 
     def _zahl_stil(self):
         T = theme.tokens()
@@ -401,6 +431,30 @@ class AbgleichDialog(QtWidgets.QDialog):
         if c is not None and c.state not in ACTIVE:
             c.params.ratio = round(v, 3)             # Drehzahl-Kachel (Rolle × i) rechnet gleich mit
         self.takt()
+
+    def zange_taste(self, kennung: str) -> bool:
+        """Taste der Zange ("T1" … "T4", tasten.ABGLEICH_SCHRITTE). True = verstellt (Zange bekommt LED_OK)."""
+        d = tasten.ABGLEICH_SCHRITTE.get(kennung)
+        if d is None:
+            return False
+        if not self.spin.isEnabled():
+            self._melden(f"Zange {kennung}: gesperrt, Lauf läuft", theme.FEHLER)
+            return False
+        alt = self.wert()
+        self.schritt(d)
+        if self.wert() == alt:
+            self._melden(f"Zange {kennung}: Grenze {zahl(alt, 2)} erreicht", theme.WARNUNG)
+            return False
+        self._melden(f"Zange {kennung}: {'+' if d > 0 else '−'}{_betrag(d)}", theme.GUT)
+        self._blink_bis = time.time() + 0.6
+        self._spin_stil(True)
+        return True
+
+    def _melden(self, text: str, stufe: str):
+        tok = {theme.GUT: "ok_fg", theme.WARNUNG: "warn_fg"}.get(stufe, "err_fg")
+        self.zange_meldung.setText(text)
+        self.zange_meldung.setStyleSheet(f"color: {theme.farbe(tok)}; font-size: 24px; font-weight: 800;")
+        self._meldung_bis = time.time() + 3.0
 
     def eventFilter(self, obj, ev):
         if ev.type() == QtCore.QEvent.KeyPress:
@@ -446,6 +500,17 @@ class AbgleichDialog(QtWidgets.QDialog):
         return lv.n_roll, (lv.v_kmh if fin(lv.v_kmh) else None), ign, ""
 
     def takt(self):
+        now = time.time()
+        if self._blink_bis and now >= self._blink_bis:
+            self._blink_bis = 0.0
+            self._spin_stil(False)
+        if self._meldung_bis and now >= self._meldung_bis:
+            self._meldung_bis = 0.0
+            self.zange_meldung.setText("")
+        z = self.zange() if self.zange is not None else ""
+        if self.zange_zeile.text() != z:
+            self.zange_zeile.setText(z)
+        self.zange_zeile.setVisible(bool(z))
         n_roll, v, ign, hinweis = self.live()
         n = n_roll * self.wert() if n_roll is not None else None
         war = self.n_motor is not None

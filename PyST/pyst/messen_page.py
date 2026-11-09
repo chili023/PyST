@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import mittelwert, theme
+from . import mittelwert, tasten, theme
 from .abgleich_dialog import AbgleichDialog, skala_bereich
 from .bg import wait_in_thread, waiting
 from .channels import fault_text, lambda_from_afr
@@ -1623,17 +1623,44 @@ class MessenMixin:
         dz = self._drehzahl_einstellung()
         hi, zonen = skala_bereich(dz["max"] if isinstance(eigen, dict) and "max" in eigen else None,
                                   [tuple(z) for z in dz["zonen"]])
-        d = self.abgleich_dlg = AbgleichDialog(self, self.page_settings, lambda: self.ctrl, hi, zonen)
+        d = self.abgleich_dlg = AbgleichDialog(self, self.page_settings, lambda: self.ctrl, hi, zonen,
+                                               zange=self._abgleich_zange_text)
+        self.page_tasten.set_override(tasten.ABGLEICH_SETUP)    # alle Tasten der Zange Marker, solange offen
 
         def fertig(_r, d=d):
             if self.abgleich_dlg is d:
                 self.abgleich_dlg = None
+                self.page_tasten.set_override(None)                 # eigenes Tasten-Setup wieder an die Zange
             d.deleteLater()
 
         d.uebernommen.connect(lambda v: (self._persist(), self._set_status(f"Übersetzung = {zahl(v, 3)}", theme.GUT)))
         d.finished.connect(fertig)
         d.show()
         d.raise_()
+
+    def _zange_blitz(self) -> bool:
+        zst = getattr(self.page_hw, "zst", None)
+        return bool(zst is not None and zst.blitz)
+
+    def _abgleich_zange_text(self) -> str:
+        if not self.page_tasten.sync.da:
+            return "Zange nicht verbunden"
+        if self._zange_blitz():
+            return "Zange im Blitzmodus – Tasten wirken dort nicht"
+        return tasten.ABGLEICH_TEXT
+
+    def _abgleich_marker(self, ev) -> bool:
+        """MARK-Ereignis einer Zangen-Taste bei offenem Abgleich-Fenster: verstellt die Übersetzung statt eines Markers
+        (True = verbraucht). Im Blitzmodus ist T1 der feste Marker der Firmware und bleibt einer."""
+        d = self.abgleich_dlg
+        a = ev.args
+        if d is None or ev.kind != "MARK" or not a or a[0].lower() != "zange" or self._zange_blitz():
+            return False
+        kennung = tasten.abgleich_kennung(a[1] if len(a) > 1 else "")
+        if kennung is None:
+            return False
+        self.page_tasten.led(tasten.LED_OK if d.zange_taste(kennung) else tasten.LED_FEHLER)
+        return True
 
     def _uebersetzung_art_geaendert(self, _i=None):
         from .gui import UEBERSETZUNG_ART

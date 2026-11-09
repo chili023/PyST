@@ -1831,6 +1831,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
                 if ev.kind == "ZTASTE":                    # Bedienung, gehört nicht in Lauf oder Aufzeichnung
                     self._ztaste(ev)
                     continue
+                if self._abgleich_marker(ev):              # Zangen-Taste im Fenster „Übersetzung live abgleichen“
+                    continue
                 self.page_oszi.basis_event(ev)
                 if self.ctrl:
                     self.ctrl.add_event(ev)

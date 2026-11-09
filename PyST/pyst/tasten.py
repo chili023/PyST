@@ -74,6 +74,21 @@ def geste_von(setup: Dict[str, str], aktion: str) -> str:
     return next((t for g, t in GESTEN if setup[g] == aktion), "Taste")
 
 
+# ---------------------------------------------------------------------------------------------- Übersetzung live abgleichen
+# Solange das Fenster „Übersetzung live abgleichen“ offen ist, bekommt die Zange vorübergehend „Marker“ auf allen Gesten
+# (TastenPage.set_override). Die Basis meldet die Taste mit: 'E;<ms>;MARK;zange;T1' (weitere Zangen 'T1/Z2'), kurz und
+# lang ergeben dieselbe Kennung. PyST fängt diese Marker ab und verstellt die Übersetzung (T3/T4 −/+ wie φ im Blitzmodus).
+ABGLEICH_SETUP: Dict[str, str] = {g: "marker" for g, _t in GESTEN}
+ABGLEICH_SCHRITTE: Dict[str, float] = {"T1": -0.1, "T2": 0.1, "T3": -0.05, "T4": 0.05}
+ABGLEICH_TEXT = "Zange: T1 −0,1 · T2 +0,1 · T3 −0,05 · T4 +0,05"
+
+
+def abgleich_kennung(arg: str) -> Optional[str]:
+    """'T4' oder 'T4/Z2' -> 'T4'; alles andere None."""
+    k = (arg or "").strip().upper().split("/")[0]
+    return k if k in ABGLEICH_SCHRITTE else None
+
+
 # ---------------------------------------------------------------------------------------------- Übertragung
 class TastenSync:
     """Wann das Setup zur Zange muss und ob sie es bestätigt hat. Der Aufrufer fragt faellig() und meldet antwort()."""

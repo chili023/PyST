@@ -3,7 +3,7 @@ Tasten der Zange (Einstellungen › Zange): Tasten-Setup der Funk-Zange, und das
 Regeln und Übertragung stehen in tasten.py.
 """
 import time
-from typing import Callable, Dict
+from typing import Callable, Dict, Optional
 
 from PySide6 import QtCore, QtWidgets
 
@@ -56,6 +56,7 @@ class TastenPage(QtWidgets.QScrollArea):
         self.save_settings = save_settings
         self.get_link = get_link
         self.setup = tasten.laden(settings.get("zange_tasten"))
+        self.override: Optional[Dict[str, str]] = None      # vorübergehendes Setup (Übersetzung live abgleichen)
         self.sync = tasten.TastenSync(tasten.packen(self.setup))
         self.bg = Bg()
         self._nr = 0
@@ -115,9 +116,16 @@ class TastenPage(QtWidgets.QScrollArea):
         self.setup = {g: c.currentData() for g, c in self.combos.items()}
         self.settings["zange_tasten"] = dict(self.setup)
         self.save_settings()
-        self.sync.setzen(tasten.packen(self.setup))
+        self.sync.setzen(tasten.packen(self.override or self.setup))
         self._zeige()
         self.geaendert.emit()
+
+    def set_override(self, setup: Optional[Dict[str, str]]):
+        """Vorübergehendes Setup an die Zange (None = wieder das eigene). Gespeichert wird es nicht; Neuverbindung und
+        Neustart der Zange schicken, was gerade gilt."""
+        self.override = dict(setup) if setup else None
+        self.sync.setzen(tasten.packen(self.override or self.setup))
+        self._zeige()
 
     def standard(self):
         for g, c in self.combos.items():
@@ -129,6 +137,8 @@ class TastenPage(QtWidgets.QScrollArea):
     def _zeige(self):
         self.doppelt.setText(tasten.doppelt_text(self.setup))
         text, farbe = self.sync.text()
+        if self.override:
+            text = "Übersetzung live abgleichen: alle Tasten vorübergehend Marker. " + text
         self.status.setText(text)
         st = farben.stufe_von(farbe) or "neben"
         if self.status.property("stufe") != st:          # Farbe aus dem Thema, auch nach einem Wechsel
