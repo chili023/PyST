@@ -105,12 +105,16 @@ Mehrere Läufe mit demselben Setup mitteln. Das glättet Streuung von Lauf zu La
 | **Streuband** | **min – max**, **± σ** oder **kein Band** |
 | Vorschau | Mittelwert mit Band |
 | **Speichern als Lauf** | **Name** (Vorschlag z. B. „Ø 3 Läufe · Serie HD 135“), **Fahrzeug**, **Setup**, **Notiz** |
-| **im Messfenster als Referenz anbieten (Messen › Läufe „＋“)** | wirkt in 1.4.2 nicht: jeder gespeicherte Mittelwert steht in Messen im Fenster „Läufe hinzufügen“, mit oder ohne Haken |
 | **Mittelwert speichern** / **Abbrechen** | |
 
 Der Mittelwert ist danach ein eigener Lauf. In [Messen](Messen.md#läufe-hinzufügen) holt man ihn über **＋** in der
 Seitenleiste Läufe (Art „nur Mittelwerte“) gesperrt ins Diagramm. Dort steht er als dicke Linie mit Streuband und dient
-als Referenz für jeden neuen Lauf.
+als Referenz für jeden neuen Lauf. Das gilt für jeden gespeicherten Mittelwert; den früheren Haken „im Messfenster als
+Referenz anbieten“ gibt es seit 1.4.2 nicht mehr.
+
+**Schneller in Messen:** Der Haken [Ø automatisch mitteln](Messen.md#ø-automatisch-mitteln) in der Seitenleiste Läufe
+mittelt die Läufe im Diagramm mit gleichem Setup selbst, nach jedem Lauf neu. **speichern** an seiner Zeile legt
+denselben Mittelwert-Lauf an wie dieser Dialog (Band min–max, Raster 50 1/min, oben 300 1/min weg).
 
 **Grenzen (Stand 1.4.2):**
 

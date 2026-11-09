@@ -357,6 +357,9 @@ class Auswertung(unittest.TestCase):
         self.assertTrue(dlg.ok.isEnabled())
         self.assertFalse(dlg.warnung.isVisibleTo(dlg))                   # gleiches Setup
         self.assertEqual(dlg.name.text(), "Ø 2 Läufe · Serie HD 135")
+        # der fruehere, wirkungslose Haken „im Messfenster als Referenz anbieten“ ist weg (1.4.2)
+        self.assertFalse(hasattr(dlg, "referenz"))
+        self.assertFalse([c for c in dlg.findChildren(QtWidgets.QCheckBox) if "Referenz" in c.text()])
         self.assertEqual(dlg.setup.currentData(), self.s1)
         dlg.baum.topLevelItem(1).setCheckState(0, QtCore.Qt.Unchecked)    # nur noch 1 Lauf
         self.assertFalse(dlg.ok.isEnabled())

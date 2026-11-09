@@ -141,7 +141,8 @@ solange der Reiter Messen offen ist.
 
 ### ERGEBNIS
 
-**Pmax** und **Mmax** nebeneinander in einer Zeile (Drehzahl klein darunter) des laufenden, letzten, markierten oder Referenzlaufs.
+**Pmax** und **Mmax** nebeneinander in einer Zeile (Drehzahl klein darunter) des laufenden, letzten, markierten oder Referenzlaufs
+bzw. des automatischen Mittelwerts, wenn seine Zeile markiert ist.
 
 ## Diagramm
 
@@ -156,7 +157,8 @@ solange der Reiter Messen offen ist.
   Die frühere Zeile „▸ Werte am Cursor“ unter dem Diagramm gibt es nicht mehr; die Werte aller Kanäle des letzten
   Laufs stehen beim Zeigen in den Live-Kacheln rechts (siehe oben).
 - **Legende im Diagramm** (Option, Standard aus): Farbe, Datum/Zeit und Setup bzw. Notiz jedes Laufs oben links.
-  Referenzen (Mittelwert) stehen immer in der Legende, mit dem Hinweis auf das Band („Band = min–max der Quellläufe“).
+  Referenzen (Mittelwert) stehen immer in der Legende, mit dem Hinweis auf das Band („Band = min–max der Quellläufe“),
+  ebenso der automatische Mittelwert („… (automatisch)“, siehe [Ø automatisch mitteln](#ø-automatisch-mitteln)).
 - Unter dem Diagramm steht eine schmale Ergebniszeile (Pmax, Mmax, vmax, DIN-Faktor, Strecke, Grund für das
   Laufende). Ist sie zu lang, zeigt der Tooltip den ganzen Text.
 - Im Lauf bleibt die Skalierung fest, damit die Kurve nicht springt.
@@ -174,8 +176,9 @@ Plätze rollieren: der neueste Lauf verdrängt den ältesten nicht gesperrten.
 | Element | Funktion |
 |---|---|
 | **＋** (oben neben „Läufe“) | **Läufe hinzufügen …**: alte Läufe oder Mittelwerte gesperrt ins Diagramm legen (siehe [unten](#läufe-hinzufügen)) |
+| **Ø automatisch mitteln** (neben **＋**) | Mittelwert der Läufe im Diagramm mit gleichem Setup, ohne Platz zu belegen (siehe [unten](#ø-automatisch-mitteln)). Standard aus, auch im Menü **Ansicht** |
 | Filter | **alle**, **aktuelles Fahrzeug**, **aktuelles Setup** |
-| Gruppen | **GESPERRT**, **ROLLIEREND** (die letzten n), **ÄLTERE LÄUFE** |
+| Gruppen | **Ø AUTOMATISCH** (nur mit Haken), **GESPERRT**, **ROLLIEREND** (die letzten n), **ÄLTERE LÄUFE** |
 | Spalten | Schloss, Lauf, PS, bei, Nm, Fehler |
 | Schloss anklicken | Platz sperren bzw. lösen. Ältere Läufe holt man mit dem Schloss ins Diagramm |
 | Häkchen | Lauf im Diagramm zeigen oder ausblenden |
@@ -212,6 +215,30 @@ rollierend im Diagramm steht, wird dabei gesperrt. Wählt man mehr Läufe, als P
 **Mittelwerte als Referenz:** Ein Mittelwert (siehe [Auswertung](Auswertung.md#mittelwert-bilden)) erscheint als dicke
 Linie mit Streuband und steht immer in der Legende („gesperrt, Referenz · Band = min–max der Quellläufe“). In der Liste
 „Läufe“ steht in der Spalte Fehler „Ref.“. Den früheren Knopf **Referenz laden …** gibt es nicht mehr.
+
+### Ø automatisch mitteln
+
+![Ø automatisch mitteln: Mittelwert aus 4 Läufen mit Band, oben in der Liste mit „speichern“](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_auto_mittel.png)
+
+Mit dem Haken **Ø automatisch mitteln** oben in der Seitenleiste (oder im Menü **Ansicht**) mittelt PyST selbst:
+
+- **Welche Läufe:** alle Läufe, die gerade im Diagramm stehen (Häkchen an) und **dasselbe Setup** haben wie der
+  neueste davon. Gleiches Setup heißt: gleiches Fahrzeug, gleiches Setup und gleiche Setup-Werte. Ein Lauf mit Werten
+  „nur für diesen Lauf“ (z. B. HD 138 statt 135) zählt als anderes Setup. Mittelwerte werden nicht mitgemittelt.
+- **Ab 2 Läufen.** Sonst steht in der Liste „noch keine 2 Läufe mit gleichem Setup im Diagramm“.
+- **Darstellung** wie ein gespeicherter Mittelwert: dicke Linie mit Streuband (min–max), in der Legende
+  „Ø 4 Läufe · Serie HD 135 (automatisch)“.
+- **Kein Platz:** Der automatische Mittelwert belegt keinen der 5 Plätze. Er steht ganz oben in der Liste unter
+  **Ø AUTOMATISCH**.
+- **Immer aktuell:** PyST rechnet ihn nach jedem neuen Lauf neu, ebenso beim Sperren oder Lösen eines Schlosses, beim
+  Ein- und Ausblenden, beim Löschen und beim Wechsel des Setups. Ein Lauf ohne Auto-Speichern zählt erst, wenn er
+  gespeichert ist.
+- **ERGEBNIS und Fähnchen:** Die Fähnchen am Cursor zeigen auch den Mittelwert. Wer seine Zeile anklickt, sieht rechts
+  unter ERGEBNIS seine Pmax und Mmax („ERGEBNIS (Ø automatisch, 4 Läufe)“).
+- **Nicht gespeichert:** Der automatische Mittelwert ist nur eine Anzeige. **speichern** in seiner Zeile (oder
+  Rechtsklick › **Als Mittelwert-Lauf speichern**) macht daraus einen echten Mittelwert-Lauf, wie
+  [Auswertung › Mittelwert bilden](Auswertung.md#mittelwert-bilden) ihn anlegt: Name wie vorgeschlagen, Fahrzeug und
+  Setup des neuesten Laufs, Notiz mit den Quellläufen, Band min–max. Danach steht er über **＋** zur Wahl.
 
 ## Tasten
 

@@ -74,14 +74,29 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 
 ![Software & Firmware](bilder/v142_einst_firmware.png)
 
+**8. Ø automatisch mitteln (Messen › Seitenleiste Läufe)**
+- Neuer Haken **Ø automatisch mitteln** neben „＋“ (auch im Menü **Ansicht**, Standard aus). Ist er an, mittelt PyST
+  die Läufe im Diagramm, die dasselbe Setup haben wie der neueste (mindestens 2, Mittelwerte zählen nicht), und
+  zeichnet den Mittelwert dick mit Band min–max, z. B. „Ø 3 Läufe · Serie HD 135 (automatisch)“.
+- Er belegt keinen der 5 Plätze, wird nach jedem Lauf, beim Sperren, Ein-/Ausblenden und Löschen von Läufen und beim
+  Setup-Wechsel neu gerechnet und nicht von selbst gespeichert. Fähnchen am Cursor und ERGEBNIS (Zeile anklicken)
+  zeigen ihn wie andere Kurven.
+- **speichern** an seiner Zeile legt einen echten Mittelwert-Lauf an (wie Auswertung › Mittelwert bilden), der dann
+  über „＋“ wählbar ist.
+- Der wirkungslose Haken „im Messfenster als Referenz anbieten“ im Fenster **Mittelwert bilden** ist weg: jeder
+  gespeicherte Mittelwert steht im Fenster „Läufe hinzufügen“.
+
+![Ø automatisch mitteln](bilder/v142_messen_auto_mittel.png)
+
 ## Hinweise und Annahmen
 
 - **Ausrollversuch-Assistent:** Mit abgehobenem Rad misst er nur die Verluste der Rolle, nicht Rad, Kette und
   Getriebeausgang. Übernimmt man das Ergebnis, ist der Wert „Motor“ die **Reifenleistung an der Rolle** (Leistung, die
   der Reifen an die Rolle abgibt), noch nicht die Motorleistung. Für die Verluste bis zur Kupplung bleibt der
   Ausrollversuch nach dem Lauf mit gezogener Kupplung.
-- **Mittelwert bilden:** Der Haken „im Messfenster als Referenz anbieten“ hat in 1.4.2 keine Wirkung mehr. Jeder
-  gespeicherte Mittelwert steht im Fenster „Läufe hinzufügen“.
+- **Ø automatisch mitteln:** „Dasselbe Setup“ heißt gleiches Fahrzeug, gleiches Setup und gleiche Setup-Werte; ein
+  Lauf mit Werten „nur für diesen Lauf“ zählt als anderes Setup. Ein Lauf ohne Auto-Speichern zählt erst nach dem
+  Speichern. Gemittelt wird wie in Auswertung › Mittelwert bilden (Raster 50 1/min, oben 300 1/min weg).
 - Die neuen Funktionen sind im Simulator und mit automatischen Tests geprüft, **an der Hardware noch nicht**.
 
 ## Update von 1.4.1
@@ -89,7 +104,7 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 1. Ordner mit `git pull` aktualisieren oder das ZIP neu laden.
 2. Wie gewohnt starten (`start_mac.command`, `start_linux.sh`, `start_windows.bat`). Neue Abhängigkeiten gibt es nicht.
 3. Datenbank, Läufe und Einstellungen in `~/PyST` bleiben erhalten. Die neuen Schalter starten mit ihrem Standard
-   (Ergebnis groß an, Anweisungen groß an, Legende aus, Nachfrage vor START an).
+   (Ergebnis groß an, Anweisungen groß an, Legende aus, Nachfrage vor START an, Ø automatisch mitteln aus).
 4. Von 1.2 oder älter: zuerst die Hinweise in den [Release Notes 1.4.1](RELEASE_NOTES_1.4.1.md#update-von-12).
 
 ## Noch nicht an der Hardware bestätigt

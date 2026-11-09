@@ -23,6 +23,12 @@ Diagramm: 5 Plaetze (db.messplaetze) = gesperrte Laeufe (Schloss, auch Mittelwer
 und die neuesten Laeufe (rollierend). Das Haekchen blendet einen Platz aus, aeltere Laeufe kommen per Schloss hinein.
 „＋“ im Kopf der Seitenleiste Läufe oeffnet LaeufeDialog („Läufe hinzufügen“): gespeicherte Laeufe und Mittelwerte (Ø)
 aller Fahrzeuge waehlen, sie kommen gesperrt auf freie Plaetze (laeufe_hinzufuegen).
+Daneben der Haken „Ø automatisch mitteln“ (Einstellung AUTO_MITTEL, Standard aus, auch im Menue Ansicht): aus den
+Laeufen im Diagramm mit demselben Setup wie der neueste (auto_mittel_quellen, mind. 2, ohne Mittelwerte) rechnet
+mittelwert.mitteln einen Mittelwert, gezeichnet wie ein Mittelwert-Lauf (dick, Band min–max) unter AUTO_KEY. Er belegt
+keinen der Plaetze, steht oben in der Liste („Ø AUTOMATISCH“, AUTO_ROLLE) und wird bei jedem Neuzeichnen nachgefuehrt
+(neuer Lauf, Schloss, Haken, Loeschen, Setup-Wechsel). Gespeichert wird er nur mit „speichern“ (auto_mittel_speichern):
+dann ist er ein echter Mittelwert-Lauf wie aus Auswertung › Mittelwert bilden.
 T/p werden nur zwischen den Laeufen gelesen (link.climate() unterbricht den Datenstrom): beim START (wie bisher),
 von Hand und alle KLIMA_ALLE_S, solange nichts laeuft.
 
@@ -72,6 +78,13 @@ SPALTE_BREITE = 330                        # rechte Spalte
 MW_BREITE = 3.6                            # Linienbreite Mittelwert (Laeufe 2,0)
 LIVE_EINSPALTIG = 4                        # mehr Live-Plaetze: zweispaltig und kompakt (MINI)
 ANWEISUNG_HALTEN_S = 0.6                   # grosse Anweisung (ausser GAS WEG) so lange nach dem letzten Zustand
+AUTO_MITTEL = "auto_mittel"                # Einstellung (bool, Standard False): Ø automatisch mitteln
+AUTO_KEY = "auto_mittel"                   # Schluessel des automatischen Mittelwerts im Diagramm
+AUTO_ROLLE = QtCore.Qt.UserRole + 1        # markiert Kopf und Zeile des automatischen Mittelwerts in der Laufliste
+AUTO_TEXT = "Ø automatisch mitteln"
+AUTO_TIP = ("Aus den Läufen im Diagramm mit demselben Setup wie der neueste Lauf (mindestens 2, Mittelwerte zählen "
+            "nicht) einen Mittelwert bilden und mit Band min–max zeigen. Belegt keinen der Plätze und wird nach jedem "
+            "Lauf neu gerechnet; „speichern“ an seiner Zeile macht daraus einen Mittelwert-Lauf.")
 # Anzeige beim Messen: Einstellung -> (Standard, Text im Menue Ansicht bzw. unter Einstellungen › Rolle/Lauf, Tooltip)
 ERGEBNIS_GROSS = "anzeige_ergebnis_gross"
 ANWEISUNG_GROSS = "anzeige_anweisung_gross"
@@ -1044,6 +1057,22 @@ class ErgebnisText(QtWidgets.QLabel):
         self._kuerzen()
 
 
+def auto_mittel_quellen(rows: Sequence, setups: Dict[int, dict]) -> List[int]:
+    """Quellen des automatischen Mittelwerts aus den Laeufen im Diagramm (rows, db.RunRow): alle Messungen mit
+    demselben Setup wie die neueste – gleiches Fahrzeug, gleiche Setup-ID und gleiche Setup-Werte (setups: Lauf-ID ->
+    db.lauf_setup; „nur für diesen Lauf“ geaenderte zaehlen so als anderes Setup). Mittelwerte und Dauermessungen
+    zaehlen nicht. Neueste zuerst; [] bei weniger als mittelwert.MIN_LAEUFE."""
+    laeufe = sorted((r for r in rows if not r.ist_mittelwert and r.art == ART_LAUF),
+                    key=lambda r: (r.datum or "", r.id), reverse=True)
+    if not laeufe:
+        return []
+    neu = laeufe[0]
+    ref = setups.get(neu.id) or {}
+    ids = [r.id for r in laeufe if r.vehicle_id == neu.vehicle_id and r.setup_id == neu.setup_id
+           and not mittelwert.setup_abweichungen([ref, setups.get(r.id) or {}])]
+    return ids if len(ids) >= mittelwert.MIN_LAEUFE else []
+
+
 class LaufListe(QtWidgets.QWidget):
     """Inhalt der Seitenleiste „Läufe“: Plaetze-Hinweis, Filter, Liste, Knoepfe. Der Knopf „＋“ (Läufe hinzufügen …,
     LaeufeDialog) sitzt im Kopf der Seitenleiste neben dem Titel (MessenMixin setzt ihn dort ein)."""
@@ -1058,6 +1087,8 @@ class LaufListe(QtWidgets.QWidget):
         theme.rolle(self.b_hinzu, "primaer")
         self.b_hinzu.setToolTip("Läufe hinzufügen … (gespeicherte Läufe oder Mittelwerte gesperrt ins Diagramm)")
         self.b_hinzu.setFixedSize(40, 28)
+        self.auto = QtWidgets.QCheckBox(AUTO_TEXT)          # sitzt im Kopf neben „＋“ (MessenMixin)
+        self.auto.setToolTip(AUTO_TIP + " Auch im Menü Ansicht.")
         self.info = QtWidgets.QLabel("")
         self.info.setWordWrap(True)
         lay.addWidget(self.info)
@@ -1705,6 +1736,9 @@ class MessenMixin:
         self._laeufe: Dict[int, Any] = {}              # Lauf-ID -> RunRow der Liste (inkl. gesperrter Referenzen)
         self._gezeichnet: List[int] = []
         self._mw_cache: Dict[int, Any] = {}            # Mittelwert-ID -> MittelwertErgebnis
+        self._auto: Optional[Dict[str, Any]] = None    # automatischer Mittelwert (_auto_mittel_rechnen)
+        self._auto_grund = ""                          # warum keiner da ist (Zeile in der Liste)
+        self._auto_gewaehlt = False                    # seine Zeile war vor dem Neuaufbau der Liste gewaehlt
         self._live: Dict[str, Optional[float]] = {}
         self._kachel_t = 0.0
         self._kachel_cache: Dict[int, tuple] = {}
@@ -1795,6 +1829,9 @@ class MessenMixin:
         self.run_filter.setCurrentIndex(self.settings.get("run_filter", 1))
         self.laeufe_leiste = SeitenLeiste("Läufe", ll, center, breite=LEISTE_BREITE)
         self.laeufe_leiste.kopf.insertWidget(1, self.b_hinzu)     # „＋“ oben im Kopf neben dem Titel
+        self.laeufe_leiste.kopf.insertWidget(2, ll.auto)          # daneben „Ø automatisch mitteln“
+        ll.auto.setChecked(self.auto_mittel_an())
+        ll.auto.toggled.connect(self.auto_mittel_setzen)
         self.laeufe_leiste.set_zustand(self.settings.get("laeufe_leiste"))
         self.laeufe_leiste.angepinnt_geaendert.connect(self._leiste_gemerkt)
         self.run_tree.itemClicked.connect(self._lauf_geklickt)
@@ -1814,6 +1851,7 @@ class MessenMixin:
         lay.addWidget(split, 1)
 
         self.setup_combo.currentIndexChanged.connect(lambda _i: self._setup_zeile_laden())
+        self.setup_combo.currentIndexChanged.connect(lambda _i: self.auto_mittel_an() and self._redraw_runs())
         for key in ("temp_c", "p_mbar"):
             self.page_settings.fields[key].valueChanged.connect(lambda _v=None: self._klima_anzeigen())
         self.page_settings.climate_auto.toggled.connect(lambda _on: self._klima_anzeigen())
@@ -2154,6 +2192,11 @@ class MessenMixin:
             if box is not None:
                 box.setChecked(self.anzeige_an(key))
                 box.toggled.connect(lambda an, k=key: self.anzeige_setzen(k, an))
+        self.auto_aktion = menue.addAction(AUTO_TEXT)          # wie der Haken in der Seitenleiste Läufe
+        self.auto_aktion.setCheckable(True)
+        self.auto_aktion.setChecked(self.auto_mittel_an())
+        self.auto_aktion.setToolTip(AUTO_TIP)
+        self.auto_aktion.toggled.connect(self.auto_mittel_setzen)
         menue.setToolTipsVisible(True)
 
     def _gross_verbergen(self):
@@ -2211,6 +2254,9 @@ class MessenMixin:
                 text = text[:41] + "…"
             zeilen.append(f"<span style='color:{c}; font-weight:900'>━━</span>&nbsp;<b>{self._run_label(row).split('  ')[0]}</b>"
                           + (f"&nbsp; {html.escape(text)}" if text else ""))
+        if self._auto is not None and AUTO_KEY in self.plot.data:
+            c = theme.laufarbe("@avg_color")
+            zeilen.insert(0, f"<span style='color:{c}; font-weight:800'>━━ {html.escape(self._auto['titel'])}</span>")
         if alle and LIVE_KEY in self.plot.data:
             c = theme.laufarbe(theme.farbe("live_curve"))
             zeilen.append(f"<span style='color:{c}; font-weight:900'>━━</span>&nbsp;<b>aktuelle Messung</b>"
@@ -2718,6 +2764,7 @@ class MessenMixin:
         vehicles = {r["id"]: r["name"] for r in self.db.vehicles()}
         t = self.run_tree
         sel = {it.data(0, QtCore.Qt.UserRole) for it in t.selectedItems()}
+        self._auto_gewaehlt = self._auto_zeile_gewaehlt()
         t.blockSignals(True)
         t.clear()
         aeltere = [r for r in rows if r.id not in fest and r.id not in roll]
@@ -2817,8 +2864,9 @@ class MessenMixin:
         self.laufliste.info.setText(f"{MESSPLAETZE} Plätze im Diagramm:  {len(fest)} gesperrt,  {frei} rollierend "
                                     "(die letzten Läufe)")
         self.laeufe_leiste.set_streifen_text(f"Läufe · {MESSPLAETZE} Plätze: {len(fest)} gesperrt, {frei} rollierend")
-        self.laeufe_leiste.set_streifen_farben([self._lauf_farbe(self._laeufe[i]) for i in fest + roll
-                                                if i in self._laeufe and self._laeufe[i].sichtbar])
+        self.laeufe_leiste.set_streifen_farben((["@avg_color"] if getattr(self, "_auto", None) else [])
+                                               + [self._lauf_farbe(self._laeufe[i]) for i in fest + roll
+                                                  if i in self._laeufe and self._laeufe[i].sichtbar])
 
     def _lauf_geklickt(self, it, col: int):
         rid = it.data(0, QtCore.Qt.UserRole)
@@ -2922,7 +2970,7 @@ class MessenMixin:
         ids = [i for i in fest + roll if i in laeufe and laeufe[i].sichtbar]
         keys = {str(i) for i in ids}
         for key in list(self.plot.items) + list(self.plot.bands):
-            if key != LIVE_KEY and key not in keys:
+            if key not in (LIVE_KEY, AUTO_KEY) and key not in keys:
                 self.plot.remove(key)
         gezeichnet = []
         for rid in ids:
@@ -2942,6 +2990,7 @@ class MessenMixin:
                                  extra=self._ecu_extra_run(_run, res))
             gezeichnet.append(rid)
         self._gezeichnet = gezeichnet
+        self._auto_mittel_zeichnen()
         self._legende_zeigen()
         if not self.plot.frozen and self.plot.data:
             self.plot.auto_scale()
@@ -2950,22 +2999,179 @@ class MessenMixin:
         self._update_max_display()
 
     def _mittelwert_zeichnen(self, row) -> bool:
-        erg = self._mittelwert(row)
+        return self._mw_kurven(str(row.id), self._mittelwert(row), self._lauf_farbe(row), band_art(row))
+
+    def _mw_kurven(self, key: str, erg, color: str, art: str) -> bool:
+        """Mittelwert (mittelwert.MittelwertErgebnis) dick ins Diagramm, Band nach art ("minmax"|"sigma"|"kein")."""
         if erg is None or "ps" not in erg.werte or "nm" not in erg.werte or not len(erg.n):
             return False
         w = erg.werte
-        color = self._lauf_farbe(row)
         extra = {k[len(ECU_PREFIX):]: v for k, v in w.items() if k.startswith(ECU_PREFIX)}
-        key = str(row.id)
         self.plot.set_curves(key, erg.n, w["ps"], w["nm"], w.get("lam"), w.get("egt1"), w.get("egt2"), color=color,
                              width=MW_BREITE, rescale=False, extra=extra)
-        art = band_art(row)
         if art == "kein":
             self.plot.remove_band(key)
         else:
             baender = {k: erg.band(k, art) for k in ("ps", "nm")}
             self.plot.set_band(key, erg.n, {k: b for k, b in baender.items() if b is not None}, color)
         return True
+
+    # ------------------------------------------------------------------ Ø automatisch mitteln
+    def auto_mittel_an(self) -> bool:
+        return bool(self.settings.get(AUTO_MITTEL, False))
+
+    def auto_mittel_setzen(self, an: bool):
+        """Haken „Ø automatisch mitteln“ (Seitenleiste Läufe und Menue Ansicht) schalten, speichern, neu zeichnen."""
+        an = bool(an)
+        if self.settings.get(AUTO_MITTEL) != an:
+            self.settings[AUTO_MITTEL] = an
+            _speichern(self.settings)
+        for w in (self.laufliste.auto, getattr(self, "auto_aktion", None)):
+            if w is not None and w.isChecked() != an:
+                w.blockSignals(True)
+                w.setChecked(an)
+                w.blockSignals(False)
+        self._redraw_runs()
+
+    def _auto_mittel_rechnen(self) -> Tuple[Optional[Dict[str, Any]], str]:
+        """Automatischer Mittelwert aus den Laeufen im Diagramm (auto_mittel_quellen) -> (Angaben, "") bzw.
+        (None, Grund). Angaben: erg (MittelwertErgebnis), ids (Quellen, neueste zuerst), vid, sid, name (Vorschlag
+        beim Speichern), titel (mit „(automatisch)“). Gleiche Quellen und Auswertungen: das letzte Ergebnis."""
+        if not self.auto_mittel_an():
+            return None, ""
+        rows = [self._laeufe[i] for i in self._gezeichnet if i in self._laeufe]
+        setups = {r.id: self.db.lauf_setup(r) for r in rows if not r.ist_mittelwert}
+        ids = auto_mittel_quellen(rows, setups)
+        if not ids:
+            return None, (f"Ø automatisch: noch keine {mittelwert.MIN_LAEUFE} Läufe mit gleichem Setup im Diagramm")
+        eintraege = [self._entry(i) for i in ids]
+        if any(e is None or e[1] is None for e in eintraege):
+            return None, "Ø automatisch: Lauf ohne Auswertung"
+        neu = self._laeufe[ids[0]]
+        setup = ((self.db.setup(neu.setup_id) or {}).get("name", "") if neu.setup_id else "") or "ohne Setup"
+        from .mittelwert_dialog import namensvorschlag
+        name = namensvorschlag(len(ids), setup)
+        schluessel = tuple((i, id(e[1])) for i, e in zip(ids, eintraege))
+        alt = self._auto
+        if alt is not None and alt["schluessel"] == schluessel:
+            erg = alt["erg"]
+        else:
+            try:
+                erg = mittelwert.mitteln([mittelwert.kurven_aus_ergebnis(e[1], e[0]) for e in eintraege],
+                                         quellen=ids, setups=[setups[i] for i in ids])
+            except ValueError as exc:
+                return None, f"Ø automatisch: {exc}"
+        return {"erg": erg, "ids": ids, "vid": neu.vehicle_id, "sid": neu.setup_id, "name": name,
+                "titel": f"{name} (automatisch)", "schluessel": schluessel}, ""
+
+    def _auto_mittel_zeichnen(self):
+        """Nach jedem Neuzeichnen der Laeufe: automatischen Mittelwert rechnen, zeichnen (avg_color, Band min–max),
+        seine Zeile oben in der Laufliste."""
+        info, grund = self._auto_mittel_rechnen()
+        if info is not None and not self._mw_kurven(AUTO_KEY, info["erg"], "@avg_color", "minmax"):
+            info, grund = None, "Ø automatisch: ohne Leistung/Drehmoment"
+        if info is None:
+            self.plot.remove(AUTO_KEY)
+        self._auto, self._auto_grund = info, grund
+        self._auto_zeile()
+        self._laeufe_kopf()
+
+    def _auto_zeile_gewaehlt(self) -> bool:
+        return any(it.data(0, AUTO_ROLLE) == "zeile" for it in self.run_tree.selectedItems())
+
+    def _auto_zeile(self):
+        """Kopf „Ø AUTOMATISCH“ und Zeile des automatischen Mittelwerts (bzw. warum es keinen gibt) oben in der
+        Laufliste; „speichern“ in der letzten Spalte. Aus: nichts."""
+        t = self.run_tree
+        gewaehlt = self._auto_gewaehlt or self._auto_zeile_gewaehlt()
+        self._auto_gewaehlt = False
+        t.blockSignals(True)
+        for i in reversed(range(t.topLevelItemCount())):
+            if t.topLevelItem(i).data(0, AUTO_ROLLE):
+                t.takeTopLevelItem(i)
+        if not self.auto_mittel_an():
+            t.blockSignals(False)
+            return
+        kopf = QtWidgets.QTreeWidgetItem(["Ø AUTOMATISCH  (nicht gespeichert, belegt keinen Platz)"])
+        kopf.setData(0, AUTO_ROLLE, "kopf")
+        kopf.setFlags(QtCore.Qt.ItemIsEnabled)
+        f = kopf.font(0)
+        f.setBold(True)
+        kopf.setFont(0, f)
+        kopf.setForeground(0, QtGui.QBrush(QtGui.QColor(theme.farbe("text2"))))
+        t.insertTopLevelItem(0, kopf)
+        kopf.setFirstColumnSpanned(True)
+        info = self._auto
+        if info is None:
+            it = QtWidgets.QTreeWidgetItem([self._auto_grund or "Ø automatisch: kein Mittelwert"])
+            it.setData(0, AUTO_ROLLE, "grund")
+            it.setFlags(QtCore.Qt.ItemIsEnabled)
+            it.setForeground(0, QtGui.QBrush(QtGui.QColor(theme.farbe("dim"))))
+            it.setToolTip(0, AUTO_TIP)
+            t.insertTopLevelItem(1, it)
+            it.setFirstColumnSpanned(True)
+            t.blockSignals(False)
+            return
+        erg = info["erg"]
+        it = QtWidgets.QTreeWidgetItem(["", info["name"], zahl(erg.p_max, 1), zahl(erg.n_pmax), zahl(erg.m_max, 1),
+                                        ""])
+        it.setData(0, AUTO_ROLLE, "zeile")
+        it.setIcon(1, farb_icon("@avg_color", True))
+        for c in range(2, 5):
+            it.setTextAlignment(c, QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        f = it.font(1)
+        f.setBold(True)
+        it.setFont(1, f)
+        quellen = [self._laeufe.get(i) for i in info["ids"]]
+        tip = (f"{info['titel']}\nMittelwert aus " + ", ".join(self._run_label(q).split("  ")[0] for q in quellen if q)
+               + f"\nBand = min–max der Quellläufe · nicht gespeichert, belegt keinen der {MESSPLAETZE} Plätze"
+               + "\n„speichern“ (oder Rechtsklick) legt daraus einen Mittelwert-Lauf an")
+        for c in range(5):
+            it.setToolTip(c, tip)
+        t.insertTopLevelItem(1, it)
+        b = QtWidgets.QToolButton()
+        b.setText("speichern")
+        b.setToolTip("Als Mittelwert-Lauf speichern (wie Auswertung › Mittelwert bilden), danach über „＋“ wählbar")
+        b.setAutoRaise(False)
+        b.clicked.connect(lambda _c=False: self.auto_mittel_speichern())
+        t.setItemWidget(it, 5, b)
+        if gewaehlt:
+            it.setSelected(True)
+        t.blockSignals(False)
+
+    def _auto_menue(self, pos: QtCore.QPoint):
+        m = QtWidgets.QMenu(self)
+        a_save = m.addAction("Als Mittelwert-Lauf speichern")
+        a_save.setEnabled(self._auto is not None)
+        a_aus = m.addAction(f"„{AUTO_TEXT}“ ausschalten")
+        act = m.exec(pos)
+        if act == a_save:
+            self.auto_mittel_speichern()
+        elif act == a_aus:
+            self.auto_mittel_setzen(False)
+
+    def auto_mittel_speichern(self, name: str = "") -> Optional[int]:
+        """Automatischen Mittelwert als Mittelwert-Lauf speichern (mittelwert.speichern wie der Dialog der Auswertung:
+        Fahrzeug/Setup des neuesten Quelllaufs, Schnellwerte, Notiz mit den Quellen, Band min–max). -> Lauf-ID."""
+        info = self._auto
+        if info is None:
+            return None
+        from .laufleiste import zeit_text
+        from .mittelwert_dialog import mehrheit, zusatz_schreiben
+        rows = [r for r in (self._laeufe.get(i) or self.db.run(i) for i in info["ids"]) if r is not None]
+        setups = [self.db.lauf_setup(r) for r in rows]
+        werte = [{"feld": f, "wert": mehrheit([s.get(f) for s in setups]), "vorher": ""}
+                 for f in self.db.schnellwert_plaetze(info["vid"]) if f]
+        notiz = "Quellen: " + ", ".join(zeit_text(r) for r in reversed(rows))
+        rid = mittelwert.speichern(self.db, info["erg"], name.strip() or info["name"], vehicle_id=info["vid"],
+                                   setup_id=info["sid"], notiz=notiz, setup_werte=werte)
+        row = self.db.run(rid)
+        if row is not None:
+            zusatz_schreiben(row.ordner, band="minmax")
+        self._reload_runs()
+        self.statusBar().showMessage(f"„{info['name']}“ als Mittelwert-Lauf gespeichert – über „＋“ ins Diagramm "
+                                     "legen oder in der Auswertung öffnen.", 8000)
+        return rid
 
     def diagramm_laeufe(self) -> List[int]:
         """Lauf-IDs, die gerade im Diagramm stehen (ohne die laufende Messung)."""
@@ -2975,6 +3181,8 @@ class MessenMixin:
         """Lauf fuer ERGEBNIS: laufende/letzte Messung, sonst der gewaehlte, sonst der neueste Lauf im Diagramm."""
         if LIVE_KEY in self.plot.data:
             return LIVE_KEY
+        if self._auto_zeile_gewaehlt() and AUTO_KEY in self.plot.data:
+            return AUTO_KEY
         rid = self._current_run_id()
         if rid is not None and str(rid) in self.plot.data:
             return str(rid)
@@ -2992,6 +3200,8 @@ class MessenMixin:
         if key == LIVE_KEY:
             busy = self.ctrl is not None and self.ctrl.state in ACTIVE
             titel = "ERGEBNIS  (laufender Lauf, bis jetzt)" if busy else "ERGEBNIS  (letzter Lauf, nicht gespeichert)"
+        elif key == AUTO_KEY:
+            titel = f"ERGEBNIS  (Ø automatisch, {len(self._auto['ids'])} Läufe)" if self._auto else "ERGEBNIS"
         elif key is not None:
             row = self._laeufe.get(int(key)) or self.db.run(int(key))
             art = "gewählter Lauf" if key == str(self._current_run_id()) else "letzter Lauf"
@@ -3024,6 +3234,8 @@ class MessenMixin:
                 else:
                     lab = self._run_label(r)
                     names[str(rid)] = (lab, self._run_color(r), lab.split("  ")[0][-5:])
+            if self._auto is not None:
+                names[AUTO_KEY] = (self._auto["titel"], theme.laufarbe("@avg_color"), "Ø auto")
             names[LIVE_KEY] = ("laufende Messung", theme.farbe("live_curve"), "live")
             self._cursor_names = names
         return self._cursor_names
@@ -3129,6 +3341,9 @@ class MessenMixin:
     # ------------------------------------------------------------------ Liste: Kontextmenue, Knoepfe
     def _run_context_menu(self, pos):
         it = self.run_tree.itemAt(pos)
+        if it is not None and it.data(0, AUTO_ROLLE):
+            self._auto_menue(self.run_tree.viewport().mapToGlobal(pos))
+            return
         rid = it.data(0, QtCore.Qt.UserRole) if it is not None else None
         if rid is None:
             return

@@ -226,6 +226,36 @@ class Bausteine(unittest.TestCase):
         self.assertEqual(verlassen, [1])
         p.close()
 
+    def test_auto_mittel_quellen(self):
+        """Auswahl fuer „Ø automatisch mitteln“: gleiches Setup wie der neueste Lauf (Fahrzeug, Setup-ID und Werte),
+        mind. 2, Mittelwerte und Dauermessungen nicht, neueste zuerst."""
+        from types import SimpleNamespace as R
+        from pyst.db import ART_DAUERMESSUNG, ART_LAUF, ART_MITTELWERT
+
+        def lauf(i, datum, sid=5, vid=1, art=ART_LAUF):
+            return R(id=i, datum=datum, setup_id=sid, vehicle_id=vid, art=art, ist_mittelwert=art == ART_MITTELWERT)
+        s = {"hauptduese": "135", "clip": "3"}
+        rows = [lauf(1, "2026-11-09T10:00"), lauf(2, "2026-11-09T10:05"), lauf(3, "2026-11-09T10:10"),
+                lauf(4, "2026-11-09T10:20", art=ART_MITTELWERT), lauf(5, "2026-11-09T09:00", sid=6),
+                lauf(6, "2026-11-09T09:30", art=ART_DAUERMESSUNG), lauf(7, "2026-11-09T09:40", vid=2)]
+        setups = {i: dict(s) for i in range(1, 8)}
+        self.assertEqual(mp.auto_mittel_quellen(rows, setups), [3, 2, 1])
+        setups[2] = {"hauptduese": "138", "clip": "3"}                  # nur fuer diesen Lauf geaendert
+        self.assertEqual(mp.auto_mittel_quellen(rows, setups), [3, 1])
+        setups[1] = {"hauptduese": "138", "clip": "3"}
+        self.assertEqual(mp.auto_mittel_quellen(rows, setups), [])      # nur einer mit dem Setup des neuesten
+        self.assertEqual(mp.auto_mittel_quellen([lauf(5, "x", sid=6)], setups), [])
+        self.assertEqual(mp.auto_mittel_quellen([], {}), [])
+        # neuester hat ein anderes Setup: der Mittelwert gilt diesem
+        rows.append(lauf(8, "2026-11-09T11:00", sid=6))
+        setups[8] = dict(s)
+        self.assertEqual(mp.auto_mittel_quellen(rows, setups), [8, 5])
+        # ohne Setup: alle ohne Setup desselben Fahrzeugs
+        nackt = [lauf(1, "a", sid=None), lauf(2, "b", sid=None), lauf(3, "c")]
+        self.assertEqual(mp.auto_mittel_quellen(nackt, {1: {}, 2: {}, 3: s}), [])
+        nackt.append(lauf(4, "d", sid=None))
+        self.assertEqual(mp.auto_mittel_quellen(nackt, {1: {}, 2: {}, 3: s, 4: {}}), [4, 2, 1])
+
     def test_band_art_aus_json(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
@@ -254,6 +284,7 @@ class Messen(unittest.TestCase):
         from conftest import close_window
         for key, (std, _t, _tip) in mp.ANZEIGE_OPTIONEN.items():     # Einstellungen gelten fuer alle Tests
             self.w.anzeige_setzen(key, std)
+        self.w.auto_mittel_setzen(False)
         close_window(self.w, APP)
         theme.manager().setze(theme.TAG, speichern=False)
         gc.collect()
@@ -831,6 +862,165 @@ class Messen(unittest.TestCase):
         self.assertIn(label, text)
         w.anzeige_setzen(mp.ANZEIGE_LEGENDE, False)
         self.assertEqual(w.plot.legende_text(), "")
+
+    # ---------------------------------------------------------------- Ø automatisch mitteln
+    def _auto_zeilen(self):
+        t = self.w.run_tree
+        return {t.topLevelItem(i).data(0, mp.AUTO_ROLLE): t.topLevelItem(i) for i in range(t.topLevelItemCount())
+                if t.topLevelItem(i).data(0, mp.AUTO_ROLLE)}
+
+    def test_auto_mittel_haken_und_neustart(self):
+        """Haken im Kopf der Seitenleiste neben „＋“ und im Menue Ansicht, Standard aus, gespeichert in settings und
+        nach dem Neustart wieder da."""
+        w = self.w
+        self.assertFalse(w.auto_mittel_an())
+        self.assertEqual(w.laufliste.auto.text(), "Ø automatisch mitteln")
+        self.assertFalse(w.laufliste.auto.isChecked())
+        self.assertEqual(w.laeufe_leiste.kopf.indexOf(w.laufliste.auto), 2)      # gleich neben „＋“
+        texte = [a.text() for a in w.menuBar().actions()[0].menu().actions()]
+        self.assertIn("Ø automatisch mitteln", texte)
+        w.auto_aktion.setChecked(True)                                         # Menue Ansicht
+        self.assertTrue(w.laufliste.auto.isChecked())
+        self.assertTrue(w.settings[mp.AUTO_MITTEL])
+        from pyst import gui
+        self.assertTrue(gui.load_settings()[mp.AUTO_MITTEL])
+        from conftest import close_window
+        close_window(self.w, APP)
+        self.w = gui.MainWindow()                                              # Neustart
+        pump(0.05)
+        self.assertTrue(self.w.auto_mittel_an())
+        self.assertTrue(self.w.laufliste.auto.isChecked())
+        self.assertTrue(self.w.auto_aktion.isChecked())
+        self.w.laufliste.auto.setChecked(False)
+        self.assertFalse(self.w.auto_aktion.isChecked())
+        self.assertFalse(gui.load_settings()[mp.AUTO_MITTEL])
+
+    def test_auto_mittel_im_diagramm(self):
+        """Mittelwert der Läufe im Diagramm mit Setup des neuesten: dick, Band, eigene Zeile, kein Platz belegt;
+        neu gerechnet bei Haken, Schloss, neuem Lauf und anderem Setup; Mittelwerte zaehlen nicht."""
+        w = self.w
+        ids = self._laeufe(6)
+        self.assertNotIn(mp.AUTO_KEY, w.plot.data)                               # Standard aus
+        self.assertEqual(self._auto_zeilen(), {})
+        w.laufliste.auto.setChecked(True)
+        roll = w._plaetze[1]
+        self.assertEqual(len(roll), mp.MESSPLAETZE)
+        self.assertEqual(set(w._auto["ids"]), set(roll))                         # alle im Diagramm, gleiches Setup
+        self.assertEqual(w._auto["erg"].quellen, w._auto["ids"])
+        self.assertIn(mp.AUTO_KEY, w.plot.data)
+        self.assertIn(mp.AUTO_KEY, w.plot.bands)                                 # Band min–max
+        self.assertEqual(w.plot._styles[mp.AUTO_KEY][1], mp.MW_BREITE)           # dick wie ein Mittelwert-Lauf
+        self.assertEqual(w._auto["titel"], "Ø 5 Läufe · Serie HD 135 (automatisch)")
+        self.assertIn("(automatisch)", w.plot.legende_text())
+        self.assertEqual(w._plaetze[0], [])                                      # belegt keinen Platz
+        self.assertEqual(len(w._plaetze[1]), mp.MESSPLAETZE)
+        z = self._auto_zeilen()
+        self.assertEqual(set(z), {"kopf", "zeile"})
+        self.assertEqual(w.run_tree.indexOfTopLevelItem(z["kopf"]), 0)          # ganz oben
+        self.assertEqual(z["zeile"].text(1), "Ø 5 Läufe · Serie HD 135")
+        self.assertEqual(w.run_tree.itemWidget(z["zeile"], 5).text(), "speichern")
+        # ERGEBNIS rechts und Werte am Cursor wie bei anderen Kurven
+        w.run_tree.clearSelection()
+        z["zeile"].setSelected(True)
+        self.assertEqual(w.ergebnis_titel.text(), "ERGEBNIS  (Ø automatisch, 5 Läufe)")
+        d = w.plot.data[mp.AUTO_KEY]
+        self.assertEqual(w.k_pmax.wert.text(), mp.zahl(float(np.nanmax(d["ps"])), 1))
+        self.assertIn(mp.AUTO_KEY, w._cursor_namen())
+        self.assertIsNotNone(w.lauf_werte_bei(mp.AUTO_KEY, float(d["n"][len(d["n"]) // 2])))
+        w._reload_runs()                                                         # Auswahl bleibt
+        self.assertTrue(w._auto_zeile_gewaehlt())
+        # Haken eines Laufs weg: 4 Quellen
+        aus = roll[1]
+        w.db.update_run(aus, sichtbar=False)
+        w._laeufe[aus].sichtbar = False
+        w._redraw_runs()
+        self.assertEqual(len(w._auto["ids"]), 4)
+        self.assertNotIn(aus, w._auto["ids"])
+        w.db.update_run(aus, sichtbar=True)
+        # Schloss auf den aeltesten: er kommt ins Diagramm und in den Mittelwert, einer faellt rollierend heraus
+        alt = next(i for i in ids if i not in roll)
+        w.schloss(alt)
+        self.assertIn(alt, w._auto["ids"])
+        self.assertEqual(len(w._auto["ids"]), 5)
+        # gesperrter Mittelwert-Lauf zaehlt nicht mit
+        w.schloss(alt)
+        mw = self._mittelwert(ids[:3])
+        w.laeufe_hinzufuegen([mw])
+        self.assertIn(mw, w.diagramm_laeufe())
+        self.assertNotIn(mw, w._auto["ids"])
+        self.assertEqual(len(w._auto["ids"]), 4)
+        w.schloss(mw)
+        w.db.delete_run(mw, delete_files=True)          # gemeinsame Datenbank: test_laeufe_dialog zaehlt Mittelwerte
+        # neuer Lauf mit demselben Setup: neu gerechnet, neuester zuerst
+        f = sorted(x for x in os.listdir(DATA) if x.endswith(".xml"))[0]
+        neu = w.db.import_file(os.path.join(DATA, f), vehicle_id=self.vid, setup_id=self.sid)
+        w.db.update_run(neu, datum="2099-01-01T12:00:00", sichtbar=True)
+        w._reload_runs()                                                         # wie save_current_run
+        self.assertEqual(w._auto["ids"][0], neu)
+        self.assertEqual(len(w._auto["ids"]), 5)
+        # neuester Lauf nur fuer sich mit HD 138: anderes Setup -> allein, kein Mittelwert, Hinweiszeile
+        w.db.update_run(neu, setup_werte=[{"feld": "hauptduese", "wert": "138", "vorher": "135"}], nur_lauf=True)
+        w._reload_runs()
+        self.assertIsNone(w._auto)
+        self.assertNotIn(mp.AUTO_KEY, w.plot.data)
+        self.assertNotIn(mp.AUTO_KEY, w.plot.bands)
+        z = self._auto_zeilen()
+        self.assertEqual(set(z), {"kopf", "grund"})
+        self.assertIn("gleichem Setup", z["grund"].text(0))
+        # anderes Setup fuer die neuesten zwei: Mittelwert aus genau diesen
+        sid2 = w.db.save_setup(self.vid, "HD 138", {"hauptduese": "138", "clip": "3", "zzp": "18"})
+        zweiter = w._plaetze[1][1]
+        for rid in (neu, zweiter):
+            w.db.update_run(rid, setup_id=sid2, setup_werte=[], nur_lauf=False)
+        w._reload_runs()
+        self.assertEqual(w._auto["ids"], [neu, zweiter])
+        self.assertEqual(w._auto["sid"], sid2)
+        self.assertIn("· HD 138 (automatisch)", w._auto["titel"])
+        # Setup-Auswahl wechseln (Filter „aktuelles Setup“): nur noch Laeufe dieses Setups in der Liste
+        w.run_filter.setCurrentIndex(2)
+        w.setup_combo.setCurrentIndex(w.setup_combo.findData(self.sid))
+        self.assertNotIn(neu, w.diagramm_laeufe())
+        self.assertEqual(w._auto["sid"], self.sid)
+        # Haken aus: weg
+        w.laufliste.auto.setChecked(False)
+        self.assertNotIn(mp.AUTO_KEY, w.plot.data)
+        self.assertEqual(self._auto_zeilen(), {})
+
+    def test_auto_mittel_speichern(self):
+        """„speichern“ an der Zeile: echter Mittelwert-Lauf (wie Auswertung › Mittelwert bilden), über „＋“ wählbar."""
+        w = self.w
+        ids = self._laeufe(4)
+        w.laufliste.auto.setChecked(True)
+        quellen = list(w._auto["ids"])
+        self.assertEqual(len(quellen), 4)
+        def mittelwerte():
+            return [r for r in w.db.runs(mittelwert=True) if r.ist_mittelwert and r.vehicle_id == self.vid]
+        self.assertEqual(mittelwerte(), [])                                      # nicht automatisch gespeichert
+        knopf = w.run_tree.itemWidget(self._auto_zeilen()["zeile"], 5)
+        knopf.click()
+        mws = mittelwerte()
+        self.assertEqual(len(mws), 1)
+        row = mws[0]
+        self.assertEqual(row.name, "Ø 4 Läufe · Serie HD 135")
+        self.assertEqual(row.quellen, quellen)
+        self.assertEqual((row.vehicle_id, row.setup_id), (self.vid, self.sid))
+        self.assertEqual(row.werte, {"hauptduese": "135", "clip": "3", "zzp": "18"})
+        self.assertTrue(row.notiz.startswith("Quellen: "))
+        erg = mittelwert.laden(row)
+        np.testing.assert_allclose(erg.werte["ps"], w._auto["erg"].werte["ps"], rtol=1e-5)
+        self.assertEqual(mp.band_art(row), "minmax")
+        self.assertEqual(w._plaetze[0], [])                                      # nicht gesperrt ins Diagramm
+        dlg = mp.LaeufeDialog(w.db, self.vid, w.db.gesperrte_plaetze(self.vid), w._plaetze[1], w)
+        gefunden = [dlg.liste.topLevelItem(i).data(0, QtCore.Qt.UserRole) for i in range(dlg.liste.topLevelItemCount())]
+        self.assertIn(row.id, gefunden)
+        dlg.deleteLater()
+        self.assertEqual(w.laeufe_hinzufuegen([row.id]), 1)
+        self.assertNotIn(row.id, w._auto["ids"])                                 # gespeicherter Mittelwert zaehlt nicht
+        w.laufliste.auto.setChecked(False)
+        self.assertIsNone(w.auto_mittel_speichern())                             # ohne Mittelwert nichts
+        self.assertEqual(len(mittelwerte()), 1)
+        self.assertEqual(sorted(ids), sorted(quellen))
+        w.db.delete_run(row.id, delete_files=True)      # gemeinsame Datenbank: test_laeufe_dialog zaehlt Mittelwerte
 
     def test_live_plaetze_hinzufuegen_entfernen(self):
         """„＋“ fuegt Live-Plaetze an (hoechstens LIVE_MAX), „Platz entfernen“ im Titel-Menue, je Fahrzeug."""
