@@ -1,18 +1,24 @@
 # PyST 1.4.1
 
-Einfaches Prüfstandsprogramm zum Testen der neuen PST-STM32-Firmware – ohne Windows und ohne LabVIEW.
+Bedienung mit Bildern: [Wiki](https://github.com/chili023/PyST/wiki)
+
+PC-Software für den Leistungsprüfstand: misst, rechnet und wertet aus mit der **PyST-Basis**, dem **Arduino Mega**
+(PST 3.x) und dem **STM32 F446** (Nucleo-F446RE, PST-STM32) – ohne Windows und ohne LabVIEW.
 Läuft auf **Mac**, **Linux/Raspberry Pi** (und Windows).
 
 - steuert die Messelektronik: Klima lesen (`e`), Messung starten (`m`) und stoppen (`s`)
 - Lauf mit **fester Übersetzung**, Start bei *n vom Gas*, Ende bei **n Stop** (z.B. 8000 1/min) oder beim Gaswegnehmen
 - Prüfstandsdaten: Rollengeber, Rollenumfang, Trägheit, Zündimpulse, Filter, Verlustmoment
-- **Ausrollversuch** (Reiter „Kalibrierung“): nach dem Lauf Kupplung ziehen, aus dem Ausrollen der Rolle das
-  Verlustmoment bestimmen – Ergebnis Radleistung und Motorleistung getrennt
-- Übersetzung einmessen aus Zündsignal oder rusEFI-Drehzahl (Verlauf, getrimmter Mittelwert, von Hand anpassbar)
-- **rusEFI-Steuergerät** als zweite Datenquelle (Reiter „ECU“), Kanäle frei wählbar und mit jedem Lauf gespeichert
-- Live-Anzeige (Motor berechnet und gemessen, km/h, Messfrequenz, verlorene Telegramme), Live-Kurve
+- **Ausrollversuch** (Einstellungen › Rolle/Lauf, Gruppe „Verluste – Ausrollversuch“): nach dem Lauf Kupplung ziehen,
+  aus dem Ausrollen der Rolle das Verlustmoment bestimmen – Ergebnis Radleistung und Motorleistung getrennt
+- Übersetzung einmessen aus Zündsignal oder rusEFI-Drehzahl (Verlauf, getrimmter Mittelwert, von Hand anpassbar),
+  live am Drehzahlmesser des Motorrads abgleichen („Live abgleichen …“) oder per **Funkenmessung** in jedem Lauf neu
+  bestimmen (Funkenmessung: noch nicht am Prüfstand bestätigt)
+- **rusEFI-Steuergerät** als zweite Datenquelle (Einstellungen › ECU), Kanäle frei wählbar und mit jedem Lauf gespeichert
+- Live-Anzeige als LIVE-Kacheln (Motor berechnet und gemessen, km/h, Messfrequenz, verlorene Telegramme), Live-Kurve
 - **Rechnet exakt wie LabVIEW 3.2.1.** Geprüft an sechs echten Läufen vom 26.05.26: gleiche Pmax auf 0,1 PS, gleiche n(Pmax).
-- Speichert jeden Lauf als CSV, JSON, PNG und **LabVIEW-XML** (öffnet in LabVIEW-Recalc)
+- Speichert jeden Lauf als CSV und JSON (`roh.csv`, `kurve.csv`, `lauf.json`, dazu `rusefi.csv`, `marker.csv`,
+  `ereignisse.csv`, falls vorhanden) und als **LabVIEW-XML** `lauf.xml` (öffnet in LabVIEW-Recalc)
 - lädt LabVIEW-Läufe und PyST-Läufe zum Vergleich (Überlagerung und Tabelle)
 - eingebauter **Simulator**, um ohne Prüfstand zu testen (auch mit Störungen und als alter Mega 3.0.0)
 - **Messwerkzeug „Oszi / Dauermessung“**: Dauermessung, Linienschreiber, Software-Trigger auf Störungen,
@@ -23,42 +29,51 @@ Läuft auf **Mac**, **Linux/Raspberry Pi** (und Windows).
 
 Testablauf für den Vergleich alt/neu: siehe [TESTPLAN.md](TESTPLAN.md).
 
-![Auswertung](../docs/bilder/pyst_auswertung.png)
+![Auswertung](../docs/bilder/v141_auswertung.png)
 
 ## Oberfläche
 
+Ausführliche Anleitung zu jeder Funktion: **[PyST-Wiki](https://github.com/chili023/PyST/wiki)**.
+
 | Reiter | Inhalt |
 |---|---|
-| **Messen** | Status (GO / Messung / GAS WEG), Live-Werte (Motor, Zündung, km/h, EGT 1/2, λ, TPS, Messfrequenz, COM), Leistungsdiagramm (PS/Nm oben, λ/EGT unten), Laufliste mit Häkchen zum Ein-/Ausblenden, Cursor-Tabelle (Werte aller sichtbaren Läufe bei der Drehzahl unter der Maus) |
-| **Fahrzeuge & Setups** | Datenbank: Hersteller, Modell, Vergaser/EFI; je Setup Motor (Hubraum, CR, Steuerzeiten), Vergaser (Düsen, Nadel, Clip …), ECU/Tune, Zündung, Antrieb (Übersetzung, Vario, Rollen, Federn), Ein-/Auslass, Kraftstoff. Setups kopieren, „für neue Läufe verwenden“. |
-| **Auswertung** | Fahrzeug wählen → Läufe nach Datum oder nach Setup gruppiert → **Hinzufügen**, dann nächstes Fahrzeug. Fahrzeug/Setup direkt bearbeiten (auch Rechtsklick: Setup zuordnen, neues Setup). Log-Viewer wie MegaLogViewer: bis 4 Felder, beliebige Kanäle (gleiche Einheit = gleiche Skala), Cursor mit Maus und ←/→, X-Achse Zeit oder Drehzahl, beliebig viele Läufe (Farbe je Lauf, Linienart je Kanal). **Setup-Vergleich** mit markierten Unterschieden. Kanal „Übersetzung Zündung/Rolle“. |
-| **Oszi / Dauermessung** | Messwerkzeug für die Fehlersuche (Zündung oder Rolle?), siehe unten |
-| **ECU** | rusEFI-Steuergerät, siehe unten |
-| **Kalibrierung** | Ausrollversuch ein/aus, Ergebnis (Verlustleistung bzw. Verlustmoment über der Drehzahl, Messpunkte + Fit, M0/M1/m2, Fit-Güte), **Übernehmen**, aktuell gültige Verluste – siehe unten |
-| **Einstellungen** | Unterreiter **Allgemein** (Prüfstand, Lauf, Filter & Verluste, Klima, Anzeige λ oder AFR), **Verbindung** (Port, Verbinden, Live-Anzeige, automatisches Verbinden), **Zange · Netz · Steckdosen** (PyST-Basis mit Funk-Zündzange, WLAN der Basis, WLAN-Steckdosen, Zange per USB), **Tasten** (Tasten-Setup der Zange), **Prüfen**, **Firmware** – siehe unten |
+| **Messen** | Kopfzeile Fahrzeug · Setup · Notiz · Auto-Speichern · Status · **Verbinden/Trennen** · **Lauf-Einstellungen …** (Übersetzung, Filter, Laufgrenzen) · **START (F1)** (im Lauf rot: Abbrechen (Esc)). Zeile **SETUP-WERTE** (bis 8 Felder, ändern → als neues Setup speichern oder nur für diesen Lauf). Leistungsdiagramm mit unterem Diagramm, „Kurven ▾“, Achsgrenzen, „▸ Werte am Cursor“. Rechts Umgebung (BME280), **LIVE**-Kacheln je Fahrzeug (Kanal und Balkengrenzen wählbar), Ergebnis. Seitenleiste **Läufe**: 5 Plätze, gesperrt (Schloss) oder rollierend, **Referenz laden …** |
+| **Fahrzeuge & Setups** | Fahrzeuge (Hersteller, Modell, Gemischaufbereitung, Motor …) und Setups (Motor, Vergaser, Einspritzung/ECU, Zündung, Antrieb, Ein-/Auslass, Kraftstoff). Kopieren, „Für neue Läufe verwenden“ |
+| **Auswertung** | Läufe überlagern wie MegaLogViewer: bis 4 Felder, X-Achse Zeit oder Drehzahl, Cursor mit Maus und ←/→. Laufleiste **ANGEZEIGTE LÄUFE** mit Setup-Spalten (Änderungen gelb), **Mittelwert bilden …**, rechts **Werte am Cursor** und **Setup-Vergleich**. Import, PDF-Bericht, CSV |
+| **Oszi / Dauermessung** | Fehlersuche an Zündung und Rolle: Dauermessung mit Markern (F2), Linienschreiber, Software-Trigger, Ereignisliste, Flanken-Ansicht (PST-Diag 1), Geräte-Einstellungen |
+| **Einstellungen** | Unterreiter **Rolle/Lauf** (Prüfstand, Lauf, Filter, Klima, Verluste mit Ausrollversuch) · **Verbindung** (Messboard, Geräte-Einstellungen der Basis, Prüfen, Datenbank) · **Zange** (Kopplung, Aufnahme & Log, Tasten der Zange, Tests, Geräte-Einstellungen) · **Lambda** (Heizung, λ/AFR, AFR-Eingang, Prüfen) · **ECU** (rusEFI, .ini, Kanal-Setup) · **Firmware** (Kundenansicht mit vier Karten, Expertenmodus) · **WiFi** (WLAN der Basis, Steckdosen) |
 
+- Unten die **Statusleiste** mit drei Feldern (PST Basis · PST Zange/Mega · PST/Lambda ECU) und dem Umschalter
+  **☀ Tag | ☾ Nacht | Auto** (auch Menü *Ansicht › Darstellung*). Fenstergröße unter *Ansicht › Größe*.
+- Menü **Datei**: Öffnen/importieren (Ctrl+O), Läufe weitergeben als `.pyst` (Ctrl+S) oder HTML (Ctrl+H),
+  PDF-Bericht (Ctrl+P), CSV-Export (Ctrl+E). Dateien lassen sich auch ins Fenster ziehen.
 - Während eines Laufs bleibt die Skalierung wie beim vorherigen Lauf stehen; danach wird neu skaliert.
-- Achsgrenzen über dem Diagramm: Drehzahl von/bis, PS von/bis, Nm von/bis (z.B. ab 5000 1/min und ab 5 PS);
-  „auto“ = aus den Kurven, „Achsen auto“ setzt alles zurück. Gilt auch für den PDF-Bericht.
-- Filter in Sekunden (Standard 1,75 s / 0,75 s) passen sich der Messfrequenz an; Modus „Messpunkte (wie LabVIEW)“
-  für den direkten Vergleich mit LabVIEW. LabVIEW-Läufe im Simulator schalten automatisch auf Messpunkte.
+- Achsgrenzen direkt an den Achsenden: Drehzahl von/bis, PS von/bis, Nm von/bis (z.B. ab 5000 1/min und ab 5 PS);
+  fett = fest, grau = automatisch aus den Kurven, „auto“ setzt alles zurück. Gilt auch für den PDF-Bericht.
+- Filter in Sekunden (Standard 1,75 s / 0,75 s) passen sich der Messfrequenz an. „Messpunkte (wie LabVIEW)“ für den
+  direkten Vergleich mit LabVIEW. LabVIEW-Läufe im Simulator schalten automatisch auf Messpunkte.
 - Nm-Achse mit runder Teilung, die PS-Achse wird so gelegt, dass ihre Striche auf denselben Gitterlinien liegen.
-- Läufe bleiben in der Datenbank (`~/PyST/pyst.db`, Messdaten in `~/PyST/messungen/`;
-  Datenordner älterer Versionen werden beim ersten Start automatisch übernommen).
-  Rechtsklick auf einen Lauf: Notiz, Farbe, Fahrzeug/Setup zuordnen, mit aktuellen Einstellungen neu rechnen, CSV, löschen.
-- **Import** von LabVIEW-XML und PyST-Läufen, **Export** als PDF-Bericht (sichtbare Läufe + Setup-Daten) und CSV (Excel deutsch oder international).
-- **Verbinden** direkt im Messen-Reiter (neben START). Das Messboard wird alle 5 s gesucht und automatisch
-  verbunden (abschaltbar in den Einstellungen); Abziehen wird erkannt. Nach „Trennen“ von Hand bleibt es getrennt,
-  nach dem Flashen wird wieder gesucht. Die Basis per USB wird nicht gesucht, sie verbindest du von Hand. Reißt die
-  WLAN-Verbindung zur Basis ab (auch bei jedem Neustart der Basis), verbindet PyST neu und meldet sich neu an; eine
-  abgelehnte Anmeldung wiederholt es nicht, jeder Fehlversuch verlängert die Sperre der Basis (1 bis 60 s).
-- **Anzeigen und Diagramme** frei belegbar über vier Menüs: „Anzeigen …“ (oben), „Kurven ▾“ im Leistungs-
-  und im unteren Diagramm (links/rechts, ausblendbar), „Spalten …“ an der Cursor-Tabelle (zuklappbar).
-  Achsgrenzen direkt an den Achsenden (fett = fest, grau = automatisch).
-- Fenster, Aufteilungen, Spalten und Reiter werden beim Beenden gespeichert; im Auswerter speicherbare Layouts.
-- **Übersetzung einmessen** (Knopf unten rechts): Quelle Zündabnehmer oder rusEFI, Verlauf über der Messzeit,
-  rote Linie = Mittelwert, ziehen/klicken/eintippen zum Anpassen.
-- **rusEFI** (Reiter „ECU“): Das Steuergerät wird per USB parallel zum Prüfstand gelesen (5–200 Hz, Standard 50 Hz).
+- Läufe liegen in `~/PyST/pyst.db`, Messdaten in `~/PyST/messungen/` (Datenordner älterer Versionen werden beim
+  ersten Start automatisch übernommen). Fenster und Reiter werden beim Beenden gespeichert; im Auswerter speicherbare
+  Layouts. Rechtsklick auf einen Lauf in der Seitenleiste **Läufe**: Platz sperren (Schloss), In Auswertung öffnen,
+  Notiz, Farbe, aktuellem Fahrzeug/Setup zuordnen, mit aktuellen Einstellungen neu rechnen, CSV-Export, Löschen.
+- **Import** von LabVIEW-XML und PyST-Läufen, **Export** als PDF-Bericht (sichtbare Läufe + Setup-Daten) und CSV
+  (Excel deutsch oder international).
+- **Verbinden** in der Kopfzeile von Messen oder unter Einstellungen › Verbindung (Port wählen). Automatisch verbindet
+  PyST nur den **Nucleo** (STM32 F446, erkannt am ST-Link) und **Original-Arduino-Boards** (Mega) mit PST-Firmware:
+  Es sucht alle 5 s (abschaltbar unter Einstellungen › Verbindung), Abziehen wird erkannt. Die **PyST-Basis** und
+  **Mega-Nachbauten** (z. B. mit CH340) verbindest du von Hand. Nach „Trennen“ von Hand bleibt PyST getrennt, nach dem
+  Flashen wird wieder gesucht. Reißt die WLAN-Verbindung zur Basis ab (auch bei jedem Neustart der Basis), verbindet
+  PyST neu und meldet sich neu an; eine abgelehnte Anmeldung wiederholt es nicht, jeder Fehlversuch verlängert die
+  Sperre der Basis (1 bis 60 s).
+- **Anzeigen und Diagramme** frei belegbar: Titel ▾ jeder LIVE-Kachel (Kanal wählen, gruppiert nach PST und ECU),
+  „Kurven ▾“ im Leistungs- und im unteren Diagramm (links/rechts, unteres Diagramm ausblendbar), „Spalten …“ bei
+  „▸ Werte am Cursor“.
+- **Übersetzung** unter **Lauf-Einstellungen …** oder Einstellungen › Rolle/Lauf: von Hand eintragen,
+  **Übersetzung einmessen …** (Quelle Zündabnehmer oder rusEFI, Verlauf über der Messzeit, rote Linie = Mittelwert,
+  ziehen/klicken/eintippen zum Anpassen), **Live abgleichen …** (Fenster „Übersetzung live abgleichen“: Drehzahl wie
+  am Drehzahlmesser des Motorrads einstellen) oder Übersetzungsart **Funkenmessung (aus Zündung/Rolle jedes Laufs)**.
+- **rusEFI** (Einstellungen › ECU): Das Steuergerät wird per USB parallel zum Prüfstand gelesen (5–200 Hz, Standard 50 Hz).
   - Die Kanalnamen stehen nicht im Steuergerät, sondern in der TunerStudio-`.ini` zur jeweiligen Firmware.
     PyST holt sie automatisch vom USB-Laufwerk „RUSEFI“ (`rusefi.ini.7z`) und legt sie unter
     `~/PyST/rusefi_ini/` ab. Alternativ „Datei wählen …“. Passt die Signatur nicht, warnt PyST.
@@ -68,32 +83,36 @@ Testablauf für den Vergleich alt/neu: siehe [TESTPLAN.md](TESTPLAN.md).
   - Beim Speichern eines Laufs: Spalten `rusefi_<Kanal>` in `roh.csv` (auf die Prüfstands-Telegramme gelegt),
     Originalabtastung in `rusefi.csv`, Signatur und Einheiten in `lauf.json`. Im Auswerter erscheinen die
     Kanäle in der Gruppe „rusEFI“ (z.B. „TPS (ECU)“).
-  - Messen → „Anzeigen …“: jeder aufgezeichnete Kanal als Anzeige (live, am Cursor der Wert des Laufs) und
-    bis zu 4 Kanäle „im Diagramm“: ohne eigene Achse über die Leistungskurve gelegt (Farbe = Lauf,
-    Punkt-/Strichpunkt-Muster = Kanal, Bereich in der Legende oben links, Werte in der Cursor-Tabelle).
+  - Im Reiter Messen: jeder aufgezeichnete Kanal als LIVE-Kachel (Titel ▾, Gruppe ECU; live und am Cursor der Wert
+    des Laufs) und über „Kurven ▾“ bis zu 4 „ECU-Kurven über der Leistung“: ohne eigene Achse über die Leistungskurve
+    gelegt (Farbe = Lauf, Punkt-/Strichpunkt-Muster = Kanal, Bereich in der Legende oben links).
   - Zum Entpacken der `.7z` wird `py7zr` benutzt, ersatzweise `bsdtar`/`7z` (Mac und Windows haben `tar` dabei,
     auf Linux ggf. `pip install py7zr` oder `apt install p7zip-full`).
 - Weitere Messkanäle (später WSB) sind zusätzliche Spalten in `roh.csv` und
   erscheinen automatisch im Auswerter und im CSV-Export.
 
-## Ausrollversuch (Reiter „Kalibrierung“)
+Noch nicht am Prüfstand bestätigt: Mega- und F446-Flashen aus PyST, Übersetzungsart **Funkenmessung**, Zangentasten im
+Fenster „Übersetzung live abgleichen“.
+
+## Ausrollversuch (Einstellungen › Rolle/Lauf)
 
 Bestimmt die Verluste von Rolle, Rad, Kette und Getriebeausgang. Damit weist PyST neben der Radleistung die
-**Motorleistung** aus.
+**Motorleistung** aus. Bedient wird er in der Gruppe „Verluste – Ausrollversuch“ unter Einstellungen › Rolle/Lauf
+(früher eigener Reiter „Kalibrierung“).
 
 **Ablauf für den Fahrer**
 
-1. Im Reiter „Kalibrierung“ **Ausrollversuch nach jedem Lauf** einschalten (bleibt gespeichert). Ausgeschaltet
+1. In der Gruppe „Verluste – Ausrollversuch“ **Ausrollversuch nach jedem Lauf** einschalten (bleibt gespeichert). Ausgeschaltet
    läuft alles exakt wie bisher.
-2. Lauf wie immer. Bei *n Stop* zeigt die Statuszeile **GAS WEG – KUPPLUNG ZIEHEN!**
+2. Lauf wie immer. Bei *n Stop* zeigt das Statusfeld in der Kopfzeile **GAS WEG – KUPPLUNG ZIEHEN!**
 3. Gas weg und **gleich die Kupplung ziehen**, gezogen halten, nicht bremsen, nicht schalten. Nach dem Laufende
    steht **KUPPLUNG ZIEHEN – ausrollen lassen** (blau), die Aufzeichnung läuft weiter.
 4. Das Ausrollen endet bei der eingestellten Motordrehzahl (Rolle × i, Vorgabe 3000 1/min, 0 = bis Stillstand),
    nach der Höchstdauer (Vorgabe 120 s), wenn die Drehzahl wieder steigt, keine Daten mehr kommen oder mit
    **Ausrollen beenden (Esc)**. Der Lauf ist dann schon fertig und wird wie immer ausgewertet und gespeichert
    (das Ausrollen steht mit in `roh.csv`, das Ergebnis unter `"ausrollen"` in `lauf.json`).
-5. Im Reiter „Kalibrierung“ Kurve und Fit-Güte prüfen und **Übernehmen** drücken. Erst dann werden M0, M1, n1 und
-   m2 in die Einstellungen (Filter & Verluste) eingetragen; der Lauf des Versuchs wird damit neu gerechnet.
+5. In der Gruppe „Verluste – Ausrollversuch“ Kurve und Fit-Güte prüfen und **Übernehmen** drücken. Erst dann werden
+   M0, M1, n1 und m2 in die Gruppe „Verluste (Werte für die Rechnung)“ eingetragen; der Lauf des Versuchs wird damit neu gerechnet.
    „Markierten Lauf auswerten“ wertet das Ausrollen eines gespeicherten Laufs nachträglich aus.
 
 **Formel**
@@ -122,7 +141,7 @@ Bestimmt die Verluste von Rolle, Rad, Kette und Getriebeausgang. Damit weist PyS
 - Erfasst werden nur Verluste hinter der Kupplung (Rolle, Reifen, Kette, Getriebeausgang), nicht Getriebeeingang,
   Primärtrieb und Kupplung selbst. Die Verluste hängen von Reifendruck, Anpressung und Temperatur ab: nach
   Änderungen neu messen.
-- Fehlt der untere Drehzahlbereich, ist M0 hochgerechnet (Hinweis im Reiter). Ein quadratischer Anteil
+- Fehlt der untere Drehzahlbereich, ist M0 hochgerechnet (Hinweis in der Gruppe). Ein quadratischer Anteil
   (m2 ≠ 0) lässt sich im LabVIEW-XML nicht abbilden; dort stehen nur M0/M1.
 - Meldungen statt Ergebnis bei: keine Ausrolldaten, zu kurz (unter 3 s), Drehzahlbereich zu klein
   (unter 20 %), Rolle beschleunigt, Kupplung nicht gezogen erkennbar, Verlustmoment negativ.
@@ -130,11 +149,11 @@ Bestimmt die Verluste von Rolle, Rad, Kette und Getriebeausgang. Damit weist PyS
 
 ## Oszi / Dauermessung (ab 1.3)
 
-![Oszi](docs/bilder/pyst_oszi.png)
+![Oszi](../docs/bilder/v141_oszi.png)
 
 Kurz: **Verbinden → Reiter „Oszi / Dauermessung“ → „● Dauermessung starten“ → bei Bedarf Marker (F2,
 z.B. „Kabel bewegt“) → Ereignisse in der Liste doppelklicken → „Dauermessung beenden“** (landet als Lauf
-„Dauer“ in der Laufliste und in der Auswertung).
+„Dauer“ in den Läufen und in der Auswertung).
 
 - **Dauermessung** unabhängig vom Leistungslauf, ohne Zeitgrenze. Sie wird fortlaufend gesichert
   (`~/PyST/messungen/JJMMTT_hhmmss_Dauermessung/teil_NNNN.csv`, alle 2 s auf die Platte, je Minute ein Abschnitt);
@@ -161,7 +180,7 @@ z.B. „Kabel bewegt“) → Ereignisse in der Liste doppelklicken → „Dauerm
 binnen 300 ms mit `#CAP`, sind Modus D, Bursts und Einstellungen verfügbar; sonst (Mega 3.0.0, F446 1.0.0)
 nur die normalen Telegramme. Zeilenende `\n`, `\r` oder `\r\n`; unbekannte Zeilen/Felder werden ignoriert.
 
-**Simulator** (Port-Auswahl in den Einstellungen):
+**Simulator** (Port unter Einstellungen › Verbindung › Port):
 
 | Port | verhält sich wie |
 |---|---|
@@ -176,15 +195,65 @@ Mit `ign_lockout_pct` (z.B. 50) filtert der Simulator Doppelimpulse wie die Firm
 
 ## Inbetriebnahme: Prüfen und Firmware
 
-**Einstellungen › Prüfen:** „Alles prüfen“ bewertet das verbundene Gerät mit Sollwerten, ohne Terminal. Basis: Takt, Spannungen,
-Sensoren, Klimawerte, ESP-Link, WLAN, Zange per Funk. Zange per USB: Firmware, Zähler, Kopplung. Dazu „Funken zählen“ mit
-optionaler Sollfrequenz, „Log prüfen“ und bei der Zange per USB „Ein Blitz“ (einzelner TRIG-Puls, 1–25 µs). „Protokoll
-kopieren“ legt das Ergebnis als Text in die Zwischenablage.
+**Prüfen:** „Alles prüfen“ unter Einstellungen › Verbindung (Gruppe „Prüfen“) bewertet das verbundene Gerät mit
+Sollwerten, ohne Terminal. Basis: Takt, Spannungen, Sensoren, Klimawerte, ESP-Link, WLAN, Zange per Funk. Zange per USB:
+Firmware, Zähler, Kopplung. Einzeln geht es unter Einstellungen › Zange › **Tests** (Prüfungen der Zange, „Funken zählen“
+mit optionaler Sollfrequenz, „Log prüfen“ und bei der Zange per USB „Ein Blitz“, einzelner TRIG-Puls, 1–25 µs) und
+Einstellungen › Lambda › **Prüfen** („Lambda prüfen“: Wideband F042 und Heizung). „Protokoll kopieren“ legt das
+Ergebnis als Text in die Zwischenablage.
 
 **Einstellungen › Firmware:** flasht Zange (USB-C: Update-Datei über `#UPD`, Erstflash per esptool), Basis-STM32 (USB über den
 Bootloader der Basis), Basis-ESP (USB: Update-Datei über `#ESPUPD` und den STM, Erstflash per esptool über die ESP-Brücke),
-den Lambda-Controller F042 (über die Basis per CAN) und für die Erstprogrammierung den STM32 per ST-Link an J10. Die Firmware der eigenen Hardware liegt nicht in diesem
-Repository: Man wählt die Datei oder den Ordner des Builds, PyST prüft, ob sie zum Ziel passt.
+den Lambda-Controller F042 (über die Basis per CAN), den Arduino Mega (avrdude über den Arduino-Bootloader), den STM32 F446
+(Laufwerk NODE_F446RE, st-flash oder DFU) und für die Erstprogrammierung den STM32 per ST-Link an J10. Mega- und
+F446-Flashen sind noch nicht am Prüfstand bestätigt.
+
+Quelle ist das öffentliche Firmware-Repo: Branch `firmware` von [chili023/PyST](https://github.com/chili023/PyST)
+(`manifest.json` mit Version, Datei, Größe, SHA-256 und Signatur je Ziel). Oben steht „Firmware der Geräte“ mit der
+Quelle („Quelle: GitHub chili023/PyST › firmware“), dazu **Jetzt nach Updates suchen** und der Schalter
+**Expertenmodus** (PyST merkt sich die Wahl). Eine eigene Datei geht im Expertenmodus; PyST prüft, ob sie zum Ziel passt.
+
+- **Kundenansicht** (Standard): vier Karten.
+
+  | Karte | Gerät | Knopf |
+  |---|---|---|
+  | **Basis** | Messplatine PyST (Basis STM32 · Basis-ESP · Lambda) | **Aktualisieren** (nimmt den Basis-ESP mit; den Lambda-Controller F042 flasht man im Expertenmodus) |
+  | **Zange** | Funk-Zange am Zündkabel | **Aktualisieren** |
+  | **Arduino Mega** | ältere Messplatine PST 3.x | **Flashen** (noch nicht am Prüfstand bestätigt) |
+  | **STM32 (F446)** | ältere Messplatine PST-STM32 | **Flashen** (noch nicht am Prüfstand bestätigt) |
+
+  Jede Karte zeigt „✔ erkannt · …“ oder „– nicht angeschlossen“, „installiert“ und „verfügbar“ (mit „neu“, wenn es
+  eine neuere Version gibt). Ist alles aktuell, steht „Aktuell ✔“ auf dem Knopf. Darunter die Gruppe „Ablauf“ mit
+  Fortschritt, **Alle verfügbaren Updates (n) …** und **Abbrechen**.
+- **Expertenmodus**: Gruppe „Geräte (Expertenmodus: alle Bausteine einzeln)“, je Zeile Port (nur Arduino Mega und
+  STM32 (F446), die anderen sucht PyST selbst), Weg, Datei, auf dem Gerät, verfügbar, Zustand, **Aktualisieren** bzw.
+  **Flashen**, **Datei wählen …**, der Erstflash-Knopf und der Haken **erzwingen** (auch gleiche oder ältere Version
+  bzw. Datei mit ungeprüfter Signatur flashen).
+
+  | Zeile | Weg | Datei | Erstflash |
+  |---|---|---|---|
+  | Basis STM32 | USB (Update-Datei) | `.pystfw` | Erstflash ST-Link … |
+  | Basis-ESP | USB über die Basis | `.pystfw` | Erstflash ESP-Brücke … |
+  | Lambda (F042) | CAN über die Basis | `.bin` | – |
+  | Zange | USB an der Zange | `.pystfw` | Erstflash esptool … |
+  | Arduino Mega | USB · avrdude, Arduino-Bootloader | `.hex` | – |
+  | STM32 (F446) | USB-Laufwerk, st-flash oder DFU | `.bin` | Erstflash ST-Link … |
+
+  Darunter:
+  - „Eigene Datei (statt Firmware-Repo)“: **Gerät** wählen (die einzelnen Flash-Ziele „Zange per USB (Update-Datei)“,
+    „Zange Erstflash per esptool (Build-Ordner)“, „Basis STM32“, „Basis STM32 per ST-Link (Erstprogrammierung)“,
+    „Basis-ESP per USB (Update-Datei)“, „Basis-ESP Erstflash per Brücke (Build-Ordner)“, „Lambda (F042) per CAN“,
+    „Arduino Mega (PST 3.x)“, „STM32 (F446) per USB“, „STM32 (F446) Erstflash per ST-Link/DFU“), dann Datei bzw.
+    Ordner wählen. Erlaubt: `.pystfw` (Basis, Basis-ESP, Zange), `.hex` (Mega), `.bin` (F446, Lambda). Ohne geprüfte
+    Signatur nur mit **Version erzwingen / Downgrade erlauben**.
+  - „Erstflash (leere oder verkonfigurierte Platine)“: je eine Zeile Basis STM32 (ST-Link (SWD), Gesamtdatei),
+    Basis-ESP (ESP-Brücke über die Basis (esptool)), Zange (esptool über USB-C), Arduino Mega (avrdude,
+    Arduino-Bootloader, 115200 Bd) und STM32 (F446) (ST-Link (st-flash) oder USB-DFU (BOOT0)), jeweils **Starten …**.
+  - „Zange – Update per USB“ mit Warnung und **Aktualisieren**.
+  - „Protokoll“ mit **Protokoll kopieren** und **Protokoll speichern …**.
+
+Die folgenden Absätze nennen die Flash-Ziele so, wie sie in der Auswahl **Gerät** unter „Eigene Datei“ heißen. In der
+Kundenansicht stecken sie hinter den Karten, im Expertenmodus hinter den Zeilen.
 
 „Basis STM32“ nimmt eine Update-Datei (`.pystfw`, siehe [Firmware-Updates der Basis](#firmware-updates-der-basis)) und braucht
 weder Treiber noch Zusatzprogramm (reines Python mit pyserial).
@@ -212,9 +281,9 @@ mit einer Basis gekoppelt und synchron ist (Fehler 20: Basis ausschalten), ohne 
 (Fehler 21). Fehler 11 heißt Signatur oder Schlüssel passen nicht, 12 Rückfall gesperrt. **Die Zange nie am laufenden
 Motor per USB anschließen:** Sie ist dann galvanisch mit dem PC verbunden.
 
-„Zange Erstflash per esptool (Build-Ordner)“ ist der bisherige Weg mit dem ganzen Build (Bootloader, Partitionstabelle,
-OTA-Daten, App). Ihn braucht jede Zange einmal für 0.4.0, weil sich der Bootloader ändert (App-Rollback), danach geht es
-mit der Update-Datei weiter. Ein bis PyST 1.4 unter „Zange“ eingetragener Build-Ordner wandert von selbst in diese Zeile.
+„Zange Erstflash per esptool (Build-Ordner)“ (Expertenmodus: „Erstflash esptool …“ in der Zeile Zange bzw. „Starten …“
+in der Gruppe Erstflash) ist der bisherige Weg mit dem ganzen Build (Bootloader, Partitionstabelle, OTA-Daten, App). Ihn braucht jede Zange einmal für 0.4.0, weil sich der Bootloader ändert (App-Rollback), danach geht es
+mit der Update-Datei weiter. Ein bis PyST 1.4 unter „Zange“ eingetragener Build-Ordner wandert von selbst in dieses Ziel.
 
 „Basis-ESP per USB (Update-Datei)“ nimmt eine `.pystfw` für das Ziel `basis-esp32c3` (Basis-Firmware ab 0.4.0 mit
 `espupd=1` in `#CAP`, Basis-ESP ab 0.4.0), auch über „Herunterladen“ (Manifest-Eintrag `basis_esp`). Der Weg ist derselbe wie
@@ -227,13 +296,24 @@ meldet (PyST wartet bis 60 s). Startet der ESP vorher neu, kehrt er zur alten Fi
 (Ausgabe, Burst, Aufnahme der Zange; PyST beendet vorher nur die eigene Ausgabe mit `#RUN 0`), 30: ESP antwortet nicht
 (Brücke aktiv?), 31: Antwort zu spät (PyST wiederholt), 32: ESP neu gestartet (auf BOOT normal), 33: Basis-ESP vor 0.4.0.
 
-„Basis-ESP Erstflash per Brücke (Build-Ordner)“ ist der bisherige esptool-Weg über die ESP-Brücke (PyST schaltet sie mit
+„Basis-ESP Erstflash per Brücke (Build-Ordner)“ (Expertenmodus: „Erstflash ESP-Brücke …“ in der Zeile Basis-ESP bzw.
+„Starten …“ in der Gruppe Erstflash) ist der bisherige esptool-Weg über die ESP-Brücke (PyST schaltet sie mit
 `#ESP BRIDGE 1` ein). Ihn braucht jede neue Platine und jeder Basis-ESP vor 0.4.0 einmal, danach geht es mit der
-Update-Datei weiter. Ein bis PyST 1.4 unter „Basis ESP“ eingetragener Build-Ordner wandert von selbst in diese Zeile.
+Update-Datei weiter. Ein bis PyST 1.4 unter „Basis ESP“ eingetragener Build-Ordner wandert von selbst in dieses Ziel.
 
-Eine neue Basis: erst per ST-Link die Gesamtdatei `pyst-basis-gesamt.bin` (Bootloader + Anwendung, an 0x08000000), dann den
-Basis-ESP per Erstflash über die Brücke. Die ST-Link-Zeile lehnt die Anwendung allein ab, weil sie ab 0x08008000 gelinkt ist. ST-Link braucht `st-flash` (Mac
+Eine neue Basis: erst per ST-Link die Gesamtdatei `pyst-basis-gesamt.bin` (Bootloader + Anwendung, an 0x08000000; Expertenmodus
+„Erstflash ST-Link …“ in der Zeile Basis STM32), dann den Basis-ESP per Erstflash über die Brücke. PyST nennt die Reihenfolge:
+1. STM32 per ST-Link → 2. Basis-ESP per Brücke → 3. Updates per USB → 4. Lambda über die Basis → 5. Zange einmal per
+esptool. Das Ziel „Basis STM32 per ST-Link (Erstprogrammierung)“ lehnt die Anwendung allein ab, weil sie ab 0x08008000 gelinkt ist. ST-Link braucht `st-flash` (Mac
 `brew install stlink`, Linux `apt install stlink-tools`), `esptool` kommt mit `requirements.txt`.
+
+**Arduino Mega und STM32 (F446)** (noch nicht am Prüfstand bestätigt): Die Dateien liegen unsigniert im Firmware-Repo
+(`.hex` für den Mega, `.bin` für den F446). Den Port wählt man im Expertenmodus in der Zeile. Mega: PyST trennt die
+Messverbindung und flasht mit `avrdude` über den Arduino-Bootloader (115200 Bd), die Einstellungen im EEPROM bleiben.
+PyST sucht `avrdude` im PATH, bei Homebrew, in der Arduino-IDE und bei PlatformIO (sonst Mac `brew install avrdude`,
+Linux `apt install avrdude`). F446: PyST kopiert die Datei auf das Laufwerk NODE_F446RE des Nucleo, der ST-Link flasht
+selbst und startet neu. Ohne Laufwerk geht es mit `st-flash` oder `dfu-util` an 0x08000000 (DFU: BOOT0 auf 1, Reset,
+danach BOOT0 wieder auf 0).
 
 ### Firmware-Updates der Basis
 
@@ -252,7 +332,7 @@ Die Signatur prüft PyST vorab, dafür braucht es das Paket `cryptography` aus `
 holen es mit `pip install -r requirements.txt` nach oder indem man den Ordner `.venv` löscht. Die bekannten öffentlichen
 Schlüssel stehen in `pyst/fw_keys.py`:
 
-- **Aus dem Netz** geladene Dateien brauchen einen bekannten Schlüssel und eine gültige Signatur, die auch zum Eintrag im
+- **Aus dem Netz** (Firmware-Repo) geladene Dateien brauchen einen bekannten Schlüssel und eine gültige Signatur, die auch zum Eintrag im
   Manifest passt. Sonst lehnt PyST sie ab und löscht sie. Geflasht wird nur auf Knopfdruck.
 - **Von Hand** gewählte Dateien: Bei bekanntem Schlüssel muss die Signatur stimmen. Bei unbekanntem Schlüssel geht es mit
   deutlichem Hinweis weiter, dann entscheidet der Bootloader.
@@ -268,20 +348,24 @@ Schlüsseldatei abgeleiteten AES-Schlüssel; die Regeln für Signatur und Downlo
 Gerät selbst. Der Lambda-Controller ist davon nicht betroffen.
 
 **Zange und Basis-ESP: einmal Erstflash, danach Update-Datei.** Beide brauchen einmal den ganzen Build per esptool
-(„Zange Erstflash per esptool“ bzw. „Basis-ESP Erstflash per Brücke“) mit 0.4.0 oder neuer, weil erst damit Bootloader,
-Partitionen und App-Rollback stimmen. Danach kommen Updates nur noch als `.pystfw` über USB („Zange per USB“ bzw. „Basis-ESP
-per USB“), signiert und verschlüsselt, mit Probezeit nach dem Neustart (Zange 15 s, Basis-ESP 30 s mit Link). Ältere Firmware
+(Expertenmodus: „Erstflash esptool …“ bzw. „Erstflash ESP-Brücke …“) mit 0.4.0 oder neuer, weil erst damit Bootloader,
+Partitionen und App-Rollback stimmen. Danach kommen Updates nur noch als `.pystfw` über USB (Karte Zange bzw. Basis, Knopf
+„Aktualisieren“), signiert und verschlüsselt, mit Probezeit nach dem Neustart (Zange 15 s, Basis-ESP 30 s mit Link). Ältere Firmware
 meldet PyST mit diesem Hinweis (Zange: kein `upd=1`, Basis-ESP: Fehler 33).
 
-**Statusleiste:** „● Zange verbunden“ (grün), „● Zange nicht verbunden“ (rot) oder „● Zange per USB“ (orange).
+**Statusleiste:** Das Feld „PST Zange/Mega“ zeigt z. B. „Zange 1: Funk ok … · Akku …“ (grün), „nicht verbunden –
+Zange aus oder nicht gekoppelt“ (rot) oder „Zange per USB – nur Auslesen/Testen, nicht am laufenden Motor“ (orange).
+Hängt die Basis im Bootloader, steht im Feld „PST Basis“: „im Bootloader – Firmware unter Einstellungen › Firmware aufspielen“.
 
 ## PyST-Basis, Funk-Zange und Steckdosen
 
-Lambda-Heizung: Knopf „Lambda ein/aus“ unter Einstellungen › Zange · Netz · Steckdosen oder an der Zange (Standard T4 lang). „Bereit“ heißt nur
+Lambda-Heizung: Knopf „Lambda ein“ bzw. „Lambda aus“ unter Einstellungen › Lambda (Gruppe „Lambda-Heizung“) oder an der
+Zange (Standard T4 lang). „Bereit“ heißt nur
 Vorheizen, volle Heizung erst mit Motor (Rolle oder Zündfunken). Ohne Motor schaltet die Basis nach `lambda_off_min` (Standard
-3 min) selbst ab, auch wenn PC oder USB ausfallen. Zustand auch in der Statusleiste und unter Einstellungen › Prüfen.
+3 min) selbst ab, auch wenn PC oder USB ausfallen. Zustand auch in der Statusleiste und unter Einstellungen › Lambda
+(„Prüfen: Wideband (F042) und Heizung“).
 
-**Tasten der Zange** (Einstellungen › Tasten, Zange ab 0.1.3, Basis ab 0.2.3): Fest in der Firmware und ohne PC nutzbar sind Einschalten, T1
+**Tasten der Zange** (Einstellungen › Zange › Tasten der Zange, Zange ab 0.1.3, Basis ab 0.2.3): Fest in der Firmware und ohne PC nutzbar sind Einschalten, T1
 lang aus, T1 + T2 koppeln, T2 lang Blitzmodus und im Blitzmodus Marker, Aufnahme und φ. Sechs Gesten sind außerhalb des Blitzmodus frei
 belegbar, Standard: T1 kurz Marker, T2 kurz Aufnahme, T3 kurz Neuer Lauf, T3 lang Übersetzung messen, T4 kurz nichts, T4 lang Lambda.
 Das Setup liegt in den PyST-Einstellungen. PyST schickt es beim Verbinden, wenn sich die Zange neu meldet und bei jeder Änderung. Die
@@ -292,37 +376,46 @@ Aufzeichnung von vorn; aus dem Log der Zange gelesene zeigen die Taste dazu, z. 
 - **Übersetzung messen** braucht Ruhe und gehaltene Drehzahl: Die Taste startet 5 s Messung, das Band zeigt groß neu und bisher, erst ein
   zweiter Druck innerhalb von 30 s übernimmt den Wert. Bei unruhiger Drehzahl oder doppelt zählender Zange (Abweichung zu rusEFI, oder genau
   das Doppelte bzw. Halbe von bisher) gibt es nichts zu übernehmen, nur eine Meldung. Eine wirklich verdoppelte Übersetzung trägt man im Dialog ein.
+- **Im Abgleich** (noch nicht am Prüfstand bestätigt): Solange das Fenster „Übersetzung live abgleichen“ offen ist,
+  verstellen die Tasten die Übersetzung (T1 −0,1, T2 +0,1, T3 −0,05, T4 +0,05). Im Blitzmodus der Zange und während
+  eines Laufs gilt das nicht. Beim Schließen gilt wieder das eigene Tasten-Setup.
 
 Protokoll: `../docs/04_PST_Diag_1.md` §10. Ohne Hardware vorführbar mit den Simulator-Ports `SIM:basis`,
 `SIM:basis:stoerung`, `SIM:basis:ohne`, `SIM:basis:wlan` (TCP-Port mit Anmeldung, Schlüssel vorher über `SIM:basis`
 holen) und `SIM:zange` sowie dem Knopf „Demo-Steckdosen (Simulator)“.
 
-- **Verbinden**: Basis per USB wie bisher, oder **per WLAN**: Port `tcp://192.168.4.1:2323` (Basis als Access Point)
-  bzw. `tcp://<name>.local:2323` (Werkstattnetz, mDNS) – oder Knopf „PC per WLAN verbinden“. Ein Abriss der
+- **Verbinden**: Basis per USB von Hand (Einstellungen › Verbindung › Port, dann Verbinden), oder **per WLAN**: Port `tcp://192.168.4.1:2323` (Basis als Access Point)
+  bzw. `tcp://<name>.local:2323` (Werkstattnetz, mDNS) – oder Knopf „PC per WLAN verbinden“ unter Einstellungen › WiFi. Ein Abriss der
   WLAN-Verbindung wird erkannt.
 - **Anmeldung per WLAN** (Basis ab 0.3.0): USB ist das Koppeln. Beim Verbinden per USB holt PyST den Schlüssel der
   Basis und legt ihn in `~/PyST/schluessel.json` ab (nur für den Benutzer lesbar). Per WLAN meldet sich PyST damit an;
   ohne Schlüssel oder bei falschem Schlüssel steht in der Meldung, was zu tun ist. Fehlversuche sperren die Basis
   immer länger. Der Knopf „Neuer Schlüssel“ (nur per USB) sperrt alle anderen PCs aus.
-- **Zange** (Einstellungen › Zange · Netz · Steckdosen, Kurzfassung rechts in der Statusleiste): Akku, Signal, Sync,
-  Funken, Blitz φ. **Koppeln …** öffnet das Kopplungsfenster (an der Zange T1 + T2 gleichzeitig 3 s halten),
-  **Markieren (F3)** setzt einen Marker (erscheint wie die Tasten der Zange im Oszi und im Lauf),
-  **Einstellungen …** liest/schreibt die Zangen-Schlüssel (`imp_per_rev_x10`, `deadtime_us`, `blitz_phi_x10` …).
+- **Zange** (Einstellungen › Zange, Kurzfassung im Feld „PST Zange/Mega“ der Statusleiste): Kopfkarten Verbindung,
+  Signal, Akku, Sync, Funken, Blitz φ, Log, Firmware. Gruppe „Kopplung“: **Koppeln …** öffnet das Kopplungsfenster
+  (an der Zange T1 + T2 gleichzeitig 3 s halten), dazu „Identifizieren“ und „Entkoppeln“. Gruppe „Aufnahme & Log“:
+  „● Aufnahme Zange“, **Markieren (F3)** setzt einen Marker (erscheint wie die Tasten der Zange im Oszi und im Lauf),
+  „Log nachladen (Lücken)“. Die Gruppe „Geräte-Einstellungen der Zange (per Funk)“ steht direkt auf der Seite:
+  „Lesen“ holt, „Übertragen“ schreibt die Zangen-Schlüssel (`imp_per_rev_x10`, `deadtime_us`, `blitz_phi_x10` …),
+  „Standardwerte“ trägt die Vorgaben ein (zur Zange erst mit „Übertragen“). Dazu „Zange ausschalten“.
 - **Zündstärke** (`ign_peak_mv`): Kanal im Linienschreiber und im Auswerter (Gruppe „Zange“). Mit gekoppelter Zange
   laufen auch Leistungsläufe im Diagnose-Telegramm, damit die Zündstärke mitgespeichert wird.
 - **Ereignisse** der Basis (Marker, Zange verbunden/verloren, Steckdose an/aus) stehen in der Oszi-Ereignisliste,
   in `marker.csv`/`ereignisse.csv` von Lauf und Dauermessung und als Linien im Auswerter.
-- **Netzwerk**: WLAN der Basis als Access Point (Kanal, SSID, Passwort), im Werkstatt-WLAN oder aus. Für den Access
-  Point schlägt PyST ein Passwort vor, ein offenes WLAN wird abgelehnt.
-- **Steckdosen** über die Basis oder **direkt vom PC** (gleiches Netz, ohne Basis): Shelly Gen2/3/4 und Gen1,
+- **Netzwerk** (Einstellungen › WiFi, Gruppe „WLAN der Basis“): WLAN der Basis als Access Point (Kanal, SSID,
+  Passwort), im Werkstatt-WLAN oder aus. Für den Access
+  Point schlägt PyST ein Passwort vor („Vorschlagen“), ein offenes WLAN wird abgelehnt.
+- **Steckdosen** (Einstellungen › WiFi) über die Basis oder **direkt vom PC** (gleiches Netz, ohne Basis): Shelly Gen2/3/4 und Gen1,
   Tasmota, ESPHome. Suchen (mDNS), Hinzufügen (Typ wird erkannt, Einschaltzustand nach Stromausfall = aus,
   Shelly mit Passwort oder ohne Relais wird abgewiesen), Ein/Aus, Leistung, Totmann-Zeit („fällt aus“ = Rückfallzeit,
   laufend erneuert; „bleibt an“), **Automatik**: z.B. Gebläse/Absaugung beim Laufstart (bzw. bei Dauermessung) ein,
   nach dem Ende + Nachlaufzeit aus. Empfohlen: Shelly Plug S/M Gen3; ESPHome kennt keine Rückfallzeit.
   **Komfortfunktion, keine Sicherheitsfunktion, kein Not-Aus.**
-- **Zange per USB** (zum Auslesen/Testen, **galvanische Verbindung** – PyST warnt deutlich): Port der Zange wählen
-  und verbinden (nie automatisch). Oszi/Dauermessung/Burst nur mit Kanal Zündung. **Log auslesen …** holt das Log
-  der Zange und legt es als Dauermessung ab (Laufliste/Auswertung), auf Wunsch gleich als `.pyst`.
+- **Zange per USB** (zum Auslesen/Testen, **galvanische Verbindung** – PyST warnt deutlich): Port der Zange unter
+  Einstellungen › Verbindung › Port wählen und verbinden (nie automatisch). Oszi/Dauermessung/Burst nur mit Kanal
+  Zündung. **Log auslesen … (als Dauermessung)** (Einstellungen › Zange, Gruppe „Aufnahme & Log“) holt das Log der
+  Zange und legt es als Dauermessung ab (Läufe/Auswertung), auf Wunsch gleich als `.pyst`; „Log herunterladen …
+  (CSV + Bericht)“ speichert es als Datei.
 
 ## Fehlerkanäle (ab 1.3)
 
@@ -337,8 +430,8 @@ Für jeden Lauf und jede Dauermessung – auch für alte Läufe und LabVIEW-Date
 | Abweichung Rolle / Zündung | die Abweichung in % (zum Ansehen) |
 
 Weil die Übersetzung gleitend bestimmt wird, gibt ein Vario (stetig veränderliche Übersetzung) keinen Fehlalarm.
-Der **Fehleranteil** (% der Telegramme, in denen sich etwas dreht) steht in der Laufliste (Spalte „Fehler“,
-Tooltip mit Details), im PDF-Bericht und in der HTML-Ansicht.
+Der **Fehleranteil** (% der Telegramme, in denen sich etwas dreht) steht in der Seitenleiste **Läufe** im Reiter
+Messen (Spalte „Fehler“, Tooltip mit Details), im PDF-Bericht und in der HTML-Ansicht.
 
 ## Läufe weitergeben (ab 1.3)
 
@@ -347,7 +440,7 @@ als eine `.pyst`-Datei, als Ordner mit je einer `.pyst` pro Lauf oder als HTML-A
 
 - **`.pyst`** = ZIP mit `inhalt.json` (Fahrzeug, Setup, Notiz, Farbe, Parameter, Fehleranteile) und je Lauf dem
   Laufordner (`roh.csv`, `lauf.json`, `kurve.csv`, `marker.csv`, `bursts/` … bzw. LabVIEW-XML).
-  Öffnen: Datei → Öffnen, Doppelklick/Kommandozeile `./start_linux.sh datei.pyst` (Windows: `start_windows.bat datei.pyst`)
+  Öffnen: Datei → Öffnen / importieren, Doppelklick/Kommandozeile `./start_linux.sh datei.pyst` (Windows: `start_windows.bat datei.pyst`)
   oder per **Drag & Drop** ins Fenster. Fahrzeug und Setup werden beim Empfänger angelegt, doppelte Läufe nicht doppelt.
 - **HTML-Ansicht** (Strg+H): **eine** Datei (~110–140 KB für 2–4 Läufe), öffnet offline in jedem Browser, auch am Handy,
   hell/dunkel. Oben Pmax (PS/kW), Mmax, Fahrzeug, Datum, Klima/DIN-Korrektur, Fehleranteile; ein Diagramm
@@ -359,7 +452,7 @@ als eine `.pyst`-Datei, als Ordner mit je einer `.pyst` pro Lauf oder als HTML-A
 ![HTML-Ansicht](docs/bilder/pyst_html_ansicht.png)
 
 **Nur ansehen:** PyST startet ohne Messelektronik direkt als Auswerter (kein Verbindungsdialog; verbunden wird
-nur automatisch, wenn ein PST-Messboard steckt). Für Kunden genügt: PyST installieren, `.pyst`-Datei öffnen –
+nur automatisch, wenn ein Nucleo oder ein Original-Arduino mit PST-Firmware steckt). Für Kunden genügt: PyST installieren, `.pyst`-Datei öffnen –
 oder ganz ohne PyST die HTML-Datei.
 
 ## Import von Rohmitschnitten
@@ -376,18 +469,18 @@ die PyST-Standardwerte mit Hinweis in `lauf.json`.
 **Mac:** Doppelklick auf `start_mac.command` (beim ersten Mal wird alles eingerichtet), oder im Terminal:
 
 ```bash
-cd PST-PyST
+cd PyST/PyST                   # Ordner mit start_mac.command im Repo PyST
 ./start_mac.command            # mit Prüfstand
 ./start_mac.command --sim      # Simulator: spielt den echten Lauf 161802 (26.05.26) ab
 ./start_mac.command --sim --synth   # Simulator mit synthetischem Motor
 ```
 
-Der Nucleo erscheint als `/dev/cu.usbmodem…` in der Port-Liste.
+Der Nucleo erscheint als `/dev/cu.usbmodem…` in der Port-Liste (Einstellungen › Verbindung › Port).
 
 **Windows:** `start_windows.bat` doppelklicken (Python 3 von python.org, „Add to PATH“).
 
-**Messelektronik:** PST-STM32-Firmware (Nucleo-F446RE) oder Arduino-Mega-Sketch 3.0.0 – wird beim
-Verbinden erkannt. Installation und Flashen: [../INSTALL.md](../INSTALL.md).
+**Messelektronik:** PyST-Basis, PST-STM32-Firmware (Nucleo-F446RE) oder Arduino-Mega-Sketch 3.1.0 (3.0.0 weiter
+unterstützt) – wird beim Verbinden erkannt. Installation und Flashen: [../INSTALL.md](../INSTALL.md).
 
 **Raspberry Pi (Raspberry Pi OS 64 bit, Desktop):**
 
@@ -414,12 +507,16 @@ Alle Prüfstandsparameter lassen sich überschreiben, z.B. `--ratio 6.85 --inert
 
 ## Bedienung
 
-1. Port wählen → **Verbinden**. Die Firmware-Version erscheint unter dem Knopf.
-2. Prüfstand- und Laufdaten prüfen. Sie werden in `~/PyST/einstellungen.json` gespeichert.
-3. Drehzahl unter *n vom Gas* halten → **START (F1)** → Klima wird gelesen → **GO – Vollgas!**
-4. Über *n vom Gas* beginnt die Messung (gelb), ab *n Stop* erscheint **GAS WEG!** (rot).
+1. Verbinden: Nucleo und Original-Arduino mit PST-Firmware verbindet PyST selbst. Sonst (PyST-Basis, Mega-Nachbau)
+   Port unter Einstellungen › Verbindung › Port wählen → **Verbinden** (dort oder in der Kopfzeile von Messen).
+   Die Firmware-Version steht unter Einstellungen › Verbindung bei „Zustand“ und in der Statusleiste.
+2. Prüfstand- und Laufdaten prüfen (Einstellungen › Rolle/Lauf bzw. **Lauf-Einstellungen …**). Sie werden in `~/PyST/einstellungen.json` gespeichert.
+3. Drehzahl unter *n vom Gas* halten → **START (F1)** → Klima wird gelesen → Statusfeld in der Kopfzeile
+   **GO – Vollgas!** (grün)
+4. Über *n vom Gas* beginnt die Messung (Statusfeld „Messung …“, gelb), ab *n Stop* steht **GAS WEG!** (rot) im
+   Statusfeld und groß als Band über dem Diagramm.
 5. Ergebnis wird angezeigt und (Auto-Speichern) unter `~/PyST/messungen/` abgelegt.
-6. **Abbrechen (Esc)** jederzeit. Mit Ausrollversuch: nach dem Laufende Kupplung ziehen (siehe „Ausrollversuch“);
+6. **Abbrechen (Esc)** jederzeit (der START-Knopf wird im Lauf dazu rot). Mit Ausrollversuch: nach dem Laufende Kupplung ziehen (siehe „Ausrollversuch“);
    Esc beendet dann nur das Ausrollen, der Lauf bleibt.
 
 *n vom Gas* muss über der Haltedrehzahl liegen. Sonst erkennt die Auswertung (wie LabVIEW) schon
@@ -449,6 +546,7 @@ PYST_KUNDEN_LOGS=/pfad/zu/den/mitschnitten python -m pytest tests -k kunden   # 
 ## Aufbau
 
 ```
+pyst/__main__.py  Kommandozeile (ports, run, recalc, compare) und Start der Oberfläche
 pyst/physics.py   Auswertung (LabVIEW-identisch)
 pyst/link.py      Verbindung (seriell, TCP): Lesethread, Antwortzuordnung, Basis, Zange, STM32-Firmware, Mega-Sketch
 pyst/auth.py      Anmeldung am TCP-Port der Basis, Schlüssel, Fehlertexte der Basis
@@ -464,7 +562,7 @@ pyst/htmlexport.py HTML-Ansicht zum Weitergeben (uPlot eingebettet)
 pyst/share_ui.py  Dialoge Weitergeben und Import von Mitschnitten
 pyst/runner.py    Ablauf eines Laufs (mit Ausrollen)
 pyst/ausrollen.py Ausrollversuch: Erkennung, Fit des Verlustmoments, Prüfungen (ohne Oberfläche)
-pyst/kalib_page.py Reiter „Kalibrierung“
+pyst/kalib_page.py Ausrollversuch: Gruppe „Verluste – Ausrollversuch“ in Einstellungen › Rolle/Lauf (früher Reiter „Kalibrierung“)
 pyst/storage.py   Speichern/Laden (CSV, JSON, LabVIEW-XML, .pyst, Terminal-Mitschnitte)
 pyst/lvxml.py     LabVIEW-Datenspeicher lesen/schreiben
 pyst/sim.py       Simulator (Firmware + Motor + Rolle, PyST-Basis mit Zange, Zange per USB, Fake-Zange für das Update ZangeUpdSimDevice, Fake-Basis für das ESP-Update BasisEspUpdSimDevice)
@@ -472,15 +570,31 @@ pyst/basis.py     PyST-Basis: Parser und Befehle (#ZANGE, #NET, #DOSE, #PAIR, #L
 pyst/plugs.py     WLAN-Steckdosen (Shelly/Tasmota/ESPHome per HTTP, Automatik, Simulator)
 pyst/zange.py     Log der Zange -> Dauermessung
 pyst/mdns.py      einfaches mDNS (Basis und Steckdosen im Netz finden)
-pyst/hw_page.py   Unterreiter „Zange · Netz · Steckdosen“
-pyst/tasten.py    Tasten-Setup der Zange, Neuer Lauf und Übersetzung (ohne Oberfläche); tasten_page.py Unterreiter „Tasten“
-pyst/pruef.py     Prüfungen für die Inbetriebnahme mit #STAT (ohne Oberfläche); pruef_page.py Unterreiter „Prüfen“
-pyst/flash.py     Firmware flashen: Prüfung, Befehlszeilen, USB-Update Basis, Zange (#UPD) und Basis-ESP (#ESPUPD, gemeinsamer Ablauf UpdFlasher), F042 per CAN; flash_page.py Unterreiter „Firmware“
+pyst/hw_page.py   Unterreiter „Zange“ und die Gruppen für Lambda und WiFi (Lambda-Heizung, AFR-Eingang, WLAN der Basis, Steckdosen)
+pyst/tasten.py    Tasten-Setup der Zange, Neuer Lauf und Übersetzung (ohne Oberfläche); tasten_page.py Gruppe „Tasten der Zange“ (Einstellungen › Zange)
+pyst/pruef.py     Prüfungen für die Inbetriebnahme mit #STAT (ohne Oberfläche); pruef_page.py Gruppen „Prüfen“ (Verbindung, Lambda) und „Tests“ (Zange)
+pyst/flash.py     Firmware flashen: Prüfung, Befehlszeilen, USB-Update Basis, Zange (#UPD) und Basis-ESP (#ESPUPD, gemeinsamer Ablauf UpdFlasher), F042 per CAN, Arduino Mega (avrdude) und STM32 F446 (Laufwerk NODE_F446RE, st-flash, DFU); flash_page.py Unterreiter „Firmware“ (Kundenansicht mit vier Karten, Expertenmodus)
 pyst/bootproto.py Bootloader der Basis: Rahmen, Update-Datei Format 1 und 2, auch für die ESP-Ziele (Simulator: sim.py BootSimDevice, BootSim2Device)
 pyst/fw_keys.py   Bekannte öffentliche Firmware-Schlüssel, Signaturprüfung am PC
-pyst/gui.py       Oberfläche (PySide6 + pyqtgraph)
+pyst/gui.py       Oberfläche (PySide6 + pyqtgraph): Hauptfenster, Menüs, Einstellungen mit ihren Unterreitern
+pyst/messen_page.py Reiter „Messen“: Kopfzeile, Lauf-Einstellungen, SETUP-WERTE, LIVE-Kacheln, Läufe-Seitenleiste, Messlogik
+pyst/kacheln.py   gemeinsame Bausteine: Zonenbalken, Wert-Kacheln (LIVE, Werte am Cursor), einklappbare Seitenleiste
+pyst/statusleiste.py Statusleiste mit den Feldern PST Basis, PST Zange/Mega, PST/Lambda ECU und Umschalter Tag/Nacht/Auto
+pyst/theme.py     Tag- und Nachtmodus: Farben, Stylesheet, Laufarben
+pyst/einst_widgets.py kleine Bausteine der Einstellungen (Zustandschip, Kopfkarte, Kippschalter, Hinweis)
+pyst/umbruch.py   umbrechende Bedienzeile für schmale Fenster
+pyst/ratio_dialog.py Fenster „Übersetzung“: Übersetzung eintragen oder einmessen (Zündabnehmer oder rusEFI)
+pyst/abgleich_dialog.py Fenster „Übersetzung live abgleichen“ (Drehzahlmesser, Pfeilknöpfe, Zangentasten)
+pyst/rusefi.py    rusEFI-Steuergerät: TunerStudio-Protokoll, .ini, Kanäle
+pyst/rusefi_page.py Unterreiter „ECU“: Verbindung zum Steuergerät, .ini, Kanal-Setup
+pyst/update.py    nach neuer PyST-Version und Firmware suchen (manifest.json im Branch firmware), Download mit Prüfung
 pyst/plots.py     Leistungsdiagramm mit ausgerichteten Achsen und Cursor
 pyst/viewer.py    Auswerter (MegaLogViewer-Stil)
+pyst/laufleiste.py Laufleiste „ANGEZEIGTE LÄUFE“ der Auswertung
+pyst/cursorwerte.py rechte Spalte der Auswertung: „Werte am Cursor“ als Kacheln, Pmax/Mmax je Lauf
+pyst/mittelwert.py Mittelwert-Lauf: Läufe auf einem Drehzahlraster mitteln (ohne Oberfläche)
+pyst/mittelwert_dialog.py Dialog „Mittelwert bilden“ der Auswertung
+pyst/lauf_dialog.py Dialog „Setup …“ eines Laufs in der Auswertung (Setup zuordnen/ändern, Notiz)
 pyst/db.py        Datenbank Fahrzeuge / Setups / Läufe (SQLite)
 pyst/channels.py  Messkanäle eines Laufs (roh + abgeleitet + Zusatzkanäle + Fehlerkanäle)
 pyst/report.py    PDF- und CSV-Export

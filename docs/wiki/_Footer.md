@@ -1,0 +1,1 @@
+PyST 1.4.1 · Lizenz: GNU General Public License v3 ([LICENSE](https://github.com/chili023/PyST/blob/main/LICENSE)) · hervorgegangen aus dem Open-Source-Projekt [WildBugChilGru](https://github.com/gruaGit/WildBugChilGru) (Arduino Mega + LabVIEW), Rechenweg und Mega-Protokoll daraus übernommen · ⚠️ PyST steuert den Motor nicht – „GAS WEG“ ist nur ein Hinweis.

@@ -53,8 +53,8 @@ Mega-Nachbau → CH340-Treiber. Der Port heißt `COM3`, `COM4`, …
 ./start_mac.command --sim          # spielt den echten Lauf 161802 (26.05.26) ab
 ./start_mac.command --sim --synth  # synthetischer Motor
 ```
-In der Port-Liste stehen außerdem `SIM:mega` (verhält sich wie der Mega-Sketch) und „Lauf-Datei im
-Simulator abspielen …“ (jede LabVIEW-XML).
+In der Port-Liste (Einstellungen › Verbindung › Port) steht außerdem `SIM:mega` (verhält sich wie der Mega-Sketch).
+Der Knopf „Lauf-Datei im Simulator abspielen …“ darunter spielt jede LabVIEW-XML ab.
 
 ### Tests
 
@@ -66,6 +66,10 @@ cd PyST
 ---
 
 ## 2. Messelektronik flashen
+
+Seit PyST 1.4.1 geht das auch direkt aus PyST: **Einstellungen › Firmware**, Karten **Arduino Mega** und
+**STM32 (F446)**, Knopf **Flashen** (Firmware aus dem öffentlichen Branch `firmware`). Das ist noch nicht am
+Prüfstand bestätigt. Die Wege von Hand stehen unten.
 
 ### Variante A: STM32 Nucleo-F446RE mit PST-STM32-Firmware (empfohlen)
 
@@ -94,7 +98,8 @@ Alternativen:
 > `--connect-under-reset` ist nötig, weil PA13 (SWDIO) als CS für EGT1 genutzt wird.
 
 Prüfen: `python3 firmware/stm32/tools/pst_monitor.py` (braucht `pip install pyserial`) oder in
-PyST verbinden → unter „Verbindung“ steht „PST-STM32 Version 1.0.0“.
+PyST verbinden → unter Einstellungen › Verbindung steht bei „Zustand“ die Firmware-Version (z. B. „PST-STM32
+Version 1.1.0“), ebenso in der Statusleiste.
 
 Einstellungen (Messrate, Filter, EGT, AFR-Eingang …): `firmware/stm32/include/config.h`, dann neu bauen.
 Details und Anschlussbelegung: [firmware/stm32/README.md](firmware/stm32/README.md).
@@ -140,7 +145,8 @@ kein Thermoelement, Ringspeicher 5/50, fallende Flanke, Pull-ups an). Alle Schl�
 [docs/04_PST_Diag_1.md](docs/04_PST_Diag_1.md#9-umsetzung-arduino-mega-310).
 
 PyST erkennt den Mega automatisch (Antwort auf `v`) und berücksichtigt, dass `m` beim Mega die Messung
-umschaltet. Der Mega startet beim Öffnen des Ports neu (DTR) – PyST wartet dafür 2 s.
+umschaltet. Automatisch verbunden wird nur ein Original-Arduino; einen Nachbau mit CH340 verbindet man von Hand.
+Der Mega startet beim Öffnen des Ports neu (DTR) – PyST wartet dafür 2 s.
 
 **Sketch 3.0.0** (alt, `firmware/arduino-mega/240328_PST_V3.0.0/`) wird genauso hochgeladen; dort werden
 `BMEADDRESS`, `thermo` und `RINGSIZE5` oben im Quelltext angepasst.
@@ -149,14 +155,19 @@ umschaltet. Der Mega startet beim Öffnen des Ports neu (DTR) – PyST wartet da
 
 ## 3. Verbinden und erster Test
 
-1. PyST starten → Reiter **Einstellungen** → Port wählen → **Verbinden**.
-2. Prüfstandsdaten eintragen: Rollengeber (Inkr/U), Rollenumfang, Trägheit J, Zündimpulse/U,
-   Übersetzung, n vom Gas (über Haltedrehzahl). Filter in Sekunden passen sich der Messfrequenz selbst an.
-3. Reiter **Messen**: Drehzahl halten → **START (F1)** → bei „GO“ Vollgas → Gas weg.
+1. PyST starten. Den Nucleo (ST-Link) und einen Original-Arduino mit PST-Firmware verbindet PyST selbst (Prüfung
+   alle 5 s). Die PyST-Basis und Mega-Nachbauten (CH340) verbindet man von Hand: **Einstellungen › Verbindung** →
+   Port wählen → **Verbinden** (oder **Verbinden** im Reiter **Messen**).
+2. Prüfstandsdaten unter **Einstellungen › Rolle/Lauf** eintragen: Rollengeber (Inkr/U), Rollenumfang,
+   Trägheit J, Zündimpulse/U, Übersetzung, n vom Gas (über Haltedrehzahl). Filter in Sekunden passen sich der
+   Messfrequenz selbst an.
+3. Reiter **Messen**: Drehzahl halten → **START (F1)** → bei „GO – Vollgas!“ Vollgas → bei „GAS WEG!“ Gas weg.
 4. Läufe landen in `~/PyST/` (Windows: `C:\Users\<Name>\PyST\`), Datenbank `pyst.db`.
    Datenordner älterer Versionen werden beim ersten Start automatisch nach `~/PyST/` übernommen.
 
 Kleiner Bildschirm? **Ansicht → Größe** (Automatisch/100/90/80/70 %), wirkt nach Neustart.
+
+Bedienung mit Bildern: [Wiki](https://github.com/chili023/PyST/wiki).
 
 LabVIEW weiter nutzen: LabVIEW 3.2.1 aus dem Ursprungsprojekt
 <https://github.com/gruaGit/WildBugChilGru/releases/tag/v3.2.1> (nur Windows; LabVIEW Runtime 2014 SP1

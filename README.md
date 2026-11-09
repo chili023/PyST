@@ -2,9 +2,15 @@
 
 Open-Source-Leistungsprüfstand (Rollenprüfstand):
 
-- **PyST** – PC-Software in Python/Qt für **Mac, Linux (Raspberry Pi) und Windows**.
+- **PyST 1.4.1** – PC-Software in Python/Qt für **Mac, Linux (Raspberry Pi) und Windows**.
   Rechnet wie LabVIEW 3.2.1 (an echten Läufen geprüft: gleiche Pmax und n(Pmax)), mit Datenbank für
   Fahrzeuge/Setups/Läufe, Auswerter im Stil von MegaLogViewer, PDF/CSV-Export, Import von LabVIEW-Läufen.
+- **Neue Oberfläche (1.4.1):** Tag-, Nacht- und Auto-Thema mit geprüftem Kontrast, Statusleiste mit farbigen Feldern
+  für Basis, Zange und ECU, Setup-Werte direkt im Messbildschirm, Läufe auf Plätzen mit Schloss, **Mittelwerte aus
+  mehreren Läufen** als Referenz, Fenster **„Übersetzung live abgleichen“** mit Drehzahlmesser, Übersetzung auch per
+  **Funkenmessung**. Passt ab 855 × 651 Punkten, also auch auf ein MacBook.
+- **PyST-Basis mit Funk-Zündzange:** Klima, Lambda, EGT, Funk-Zange mit frei belegbaren Tasten, WLAN, WLAN-Steckdosen
+  (Gebläse/Absaugung automatisch), signierte Firmware-Updates direkt aus PyST.
 - **PST-STM32-Firmware** – neue Firmware für die Messelektronik auf **STM32F446RE (Nucleo-64)**.
   Spricht das Protokoll des Arduino-Mega-Sketches → läuft mit **LabVIEW 3.2.1**, mit der
   **STM-LabVIEW 0.2.0** (automatisch erkannt) und mit **PyST**.
@@ -15,7 +21,15 @@ Open-Source-Leistungsprüfstand (Rollenprüfstand):
 - **Arduino-Mega-Sketch 3.1.0** – der bisherige Mega-Aufbau läuft ebenfalls mit PyST; 3.1.0 misst jede
   Periode, meldet 0 Hz nach Signalausfall und hat den Oszi-/Diagnosemodus [PST-Diag 1](docs/04_PST_Diag_1.md).
 
-![PyST – Messen](docs/bilder/pyst_messen.png)
+![PyST 1.4.1 – Messen während eines Laufs](docs/bilder/v141_messen_lauf.png)
+
+| Auswertung mit Mittelwert und Setup-Vergleich | Übersetzung live abgleichen |
+|---|---|
+| ![Auswertung](docs/bilder/v141_auswertung.png) | ![Übersetzung live abgleichen](docs/bilder/v141_abgleich.png) |
+| **Nacht-Thema** | **Oszi / Dauermessung** |
+| ![Messen im Nacht-Thema](docs/bilder/v141_messen_lauf_nacht.png) | ![Oszi](docs/bilder/v141_oszi.png) |
+
+**Alle Funktionen mit Bildern: [Wiki](https://github.com/chili023/PyST/wiki)** (Kopie im Repo: [docs/wiki](docs/wiki/Home.md)).
 
 ## Was läuft womit
 
@@ -25,21 +39,28 @@ Open-Source-Leistungsprüfstand (Rollenprüfstand):
 | STM32 + PST-STM32-Firmware 1.1 | ✅ Format byte-identisch⁴ | ✅ Format byte-identisch⁴ | ✅ + PST-Diag 1 (ab PyST 1.3) |
 | Arduino Mega + Sketch 3.0.0 | ✅ (Original) | Arduino-Modus² | ✅ im Simulator geprüft³ |
 | Arduino Mega + Sketch 3.1.0 | ✅ Format byte-identisch⁴ | Arduino-Modus² | ✅ + PST-Diag 1 (ab PyST 1.3) |
+| PyST-Basis + Funk-Zange (Firmware 0.3.x) | – | – | ✅ ab PyST 1.4, am Prüfstand |
+| PyST-Basis + Funk-Zange (Firmware 0.4.0, signierte Updates) | – | – | ✅ ab PyST 1.4.1, im Simulator geprüft⁵ |
 
 ¹ 8-Byte-Befehle und 20-Byte-Binärtelegramm per Host-Test gegen die aus LabVIEW rekonstruierte Auswertung.
 ² Umschalter „Arduino<>STM“ der STM-LabVIEW, nicht getestet.
 ³ `SIM:mega` bildet den Sketch nach (Umschalten mit `m`, ganze Hz, 61 Hz); am echten Mega noch zu bestätigen.
 ⁴ Normales Telegramm per Host-Test geprüft (F446: gegen 1.0.0; Mega: zusätzlich im AVR-Simulator gegen
   Arduino `Serial.print`); am echten Gerät mit LabVIEW noch zu bestätigen.
+⁵ Update-Format 2 und Zangen-/ESP-Update per USB gegen den Simulator und mit Host-Tests geprüft; an der Hardware noch zu bestätigen.
 
 ## Download
 
-Diese Version (Beta, noch nicht an allen Geräten geprüft) liegt im Branch **`release/1.3-beta`**:
-auf GitHub den Branch `release/1.3-beta` wählen → **Code → Download ZIP**, oder
+Aktuelle Version: **PyST 1.4.1** im Branch `main`. Unter
+[Releases](https://github.com/chili023/PyST/releases/tag/v1.4.1) gibt es das ZIP und die Release Notes, oder:
 
 ```bash
-git clone -b release/1.3-beta https://github.com/chili023/PyST.git
+git clone https://github.com/chili023/PyST.git
 ```
+
+Update einer vorhandenen Kopie: `git pull` im Ordner, dann wie gewohnt starten. Datenbank und Einstellungen bleiben erhalten.
+Firmware der PyST-Basis, der Zange und des Basis-ESP sowie die Mega- und F446-Firmware holt PyST unter
+**Einstellungen › Firmware** aus dem Branch [`firmware`](https://github.com/chili023/PyST/tree/firmware).
 
 ## Schnellstart
 
@@ -52,7 +73,8 @@ cd PyST
 ./start_mac.command --sim    # ohne Hardware: Simulator spielt einen echten Lauf ab
 ```
 
-STM32 flashen: `firmware/stm32/bin/PST-STM32_v1.1.0.bin` (bisher `PST-STM32_v1.0.0.bin`) auf das Laufwerk **NODE_F446RE** ziehen.
+STM32 flashen: `firmware/stm32/bin/PST-STM32_v1.1.0.bin` (bisher `PST-STM32_v1.0.0.bin`) auf das Laufwerk **NODE_F446RE** ziehen,
+oder ab PyST 1.4.1 unter **Einstellungen › Firmware** (auch den Arduino Mega per avrdude).
 
 ## Inhalt
 
@@ -65,6 +87,8 @@ docs/                  Roadmap, Zündsignal-Diagnose, Firmware-Messung, Protokol
 
 ## Dokumentation
 
+- **[Wiki](https://github.com/chili023/PyST/wiki)** – alle Funktionen der Oberfläche mit Bildern (Kopie: [docs/wiki](docs/wiki/Home.md))
+- [Release Notes 1.4.1](docs/RELEASE_NOTES_1.4.1.md)
 - [INSTALL.md](INSTALL.md) – Installation Mac / Linux / Windows, Flashen STM32 und Mega
 - [PyST/README.md](PyST/README.md) – Bedienung, Rechenweg, Kommandozeile
 - [firmware/stm32/README.md](firmware/stm32/README.md) – Firmware, Protokoll, Anschlussbelegung, Einstellungen
