@@ -295,6 +295,11 @@ class WertKachel(QtWidgets.QFrame):
             self._titel, self._einheit = "leer", ""
         self.einheit.setText("" if leer else self._einheit)
         self.quelle.setText(self._fehlt_text or self._quelle_text)
+        # leerer Platz behaelt die Hoehe von Wertzeile und Balken, damit er im Raster so hoch ist wie der Nachbar
+        for w in (self.wert_zeile, self.balken):
+            sp = w.sizePolicy()
+            sp.setRetainSizeWhenHidden(leer)
+            w.setSizePolicy(sp)
         self.wert_zeile.setVisible(not leer and not self.laeufe)
         self.balken.setVisible(not leer)
         self._stil()
