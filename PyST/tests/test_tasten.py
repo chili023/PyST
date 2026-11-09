@@ -324,7 +324,7 @@ class Gui(unittest.TestCase):
         top = [w.tabs.tabText(i) for i in range(w.tabs.count())]
         self.assertEqual(top, ["Messen", "Fahrzeuge && Setups", "Auswertung", "Oszi / Dauermessung", "Einstellungen"])
         sub = [w.settings_tabs.tabText(i) for i in range(w.settings_tabs.count())]
-        self.assertEqual(sub, ["Rolle/Lauf", "Verbindung", "Zange", "Lambda", "ECU", "Firmware", "WiFi"])
+        self.assertEqual(sub, ["Rolle/Lauf", "Verbindung", "Zange", "Lambda", "ECU", "Software && Firmware", "WiFi"])
         s = w.page_settings
         # Entwurf 08.11.2026: keine Reiter in den Unterreitern, die Teile stecken als Gruppen in ihren Seiten
         self.assertEqual([type(w.settings_tabs.widget(i)) for i in range(7) if isinstance(

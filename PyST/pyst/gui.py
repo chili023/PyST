@@ -2,7 +2,7 @@
 PyST – Oberflaeche (PySide6 + pyqtgraph). Mac, Linux (Raspberry Pi), Windows.
 
 Reiter:  Messen | Fahrzeuge & Setups | Auswertung | Oszi / Dauermessung | Einstellungen
-Einstellungen:  Rolle/Lauf | Verbindung | Zange | Lambda | ECU | Firmware | WiFi
+Einstellungen:  Rolle/Lauf | Verbindung | Zange | Lambda | ECU | Software & Firmware | WiFi
   Rolle/Lauf: Allgemein (Pruefstand, Lauf, Filter, Klima, Anzeige) | Verluste (Ausrollversuch, frueher Reiter Kalibrierung)
   Verbindung: Messboard (Port, Geraete-Einstellungen PST-Diag) | Prüfen
   Zange: Zange (Zustand, Kopplung, Log) | Tasten;  Lambda: Lambda-Heizung;  ECU: rusEFI (frueher Hauptreiter ECU)
@@ -722,6 +722,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.page_hw.log_saved.connect(lambda folder: self._dauer_saved(folder, "Zange-Log"))
         self.page_hw.connect_port.connect(self._connect_port)
         self.page_flash.flash_done.connect(lambda: setattr(self, "_manual_off", False))
+        self.page_flash.set_datenordner(os.path.dirname(self.db.path))
         # Statusleiste: drei Felder Basis | Zange/Mega | Lambda/ECU, Kurzmeldungen, Umschalter Tag/Nacht/Auto
         self.statusleiste = Statusleiste()
         self.statusleiste.einbauen(self.statusBar())
@@ -729,6 +730,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self._zange_weitere = 0
         self.page_hw.zange_state.connect(self._zange_state_neu)
         self.page_hw.zange_state.connect(self.page_tasten.zange_zustand)
+        self.page_hw.zange_state.connect(self.page_flash.verbindung_geaendert)    # Zange per Funk da/weg
         self.page_hw.zange_text.connect(self._zange_text_neu)
         self.page_hw.lambda_text.connect(lambda *_a: self._status_tick())
         self.status_timer = QtCore.QTimer(self)
@@ -1024,6 +1026,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
 
     def _update_buttons(self):
         busy = self.ctrl is not None and self.ctrl.state in ACTIVE
+        self.page_flash.verbindung_geaendert()             # Verbinden/Trennen: Karten der Firmware neu
         connected = self.link is not None
         self.start_btn.setEnabled(connected or busy)       # im Lauf: Abbrechen bzw. Ausrollen beenden
         self._start_knopf_stil()
@@ -1224,7 +1227,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         s.fw_label.setText(f"{port}: {kind} – {first}")
         s.fw_label.setToolTip(self.firmware)
         if self.link.bootloader:
-            s.fw_label.setText(f"{port}: Basis im Bootloader, Firmware unter Einstellungen › Firmware aufspielen")
+            s.fw_label.setText(f"{port}: Basis im Bootloader, Firmware unter Einstellungen › Software & Firmware "
+                               "aufspielen")
             s.fw_label.setToolTip(self.link.bootloader)
         self.ctrl = RunController(self.link, s.params(), auto_climate=s.climate_auto.isChecked(),
                                   ecu=self.page_rusefi.active_link())
@@ -2053,6 +2057,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.page_flash.zange_verfuegbar.connect(hw.set_fw_verfuegbar)
         self.page_flash.get_info = lambda: self.firmware
         self.page_flash.get_zange = lambda: f"Zange {hw.zst.id}" if hw.zst is not None and hw.zst.id else ""
+        self.page_flash.get_zange_state = lambda: getattr(self, "_zange_state", "")
         # Lambda: Heizung, Anzeige λ/AFR, AFR-Eingang links; Prüfen und Firmware rechts
         self.page_pruef_lambda = PruefPage(self.page_pruef.get_link, hw.pair, self.page_pruef.aufnahme, bereich=LAMBDA)
         pr = QtWidgets.QGroupBox("Prüfen: Wideband (F042) und Heizung")
@@ -2060,7 +2065,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         fw = QtWidgets.QGroupBox("Firmware")
         fl = QtWidgets.QVBoxLayout(fw)
         fl.addWidget(ew.neben("Der Wideband-Controller (F042) wird über die Basis geflasht: "
-                              "Einstellungen › Firmware, Expertenmodus, Zeile Lambda (F042)."))
+                              "Einstellungen › Software & Firmware, Expertenmodus, Zeile Lambda (F042)."))
         b = QtWidgets.QPushButton("Zur Firmware …")
         b.clicked.connect(lambda: self.show_page(self.page_flash))
         fl.addWidget(b, 0, QtCore.Qt.AlignLeft)
@@ -2084,7 +2089,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         row.addWidget(hw.box_plugs, 7)
         self.page_wifi = self._seite(row, stretch_last=True)
         for page, text in ((s, "Rolle/Lauf"), (s.conn_page, "Verbindung"), (hw, "Zange"), (self.page_lambda, "Lambda"),
-                           (self.page_rusefi, "ECU"), (self.page_flash, "Firmware"), (self.page_wifi, "WiFi")):
+                           (self.page_rusefi, "ECU"), (self.page_flash, "Software && Firmware"),
+                           (self.page_wifi, "WiFi")):
             self.settings_tabs.addTab(page, text)
         self.settings_tabs.setStyleSheet("QTabBar::tab { min-width: 110px; }")
         # Schluessel der Seiten (gespeicherter Reiterstand, show_page); Unterseiten stecken in einer Seite
