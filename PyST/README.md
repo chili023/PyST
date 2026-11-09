@@ -115,6 +115,38 @@ Bestimmt die Verluste von Rolle, Rad, Kette und Getriebeausgang. Damit weist PyS
    M0, M1, n1 und m2 in die Gruppe „Verluste (Werte für die Rechnung)“ eingetragen; der Lauf des Versuchs wird damit neu gerechnet.
    „Markierten Lauf auswerten“ wertet das Ausrollen eines gespeicherten Laufs nachträglich aus.
 
+**Ausrollversuch ohne Lauf – Assistent (Rad abgehoben, nur die Rolle)**
+
+Knopf **Ausrollversuch (Assistent) …** in derselben Gruppe. Ein eigenes Fenster (nicht modal) führt in fünf Schritten
+durch den Versuch, mit großen Zahlen, die man vom Motorrad aus lesen kann:
+
+1. **Vorbereitung:** Messboard verbunden und Rollendaten da (sonst Knopf „Verbinden“), kurze Erklärung.
+2. **Beschleunigen:** Rolle mit dem Motorrad auf die Zieldrehzahl bringen. Groß Rolle [1/min] und km/h, Balken bis
+   zum Ziel. Ziel einstellbar (Vorgabe deutlich über der Enddrehzahl: 2,5 × n_ende/i, bei 3000 1/min und i = 6,85
+   also 1100 1/min Rolle; gespeichert als `assistent_ziel`). „Weiter“ erst, wenn das Ziel erreicht ist.
+3. **Rad von der Rolle:** Gas weg, Rad anheben, die Rolle läuft frei aus (Sicherheitshinweis). **Messung starten**
+   geht nur über der Mindestdrehzahl (70 % des Ziels, mindestens 40 % über n_ende), sonst zurück zu Schritt 2 mit
+   „zu langsam – nochmal beschleunigen“.
+4. **Messung:** Aufzeichnung ab „Messung starten“, Live-Kurve Drehzahl über Zeit. Ende bei n_ende (Rolle × i wie
+   oben), Stillstand, Wiederanstieg, ohne Daten oder nach der Höchstdauer (Messzeit); „Beenden und auswerten“ oder
+   „Abbrechen“ (auch Esc) jederzeit.
+5. **Ergebnis:** Auswertung wie oben, nur **ohne Kupplungserkennung** (`ausrollen.analyse(..., kupplung=False)`): die
+   Ausrollphase beginnt bei „Messung starten“, ein kurzer Übergang am Anfang wird verworfen. Diagramm und Werte wie in
+   der Gruppe „Letzter Ausrollversuch“ (dort steht das Ergebnis danach auch). **Übernehmen** wie oben, **Nochmal**
+   (zurück zu Schritt 2), **Schließen**.
+
+Gemessen werden so nur die **Verluste der Rolle selbst** (Lager, Luft), nicht Rad, Kette und Getriebeausgang. Die
+Quelle heißt „Ausrollversuch Rolle allein …“. Übernommen rechnet PyST „Motor = Rad + Verluste“ nur mit diesen
+Verlusten: Der Wert „Motor“ ist dann die Leistung, die der Reifen an die Rolle abgibt (die Rolle verbraucht beim
+Beschleunigen selbst Lager- und Luftverluste) – noch nicht die Motorleistung. Das steht im Assistenten, in der Gruppe
+„Verluste“ und in der Quelle. Für die Verluste bis zur Kupplung bleibt der Ausrollversuch nach dem Lauf.
+
+Kein Leistungslauf, keine Laufaufzeichnung: Die Rohdaten der Messung liegen in
+`~/PyST/messungen/JJMMTT_HHMMSS_Ausrollversuch_Rolle/` (`roh.csv` wie bei einem Lauf, `lauf.json` mit `"art":
+"ausrollversuch_rolle"`, Parametern, Ende und Ergebnis). Nachrechnen: `r = storage.load_any(ordner)`,
+`ausrollen.analyse(r["n_roll"], r["dt"], r["params"], start=0, n_ende=…, kupplung=False)`. Solange der Assistent
+offen ist, startet kein Lauf (START, F1, Taste der Zange); während eines Laufs lässt er sich nicht öffnen.
+
 **Formel**
 
 - Ohne Antrieb gilt an der Rolle J · dω/dt = −Mv(n), also Verlustmoment Mv = −J · dω/dt, Verlustleistung
@@ -146,6 +178,9 @@ Bestimmt die Verluste von Rolle, Rad, Kette und Getriebeausgang. Damit weist PyS
 - Meldungen statt Ergebnis bei: keine Ausrolldaten, zu kurz (unter 3 s), Drehzahlbereich zu klein
   (unter 20 %), Rolle beschleunigt, Kupplung nicht gezogen erkennbar, Verlustmoment negativ.
 - Simulator: Port `SIM:ausrollen` (Kupplung 0,8 s nach dem Gaswegnehmen gezogen, Verlust von Rad/Kette).
+  Port `SIM:rolle` für den Assistenten: Haltedrehzahl, Vollgas bis 11500 1/min, 4 s oben halten, dann Rad ab; die
+  Rolle läuft mit bekanntem Verlust aus (M0 8 Nm, M1 30 Nm bei 1600 1/min, m2 5), unter 2000 1/min (Rolle × i)
+  kommt das Rad wieder auf die Rolle und alles beginnt von vorn. Ein Auslauf dauert gut 90 s.
 
 ## Oszi / Dauermessung (ab 1.3)
 
@@ -563,6 +598,7 @@ pyst/share_ui.py  Dialoge Weitergeben und Import von Mitschnitten
 pyst/runner.py    Ablauf eines Laufs (mit Ausrollen)
 pyst/ausrollen.py Ausrollversuch: Erkennung, Fit des Verlustmoments, Prüfungen (ohne Oberfläche)
 pyst/kalib_page.py Ausrollversuch: Gruppe „Verluste – Ausrollversuch“ in Einstellungen › Rolle/Lauf (früher Reiter „Kalibrierung“)
+pyst/ausroll_assistent.py Ausrollversuch-Assistent: Rad abgehoben, Verluste der Rolle allein (5 Schritte, nicht modal)
 pyst/storage.py   Speichern/Laden (CSV, JSON, LabVIEW-XML, .pyst, Terminal-Mitschnitte)
 pyst/lvxml.py     LabVIEW-Datenspeicher lesen/schreiben
 pyst/sim.py       Simulator (Firmware + Motor + Rolle, PyST-Basis mit Zange, Zange per USB, Fake-Zange für das Update ZangeUpdSimDevice, Fake-Basis für das ESP-Update BasisEspUpdSimDevice)

@@ -89,3 +89,15 @@ enthalten. Ihr Anteil wird beim Beschleunigen wie beim Ausrollen gleich vernachl
 (Mv/i). Die DIN-Korrektur k gilt nur für den Radanteil. Siehe [Rechenweg](Rechenweg.md).
 
 Zum Ausprobieren: Simulator-Port `SIM:ausrollen` ([Erste Schritte](Erste-Schritte.md#simulator-ports)).
+
+## Ohne Lauf: Assistent mit abgehobenem Rad
+
+Knopf **Ausrollversuch (Assistent) …** in der Gruppe „Verluste – Ausrollversuch“. Fünf Schritte in einem eigenen
+Fenster: Vorbereitung (Messboard verbunden?), Beschleunigen (Rolle groß in 1/min und km/h, Balken bis zum Ziel), Rad
+von der Rolle (Gas weg, Rad anheben, Sicherheitshinweis, **Messung starten** nur über der Mindestdrehzahl), Messung
+(Kurve Drehzahl über Zeit, Ende bei n_ende, Stillstand oder Höchstdauer) und Ergebnis (Übernehmen, Nochmal,
+Schließen). Ausgewertet wird ohne Kupplungserkennung ab „Messung starten“.
+
+Gemessen sind dann nur die **Verluste der Rolle allein** (Lager, Luft), nicht Rad, Kette und Getriebeausgang.
+Übernommen zeigt „Motor“ die Leistung, die der Reifen an die Rolle abgibt – noch nicht die Motorleistung. Die
+Rohdaten liegen in `~/PyST/messungen/…_Ausrollversuch_Rolle/`. Zum Ausprobieren: Simulator-Port `SIM:rolle`.
