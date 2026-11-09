@@ -80,7 +80,7 @@ def basis_zustand(e: Eingang) -> Tuple[str, str]:
     if e.board == "zange_usb":
         return theme.AUS, "nicht verbunden (Zange per USB)"
     if e.bootloader:
-        return theme.WARNUNG, "im Bootloader – Firmware unter Einstellungen › Firmware aufspielen"
+        return theme.WARNUNG, "im Bootloader – Firmware unter Einstellungen › Software & Firmware aufspielen"
     teile = ["verbunden " + port_art(e.port)]
     if e.fw:
         teile.append(_fw(e.fw))

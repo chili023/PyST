@@ -366,7 +366,7 @@ class HardwarePage(QtWidgets.QScrollArea):
             row.addWidget(karte, 1)
             self.karten[k] = karte
         self.karten["fw"].chip.setCursor(QtCore.Qt.PointingHandCursor)
-        self.karten["fw"].chip.setToolTip("Zum Unterreiter Firmware")
+        self.karten["fw"].chip.setToolTip("Zum Unterreiter Software & Firmware")
         self.karten["fw"].chip.mousePressEvent = lambda _e: self.zur_firmware.emit()
         return row
 
