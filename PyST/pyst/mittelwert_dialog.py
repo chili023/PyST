@@ -288,7 +288,7 @@ class MittelwertDialog(QtWidgets.QDialog):
         fl.addRow("Fahrzeug", r3)
         self.notiz = QtWidgets.QLineEdit()
         fl.addRow("Notiz", self.notiz)
-        self.referenz = QtWidgets.QCheckBox("im Messfenster als Referenz anbieten („Referenz laden …“)")
+        self.referenz = QtWidgets.QCheckBox("im Messfenster als Referenz anbieten (Messen › Läufe „＋“)")
         fl.addRow("", self.referenz)
         lay.addWidget(g)
         self.fehler_label = theme.rolle(QtWidgets.QLabel(""), "banner_fehler")

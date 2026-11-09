@@ -284,28 +284,106 @@ class Messen(unittest.TestCase):
         self.assertFalse(w.gas_weg.isVisible())
 
     def test_nachfrage_vor_start_und_schnappschuss(self):
+        """Nachfrage nur bei unveraendertem Setup; Abbrechen startet nicht, „Unverändert starten“ laesst alles."""
         w = self.w
         z = w.setup_zeile
-        self.assertTrue(w._setup_vor_start())               # unveraendert: keine Frage
+        fragen = []
+        w._start_frage = lambda felder: fragen.append(list(felder)) and None     # Abbrechen
+        self.assertFalse(w._setup_vor_start())
+        self.assertEqual(fragen[0], [("hauptduese", "135"), ("clip", "3"), ("zzp", "18")])
+        w._start_frage = lambda felder: fragen.append(list(felder)) or {}         # unveraendert starten
+        self.assertTrue(w._setup_vor_start())
+        self.assertFalse(z.ist_geaendert())
+        self.assertEqual(len(fragen), 2)
+        # schon geaendert: keine Frage, die Werte gelten fuer diesen Lauf
         z.set_wert("hauptduese", "138")
         self.assertIn(mp.GEAENDERT.strip(), w.setup_combo.currentText())
-        fragen = []
-        w._setup_frage = lambda: fragen.append(1) or ""     # Abbrechen
-        self.assertFalse(w._setup_vor_start())
-        w._setup_frage = lambda: fragen.append(1) or "lauf"
+        w._start_frage = lambda felder: self.fail("keine Nachfrage bei geändertem Setup")
         self.assertTrue(w._setup_vor_start())
         self.assertTrue(z.nur_lauf)
-        self.assertTrue(w._setup_vor_start())               # fuer diesen Lauf bestaetigt: nicht nochmal fragen
-        self.assertEqual(len(fragen), 2)
         werte, nur_lauf = w._setup_schnappschuss()
         self.assertTrue(nur_lauf)
         hd = [x for x in werte if x["feld"] == "hauptduese"][0]
         self.assertEqual((hd["wert"], hd["vorher"]), ("138", "135"))
-        # Schalter aus: keine Frage
-        z.set_nur_lauf(False)
+        # Schalter aus, keine belegten Plaetze, kein Fahrzeug: keine Frage
+        z.verwerfen()
         w.settings[mp.START_NACHFRAGE] = False
-        w._setup_frage = lambda: self.fail("keine Nachfrage erwartet")
         self.assertTrue(w._setup_vor_start())
+        w.settings[mp.START_NACHFRAGE] = True
+        z.set_felder(["", ""])
+        self.assertTrue(w._setup_vor_start())
+        z.set_felder(["hauptduese"])
+        w._reload_vehicle_combo(None)
+        self.assertTrue(w._setup_vor_start())
+
+    def test_nachfrage_uebernehmen(self):
+        """„Übernehmen und starten“ traegt die Werte in SETUP-WERTE ein wie getippt (gelb, vorher …, dieser Lauf)."""
+        w = self.w
+        z = w.setup_zeile
+        w._start_frage = lambda felder: {"hauptduese": "140", "zzp": "20"}
+        self.assertTrue(w._setup_vor_start())
+        self.assertEqual(z.aenderungen(), {"hauptduese": "140", "zzp": "20"})
+        self.assertTrue(z.nur_lauf)
+        self.assertEqual(z.edits[0].text(), "140")
+        self.assertTrue(z.vorher[0].isVisibleTo(z))
+        self.assertEqual(z.vorher[0].text(), "vorher 135")
+        self.assertIn(theme.tokens()["changed_bg"], z.edits[0].styleSheet())
+        self.assertIn("HD 135 → HD 140", z.marke_text())
+        self.assertIn("nur für diesen Lauf", z.marke_text())
+        # naechster START: geaendert, also keine Frage mehr
+        w._start_frage = lambda felder: self.fail("keine Nachfrage erwartet")
+        self.assertTrue(w._setup_vor_start())
+
+    def test_nachfrage_fenster(self):
+        """Fenster StartNachfrage: Felder vorbelegt, Unverändert starten ist Standard mit Fokus, Übernehmen erst nach
+        einer Aenderung (dann Standard), Abbrechen = Rejected."""
+        w = self.w
+        dlg = mp.StartNachfrage([("hauptduese", "135"), ("clip", "3")], "Serie, HD 135", w)
+        self.assertEqual(dlg.windowTitle(), "Setup unverändert")
+        self.assertIn("Setup unverändert – Änderungen eintragen?", dlg.frage.text())
+        self.assertEqual(dlg.edits["hauptduese"].text(), "135")
+        self.assertTrue(dlg.b_start.isDefault())
+        self.assertFalse(dlg.b_ueber.isEnabled())
+        dlg.show()
+        pump(0.05)
+        self.assertIs(APP.focusWidget(), dlg.b_start)
+        dlg.edits["clip"].setText("4")
+        dlg.edits["clip"].textEdited.emit("4")
+        self.assertTrue(dlg.b_ueber.isEnabled())
+        self.assertTrue(dlg.b_ueber.isDefault())
+        self.assertFalse(dlg.b_start.isDefault())
+        dlg.b_ueber.click()
+        self.assertEqual(dlg.result(), QtWidgets.QDialog.Accepted)
+        self.assertEqual(dlg.aenderungen(), {"clip": "4"})
+        # Unverändert starten: keine Aenderungen, auch wenn etwas getippt wurde
+        dlg2 = mp.StartNachfrage([("hauptduese", "135")], "", w)
+        dlg2.edits["hauptduese"].setText("136")
+        dlg2.b_start.click()
+        self.assertEqual(dlg2.result(), QtWidgets.QDialog.Accepted)
+        self.assertEqual(dlg2.aenderungen(), {})
+        dlg3 = mp.StartNachfrage([("hauptduese", "135")], "", w)
+        dlg3.b_ab.click()
+        self.assertEqual(dlg3.result(), QtWidgets.QDialog.Rejected)
+        for d in (dlg, dlg2, dlg3):
+            d.deleteLater()
+
+    def test_nachfrage_start_knopf_und_zange(self):
+        """START-Knopf fragt (unveraendertes Setup), die Zangentaste „Neuer Lauf“ nicht."""
+        w, gui = self.w, self.gui
+        fragen = []
+        w._start_frage = lambda felder: fragen.append(felder) and None          # Abbrechen
+        w.page_settings.port_combo.setEditText(gui.DEFAULT_SIM_PORT)
+        self.assertTrue(w.on_connect())
+        try:
+            w.start_btn.click()
+            self.assertEqual(len(fragen), 1)
+            self.assertNotIn(w.ctrl.state, gui.ACTIVE)                          # abgebrochen: kein Lauf
+            w._taste_lauf()                                                      # Zangentaste „Neuer Lauf“
+            self.assertEqual(len(fragen), 1)
+            self.assertIn(w.ctrl.state, gui.ACTIVE)
+            w.on_abort()
+        finally:
+            w.on_connect()
 
     def test_neues_setup_aus_aenderung(self):
         w = self.w
@@ -351,7 +429,8 @@ class Messen(unittest.TestCase):
         erg = mittelwert.mitteln(kurven, quellen=ids[:3])
         mw = mittelwert.speichern(w.db, erg, "Ø 3 Läufe", vehicle_id=self.vid, setup_id=self.sid, sichtbar=True)
         self.assertIsNone(w._entry(mw))                     # Mittelwerte nie ueber _entry
-        self.assertTrue(w.referenz_laden(mw))
+        self.assertEqual(w.laeufe_hinzufuegen([mw]), 1)
+        self.assertEqual(w.laeufe_hinzufuegen([mw]), 0)    # liegt schon da: nicht doppelt
         self.assertEqual(w._plaetze[0], [mw])
         self.assertIn(mw, w.diagramm_laeufe())
         self.assertIn(str(mw), w.plot.bands)
@@ -368,13 +447,116 @@ class Messen(unittest.TestCase):
         w._redraw_runs()
         self.assertNotIn(str(mw), w.plot.bands)
         self.assertNotIn("min–max", w.plot.legende_text())
-        # Referenz-Dialog: angebotene zuerst, weitere erst auf Wunsch
-        dlg = mp.ReferenzDialog([w.db.run(mw)], [], w)
-        self.assertEqual(dlg.gewaehlt(), mw)
-        self.assertFalse(dlg.b_weitere.isVisibleTo(dlg))
-        dlg2 = mp.ReferenzDialog([], [w.db.run(mw)], w)
-        self.assertTrue(dlg2.b_weitere.isChecked())
-        self.assertEqual(dlg2.liste.count(), 1)
+
+    def _mittelwert(self, ids, name="Ø 3 Läufe"):
+        kurven = []
+        for rid in ids:
+            run, res, _ch, _p = self.w._entry(rid)
+            kurven.append(mittelwert.kurven_aus_ergebnis(res, run))
+        erg = mittelwert.mitteln(kurven, quellen=list(ids))
+        return mittelwert.speichern(self.w.db, erg, name, vehicle_id=self.vid, setup_id=self.sid, sichtbar=False)
+
+    def test_laeufe_hinzufuegen_knopf(self):
+        """Seitenleiste Läufe: „＋“ statt „Referenz laden …“ oben im Kopf, kein ReferenzDialog mehr."""
+        w = self.w
+        self.assertFalse(hasattr(w, "b_ref"))
+        self.assertFalse(hasattr(mp, "ReferenzDialog"))
+        self.assertEqual(w.b_hinzu.text(), "＋")
+        self.assertIn("Läufe hinzufügen …", w.b_hinzu.toolTip())
+        self.assertIs(w.b_hinzu.parentWidget(), w.laeufe_leiste.feld)
+        self.assertEqual(w.laeufe_leiste.kopf.indexOf(w.b_hinzu), 1)       # gleich neben dem Titel
+        texte = [b.text() for b in w.laufliste.findChildren(QtWidgets.QPushButton)]
+        self.assertNotIn("Referenz laden …", texte)
+
+    def test_laeufe_dialog(self):
+        """Läufe hinzufügen: Läufe und Mittelwerte (Ø), Filter Fahrzeug/Art/Suche, gesperrte nicht wählbar,
+        Plätze-Grenze, Doppelklick."""
+        w = self.w
+        ids = self._laeufe(6)
+        mw = self._mittelwert(ids[:3])
+        w.db.update_run(ids[2], notiz="Luftfilter offen")
+        vid2 = w.db.save_vehicle({"hersteller": "Honda", "modell": "NSR", "gemisch": "Vergaser"})
+        fremd = w.db.import_file(os.path.join(DATA, sorted(x for x in os.listdir(DATA) if x.endswith(".xml"))[0]),
+                                 vehicle_id=vid2)
+        w.schloss(ids[0])
+        dlg = mp.LaeufeDialog(w.db, self.vid, w.db.gesperrte_plaetze(self.vid), w._plaetze[1], w)
+        self.assertEqual(dlg.windowTitle(), "Läufe hinzufügen")
+        self.assertEqual([dlg.liste.headerItem().text(c) for c in range(5)],
+                         ["Datum/Zeit", "Setup", "Notiz", "Pmax", "Mmax"])
+        self.assertEqual(dlg.frei, mp.MESSPLAETZE - 1)
+
+        def zeilen():
+            return {dlg.liste.topLevelItem(i).data(0, mp.QtCore.Qt.UserRole): dlg.liste.topLevelItem(i)
+                    for i in range(dlg.liste.topLevelItemCount())}
+        z = zeilen()
+        self.assertEqual(set(z), set(ids) | {mw})               # aktuelles Fahrzeug: ohne den fremden Lauf
+        self.assertIn("Ø 3 Läufe", z[mw].text(2))               # Mittelwert deutlich: Name mit Ø, fett
+        self.assertTrue(z[mw].font(0).bold())
+        self.assertFalse(z[ids[1]].font(0).bold())
+        self.assertEqual(z[ids[2]].text(2), "Luftfilter offen")
+        self.assertEqual(z[ids[1]].text(1), "Serie, HD 135")
+        self.assertIn("PS", z[ids[1]].text(3))
+        self.assertFalse(z[ids[0]].flags() & mp.QtCore.Qt.ItemIsSelectable)   # schon gesperrt
+        dlg.fz.setCurrentIndex(0)                                 # alle Fahrzeuge
+        self.assertIn(fremd, zeilen())
+        self.assertIn("Honda", zeilen()[fremd].text(1))
+        dlg.art.setCurrentIndex(2)                                # nur Mittelwerte
+        self.assertEqual(set(zeilen()), {mw})
+        dlg.art.setCurrentIndex(1)                                # nur Messungen
+        self.assertNotIn(mw, zeilen())
+        dlg.art.setCurrentIndex(0)
+        dlg.suche.setText("luftfilter")
+        self.assertEqual(set(zeilen()), {ids[2]})
+        dlg.suche.setText("")
+        # Mehrfachauswahl, Grenze der freien Plaetze
+        z = zeilen()
+        for rid in ids[1:5]:
+            z[rid].setSelected(True)
+        self.assertEqual(set(dlg.gewaehlt()), set(ids[1:5]))
+        self.assertTrue(dlg.b_ok.isEnabled())
+        self.assertEqual(dlg.b_ok.text(), "Hinzufügen (4)")
+        z[mw].setSelected(True)
+        self.assertFalse(dlg.b_ok.isEnabled())                    # 5 gewaehlt, 4 frei
+        self.assertIn("nur 4 von 5 Plätzen frei", dlg.status.text())
+        # Doppelklick nimmt einen Lauf direkt
+        dlg.liste.itemDoubleClicked.emit(z[mw], 0)
+        self.assertEqual(dlg.result(), QtWidgets.QDialog.Accepted)
+        self.assertEqual(dlg.gewaehlt(), [mw])
+        dlg.deleteLater()
+
+    def test_laeufe_hinzufuegen_plaetze(self):
+        """Gewählte Läufe kommen gesperrt auf die Plätze, Mittelwert mit Band; doppelte nicht; zu wenig Plätze:
+        Meldung, nichts ändert sich."""
+        w = self.w
+        ids = self._laeufe(6)
+        mw = self._mittelwert(ids[:3])
+        self.assertEqual(w.laeufe_hinzufuegen([ids[0], mw, ids[0]]), 2)
+        self.assertEqual(w._plaetze[0], [ids[0], mw])
+        self.assertTrue(w.db.run(mw).sichtbar)
+        self.assertIn(str(mw), w.plot.bands)                     # Mittelwert wie die Referenz: Band min–max
+        self.assertIn(ids[0], w.diagramm_laeufe())
+        roll = w._plaetze[1]
+        self.assertEqual(w.laeufe_hinzufuegen([roll[0]]), 1)       # rollierender Lauf wird gesperrt, nicht doppelt
+        self.assertEqual(w._plaetze[0], [ids[0], mw, roll[0]])
+        self.assertNotIn(roll[0], w._plaetze[1])
+        meldungen = []
+        alt = QtWidgets.QMessageBox.information
+        QtWidgets.QMessageBox.information = lambda *a, **k: meldungen.append(a[2])
+        try:
+            offen = [i for i in ids if i not in w._plaetze[0]]
+            self.assertEqual(w.laeufe_hinzufuegen(offen[:3]), -1)  # 3 neu, nur 2 frei
+            self.assertEqual(len(meldungen), 1)
+            self.assertIn("nur 2 von 5 Plätzen frei", meldungen[0])
+            self.assertEqual(len(w._plaetze[0]), 3)
+            self.assertEqual(w.laeufe_hinzufuegen(offen[:2]), 2)
+            self.assertEqual(len(w._plaetze[0]), mp.MESSPLAETZE)
+            w._laeufe_dialog()                                   # alle gesperrt: Meldung statt Fenster
+            self.assertEqual(len(meldungen), 2)
+            self.assertIn("Schloss", meldungen[1])
+        finally:
+            QtWidgets.QMessageBox.information = alt
+        self.assertTrue(w.schloss(ids[0]))                       # Schloss loesen geht wie bisher
+        self.assertEqual(len(w._plaetze[0]), mp.MESSPLAETZE - 1)
 
     def test_schnellwert_plaetze_je_fahrzeug(self):
         """5 Plaetze fuer ein Fahrzeug: gespeichert, beim Fahrzeugwechsel eigene Plaetze, Auswertung zeigt die Spalten."""
