@@ -234,8 +234,15 @@ class SettingsPage(QtWidgets.QScrollArea):
                     self.ratio_btn = QtWidgets.QPushButton("Übersetzung einmessen …")
                     self.ratio_btn.setToolTip("Übersetzung nKW/nRolle aus Zündung oder rusEFI einmessen "
                                               "(auch unter Messen › Lauf-Einstellungen …)")
+                    self.abgleich_btn = QtWidgets.QPushButton("Live abgleichen …")
+                    self.abgleich_btn.setToolTip("Übersetzung von Hand live abgleichen: PST-Drehzahl (Rolle × "
+                                                 "Übersetzung) mit dem Drehzahlmesser des Motorrads vergleichen")
+                    knoepfe = QtWidgets.QHBoxLayout()
+                    knoepfe.addWidget(self.ratio_btn)
+                    knoepfe.addWidget(self.abgleich_btn)
+                    knoepfe.addStretch(1)
                     boxes[ziel].addRow(label, sp)
-                    boxes[ziel].addRow("", self.ratio_btn)
+                    boxes[ziel].addRow("", knoepfe)
                     continue
                 boxes[ziel].addRow(label, sp)
         fl = boxes["Lauf"]
@@ -2007,6 +2014,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         kl.addWidget(self.page_kalib)
         s.verluste_lay.addWidget(kalib_box, 1)
         s.ratio_btn.clicked.connect(self.on_measure_ratio)
+        s.abgleich_btn.clicked.connect(self.on_abgleich_live)
         self.settings.setdefault("start_nachfrage_setup", True)
         s.start_nachfrage.toggled.connect(self._start_nachfrage_geaendert)
         # Verbindung: Messboard mit den Geräte-Einstellungen der Basis, Prüfen (Sammelknopf)

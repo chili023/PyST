@@ -5,7 +5,8 @@ gui.MainWindow geerbt (die Methoden arbeiten auf dem Hauptfenster: self.plot, se
 Aufbau von oben nach unten:
   Kopfzeile    Fahrzeug | Setup | Notiz | Auto-Speichern | Laufzustand (StatusFeld) | Trennen/Verbinden |
                Lauf-Einstellungen … (Unterzeile: Übersetzung, Filter; Popup LaufEinstellungen mit Übersetzungsart von
-               Hand/Funkenmessung, Einmessen, Filter, n vom Gas/n Stop – dieselben Felder wie Einstellungen › Rolle/Lauf) |
+               Hand/Funkenmessung, Einmessen, Live abgleichen (abgleich_dialog), Filter, n vom Gas/n Stop – dieselben
+               Felder wie Einstellungen › Rolle/Lauf) |
                START (F1), im Lauf derselbe Knopf rot: Abbrechen (Esc) bzw. Ausrollen beenden (Esc)
   Setup-Werte  Schnellwerte (db.schnellwert_plaetze je Fahrzeug, 0 … SCHNELLWERT_MAX Plaetze: „＋“ fuegt an, Titel-Menue
                waehlt das Feld oder entfernt den Platz), direkt editierbar;
@@ -33,6 +34,7 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import mittelwert, theme
+from .abgleich_dialog import AbgleichDialog, skala_bereich
 from .bg import wait_in_thread, waiting
 from .channels import fault_text, lambda_from_afr
 from .db import (ART_LAUF, ECU_PREFIX, LIVE_KANAELE, LIVE_STANDARD, MESSPLAETZE, SCHNELLWERT_MAX,
@@ -1156,6 +1158,7 @@ class LaufEinstellungen(QtWidgets.QFrame):
     einmessen …“), Filter und Laufgrenzen (n vom Gas, n Stop). Die Felder spiegeln die von Einstellungen › Rolle/Lauf
     (seite = SettingsPage, dieselben Einstellungen): Aenderungen gelten sofort und stehen an beiden Orten."""
     einmessen = QtCore.Signal()
+    live_abgleich = QtCore.Signal()
     alle_einstellungen = QtCore.Signal()
     geschlossen = QtCore.Signal()
 
@@ -1188,6 +1191,11 @@ class LaufEinstellungen(QtWidgets.QFrame):
         self.b_einmessen.setToolTip("Übersetzung bei konstanter Drehzahl aus Zündung oder rusEFI einmessen")
         self.b_einmessen.clicked.connect(self._einmessen)
         row.addWidget(self.b_einmessen)
+        self.b_abgleich = QtWidgets.QPushButton("Live abgleichen …")
+        self.b_abgleich.setToolTip("Übersetzung von Hand live abgleichen: PST-Drehzahl (Rolle × Übersetzung) mit dem "
+                                   "Drehzahlmesser des Motorrads vergleichen und mit Pfeilen verstellen")
+        self.b_abgleich.clicked.connect(self._live_abgleich)
+        row.addWidget(self.b_abgleich)
         row.addStretch(1)
         lay.addLayout(row)
         self.art_hinweis = QtWidgets.QLabel("")
@@ -1318,6 +1326,10 @@ class LaufEinstellungen(QtWidgets.QFrame):
         self.hide()
         self.einmessen.emit()
 
+    def _live_abgleich(self):
+        self.hide()
+        self.live_abgleich.emit()
+
     def _alle(self):
         self.hide()
         self.alle_einstellungen.emit()
@@ -1406,6 +1418,7 @@ class MessenMixin:
             kopf.add(b, gruppe=rechts)
         theme.bei_wechsel(self.start_btn, lambda _t: self._start_knopf_stil())
         self.lauf_popup: Optional[LaufEinstellungen] = None
+        self.abgleich_dlg: Optional[AbgleichDialog] = None
         lay.addLayout(kopf)
 
         # ---- Setup-Werte
@@ -1591,9 +1604,36 @@ class MessenMixin:
         if self.lauf_popup is None:
             p = self.lauf_popup = LaufEinstellungen(self.page_settings, self)
             p.einmessen.connect(self.on_measure_ratio)
+            p.live_abgleich.connect(self.on_abgleich_live)
             p.alle_einstellungen.connect(lambda: self.show_page(self.page_settings))
             p.geschlossen.connect(self._persist)
         self.lauf_popup.zeigen_an(self.lauf_btn)
+
+    def on_abgleich_live(self):
+        """Fenster „Übersetzung live abgleichen“ (nicht modal; schon offen: nach vorn)."""
+        if self._lauf_aktiv():
+            return
+        d = self.abgleich_dlg
+        if d is not None and d.isVisible():
+            d.raise_()
+            d.activateWindow()
+            return
+        vid, _name = self._fahrzeug()
+        eigen = self.db.vehicle_pref(vid, "drehzahl", None)
+        dz = self._drehzahl_einstellung()
+        hi, zonen = skala_bereich(dz["max"] if isinstance(eigen, dict) and "max" in eigen else None,
+                                  [tuple(z) for z in dz["zonen"]])
+        d = self.abgleich_dlg = AbgleichDialog(self, self.page_settings, lambda: self.ctrl, hi, zonen)
+
+        def fertig(_r, d=d):
+            if self.abgleich_dlg is d:
+                self.abgleich_dlg = None
+            d.deleteLater()
+
+        d.uebernommen.connect(lambda v: (self._persist(), self._set_status(f"Übersetzung = {zahl(v, 3)}", theme.GUT)))
+        d.finished.connect(fertig)
+        d.show()
+        d.raise_()
 
     def _uebersetzung_art_geaendert(self, _i=None):
         from .gui import UEBERSETZUNG_ART
