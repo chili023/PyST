@@ -70,10 +70,17 @@ Geräte-Einstellungen.
 ### Verluste (Werte für die Rechnung)
 
 Verlustmoment **M0 [Nm]**, **M1 [Nm]**, **bei Rollendrehzahl n1 [1/min]** und **quadratisch m2 [Nm/(1000/min)²]**.
-Darunter steht, woher die Werte kommen (Ausrollversuch, Ausrollversuch Rolle allein oder von Hand). Rechts daneben
-die Gruppe **Verluste – Ausrollversuch** mit dem Haken **Ausrollversuch nach jedem Lauf** und dem Knopf
-**Ausrollversuch (Assistent) …** (ohne Lauf: Rad abheben, nur die Rolle auslaufen lassen). Beides ist unter
-[Ausrollversuch](Ausrollversuch.md) beschrieben.
+Darunter steht, woher die Werte kommen (Ausrollversuch oder von Hand). Rechts daneben die Gruppe
+**Verluste – Ausrollversuch**:
+
+- **Rollen-Kalibrierung (Ausrollen ohne Rad):** Anzeige „Rollen-Kalibrierung: vom …, Verlust bei … 1/min = … Nm /
+  … PS“ bzw. „noch nicht kalibriert“ und der Knopf **Rollen-Kalibrierung (Assistent) …**. Einmalig je Prüfstand:
+  Rad abheben, nur die Rolle auslaufen lassen. Die Kalibrierung gilt für den Prüfstand (nicht je Fahrzeug), steht in
+  `einstellungen.json` unter `"rollen_kalibrierung"` und geht nicht in M0/M1.
+- **Ausrollversuch nach dem Lauf** mit dem Haken **Ausrollversuch nach jedem Lauf**: misst die Verluste gesamt, mit
+  Kalibrierung aufgeteilt in Rolle und Reifen/Kette/Getriebe.
+
+Beides ist unter [Ausrollversuch](Ausrollversuch.md) beschrieben.
 
 ---
 

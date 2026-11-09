@@ -198,7 +198,7 @@ class Rundlauf(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.engine = ausroll_engine()
-        cls.frames = sim_frames(cls.engine, 150)
+        cls.frames = sim_frames(cls.engine, 90)           # Rolle + Reifen/Kette: nach ~100 s wird gebremst
 
     def arrays(self, p):
         fr = self.frames

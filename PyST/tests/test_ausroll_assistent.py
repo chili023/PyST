@@ -1,5 +1,6 @@
-"""Ausrollversuch-Assistent (Rad abgehoben, Rolle allein): analyse ohne Kupplung, Simulator 'SIM:rolle',
-Aufnahme und Speichern, Ablauf der Seiten, Übernehmen und Sperre gegen den Leistungslauf (offscreen).
+"""Rollen-Kalibrierung (Assistent, Rad abgehoben, Rolle allein): analyse ohne Kupplung, Simulator 'SIM:rolle',
+Aufnahme und Speichern, Ablauf der Seiten, „Als Rollen-Kalibrierung speichern“ (nicht in M0/M1), Speichern und
+Laden der Kalibrierung über den Neustart und Sperre gegen den Leistungslauf (offscreen).
 
     python -m pytest tests/test_ausroll_assistent.py
 """
@@ -109,7 +110,7 @@ class OhneKupplung(unittest.TestCase):
         np.testing.assert_allclose(r.mv(self.GRID), physics.loss_torque(self.GRID, 6.0, 25.0, 1600.0, 4.0), rtol=0.02)
         self.assertGreater(r.r2, 0.98)
         self.assertGreater(r.n_bis * RATIO, 2990.0)        # n_ende = Motordrehzahl Rolle x i
-        self.assertIn("Rolle allein", r.quelle())
+        self.assertIn("Rollen-Kalibrierung", r.quelle())
         self.assertNotIn("Zündsignal", " ".join(r.hinweise))
         # mit Kupplung (bisheriger Weg) waere dasselbe nicht auswertbar: Zuendung folgt der Rolle
         rk = ausrollen.analyse(n, dt, physics.DynoParams(n1=1600, ratio=RATIO), start=0, n_meas=nm)
@@ -160,11 +161,12 @@ class OhneKupplung(unittest.TestCase):
         r2 = ausrollen.AusrollErgebnis.aus_dict(d)
         self.assertTrue(r2.rolle_allein)
         self.assertEqual(r2.quelle(), r.quelle())
-        self.assertTrue(r.quelle().startswith("Ausrollversuch Rolle allein 09.11.2026 18:00, R² 0,9"))
+        self.assertTrue(r.quelle().startswith("Rollen-Kalibrierung 09.11.2026 18:00, R² 0,9"))
         alt = {k: v for k, v in d.items() if k != "art"}           # gespeichert von 1.4.1: Kupplung
         self.assertFalse(ausrollen.AusrollErgebnis.aus_dict(alt).rolle_allein)
-        q = r.params_fuer(physics.DynoParams())
-        self.assertIn("Rolle allein", q.verlust_quelle)
+        k = ausrollen.RollenKalibrierung.aus_ergebnis(r, "/tmp/x")
+        self.assertEqual((k.m0, k.m1, k.n1, k.m2, k.datum, k.rohdaten), (r.m0, r.m1, r.n1, r.m2, r.datum, "/tmp/x"))
+        self.assertEqual(k.quelle(), r.quelle())
 
 
 class Simulator(unittest.TestCase):
@@ -250,7 +252,7 @@ class Aufnahme(unittest.TestCase):
         self.assertTrue(r.ok, r.meldung)
         with tempfile.TemporaryDirectory() as d:
             folder = aa.speichern(d, a, r, {"ziel_rolle": 1100.0})
-            self.assertTrue(os.path.basename(folder).endswith("_Ausrollversuch_Rolle"))
+            self.assertTrue(os.path.basename(folder).endswith("_Rollen-Kalibrierung"))
             with open(os.path.join(folder, "lauf.json"), encoding="utf-8") as fh:
                 meta = json.load(fh)
             run = storage.load_any(folder)
@@ -308,7 +310,7 @@ class Seiten(unittest.TestCase):
         self.d.show()
         self.uebernommen = []
         self.ausgewertet = []
-        self.d.uebernehmen.connect(lambda r, rid: self.uebernommen.append((r, rid)))
+        self.d.kalib_speichern.connect(lambda r: self.uebernommen.append(r))
         self.d.ausgewertet.connect(lambda r, t: self.ausgewertet.append((r, t)))
 
     def tearDown(self):
@@ -395,21 +397,22 @@ class Seiten(unittest.TestCase):
         np.testing.assert_allclose(r.mv(g), [e.loss_rolle(x * physics.RAD_PER_RPM_S) for x in g], rtol=0.03)
         self.assertIn("R²", d.e_werte.text())
         self.assertIn("Rolle allein", d.e_werte.text())
-        self.assertIn("nicht die Motorleistung", d.e_physik.text())
+        self.assertIn("M0/M1 bleiben", d.e_physik.text())
+        self.assertIn("Rollen-Kalibrierung", d.titel.text())
         self.assertGreater(len(d.e_diagramm.c_punkte.getData()[0]), 10)
         self.assertEqual(len(self.ausgewertet), 1)
         self.assertIs(self.ausgewertet[0][0], r)
-        ordner = [x for x in os.listdir(self.tmp.name) if x.endswith("_Ausrollversuch_Rolle")]
+        ordner = [x for x in os.listdir(self.tmp.name) if x.endswith("_Rollen-Kalibrierung")]
         self.assertEqual(len(ordner), 1)
         self.assertIn(ordner[0], d.e_datei.text())
-        self.assertEqual(d.b_weiter.text(), "Übernehmen")
+        self.assertEqual(r.rohdaten, os.path.join(self.tmp.name, ordner[0]))
+        self.assertEqual(d.b_weiter.text(), "Als Rollen-Kalibrierung speichern")
         self.assertTrue(d.b_weiter.isEnabled())
         d.b_weiter.click()
         self.assertEqual(len(self.uebernommen), 1)
-        self.assertIs(self.uebernommen[0][0], r)
-        self.assertIsNone(self.uebernommen[0][1])
+        self.assertIs(self.uebernommen[0], r)
         self.assertFalse(d.b_weiter.isEnabled())            # nur einmal
-        self.assertIn("Übernommen", d.e_meldung.text())
+        self.assertIn("Als Rollen-Kalibrierung gespeichert", d.e_meldung.text())
         d.b_zurueck.click()                                  # Nochmal
         self.assertEqual(d.schritt, aa.BESCHLEUNIGEN)
 
@@ -475,7 +478,9 @@ class Hauptfenster(unittest.TestCase):
         w, gui = self.w, self.gui
         k = w.page_kalib
         self.assertTrue(w.page_settings.isAncestorOf(k.assist_btn))
-        self.assertEqual(k.assist_btn.text(), "Ausrollversuch (Assistent) …")
+        self.assertEqual(k.assist_btn.text(), "Rollen-Kalibrierung (Assistent) …")
+        self.assertIn("noch nicht kalibriert", k.kalib_label.text())
+        p_vorher = w.page_settings.params()
         w.page_settings.port_combo.setEditText("SIM:rolle")
         self.assertTrue(w.on_connect())
         w.link.drain_frames = lambda: []                     # Telegramme kommen vom Feeder (ohne Echtzeit)
@@ -506,25 +511,43 @@ class Hauptfenster(unittest.TestCase):
         self.assertTrue(r.ok, r.meldung)
         self.assertIs(k.result, r)                           # Gruppe „Letzter Ausrollversuch“
         self.assertIn("Rolle allein", k.source_label.text() + k.msg_label.text())
+        self.assertEqual(k.apply_btn.text(), "Als Rollen-Kalibrierung speichern")
         self.assertTrue(os.path.isdir(os.path.join(w.db.runs_dir(), os.path.basename(d.ordner))))
         self.assertEqual(w.db.runs(), [])                    # kein Lauf gespeichert
-        d.b_weiter.click()                                   # Übernehmen
+        d.b_weiter.click()                                   # Als Rollen-Kalibrierung speichern
         p = w.page_settings.params()
-        self.assertAlmostEqual(p.m0, r.m0, places=2)
-        self.assertAlmostEqual(p.m1, r.m1, places=2)
-        self.assertEqual(p.n1, r.n1)
-        self.assertAlmostEqual(p.m2, r.m2, places=3)
-        self.assertEqual(p.verlust_quelle, r.quelle())
-        self.assertIn("Rolle allein", w.page_settings.loss_label.text())
-        self.assertIn("ohne Rad", w.page_settings.loss_label.text())
-        self.assertIn("ohne Rad", k.current_label.text())
+        # nicht in M0/M1: die Verluste bleiben, wie sie waren
+        self.assertEqual((p.m0, p.m1, p.n1, p.m2, p.verlust_quelle),
+                         (p_vorher.m0, p_vorher.m1, p_vorher.n1, p_vorher.m2, p_vorher.verlust_quelle))
+        # sondern als Rollen-Kalibrierung (DynoParams rk_*, einstellungen.json)
+        self.assertAlmostEqual(p.rk_m0, r.m0, places=6)
+        self.assertAlmostEqual(p.rk_m1, r.m1, places=6)
+        self.assertEqual(p.rk_n1, r.n1)
+        self.assertAlmostEqual(p.rk_m2, r.m2, places=6)
+        self.assertEqual(p.rk_quelle, r.quelle())
+        self.assertIn("vom ", k.kalib_label.text())
+        self.assertIn("Nm", k.kalib_label.text())
+        self.assertNotIn("Rolle allein", w.page_settings.loss_label.text())
+        self.assertIn("Reifen an Rolle", k.current_label.text())
         saved = gui.load_settings()
-        self.assertEqual(saved["ausrollen"]["uebernommen"]["art"], "rolle")
-        self.assertAlmostEqual(saved["params"]["m1"], r.m1, places=2)
+        kal = saved[ausrollen.KALIB_KEY]
+        self.assertAlmostEqual(kal["m1"], r.m1, places=6)
+        self.assertEqual(kal["rohdaten"], d.ordner)
+        self.assertEqual(kal["datum"], r.datum)
+        self.assertNotIn("uebernommen", saved.get("ausrollen", {}))
         d.close()
         self.app.processEvents()
         self.assertIsNone(w.ausroll_dlg)
         self.assertTrue(w.start_btn.isEnabled())
+        # Neustart: Kalibrierung wieder da, in params() und in der Anzeige
+        close_window(w, self.app)
+        self.w = w = gui.MainWindow()
+        p2 = w.page_settings.params()
+        self.assertAlmostEqual(p2.rk_m1, r.m1, places=6)
+        self.assertEqual(p2.rk_quelle, r.quelle())
+        self.assertIsNotNone(w.page_kalib.kalib)
+        self.assertEqual(w.page_kalib.kalib.rohdaten, d.ordner)
+        self.assertIn("vom ", w.page_kalib.kalib_label.text())
 
     def test_nicht_waehrend_eines_laufs(self):
         w, gui = self.w, self.gui
@@ -542,7 +565,7 @@ class Hauptfenster(unittest.TestCase):
         self.assertIsNotNone(w.ausroll_dlg)
         w._taste_lauf()                                      # „Neuer Lauf“ an der Zange: abgelehnt
         self.assertNotIn(w.ctrl.state, gui.ACTIVE)
-        self.assertIn("Ausrollversuch-Assistent offen", w.statusBar().currentMessage())
+        self.assertIn("Rollen-Kalibrierung (Assistent) offen", w.statusBar().currentMessage())
 
 
 if __name__ == "__main__":

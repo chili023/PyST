@@ -10,8 +10,9 @@ Läuft auf **Mac**, **Linux/Raspberry Pi** (und Windows).
 - Lauf mit **fester Übersetzung**, Start bei *n vom Gas*, Ende bei **n Stop** (z.B. 8000 1/min) oder beim Gaswegnehmen
 - Prüfstandsdaten: Rollengeber, Rollenumfang, Trägheit, Zündimpulse, Filter, Verlustmoment
 - **Ausrollversuch** (Einstellungen › Rolle/Lauf, Gruppe „Verluste – Ausrollversuch“): nach dem Lauf Kupplung ziehen,
-  aus dem Ausrollen der Rolle das Verlustmoment bestimmen – Ergebnis Radleistung und Motorleistung getrennt; dazu der
-  **Ausrollversuch-Assistent** ohne Lauf (Rad abgehoben, Verluste der Rolle allein)
+  aus dem Ausrollen der Rolle das Verlustmoment bestimmen – Ergebnis Radleistung und Motorleistung getrennt; dazu
+  einmalig die **Rollen-Kalibrierung** (Assistent, Rad abgehoben, Verluste der Rolle allein), mit der PyST die
+  Verluste in Rolle und Reifen/Kette/Getriebe aufteilt
 - Übersetzung einmessen aus Zündsignal oder rusEFI-Drehzahl (Verlauf, getrimmter Mittelwert, von Hand anpassbar),
   live am Drehzahlmesser des Motorrads abgleichen („Live abgleichen …“) oder per **Funkenmessung** in jedem Lauf neu
   bestimmen (Funkenmessung: noch nicht am Prüfstand bestätigt)
@@ -42,7 +43,7 @@ Ausführliche Anleitung zu jeder Funktion: **[PyST-Wiki](https://github.com/chil
 | **Fahrzeuge & Setups** | Fahrzeuge (Hersteller, Modell, Gemischaufbereitung, Motor …) und Setups (Motor, Vergaser, Einspritzung/ECU, Zündung, Antrieb, Ein-/Auslass, Kraftstoff). Kopieren, „Für neue Läufe verwenden“ |
 | **Auswertung** | Läufe überlagern wie MegaLogViewer: bis 4 Felder, X-Achse Zeit oder Drehzahl, Cursor mit Maus und ←/→. Laufleiste **ANGEZEIGTE LÄUFE** mit Setup-Spalten (Änderungen gelb), **Mittelwert bilden …**, rechts **Werte am Cursor** und **Setup-Vergleich**. Import, PDF-Bericht, CSV |
 | **Oszi / Dauermessung** | Fehlersuche an Zündung und Rolle: Dauermessung mit Markern (F2), Linienschreiber, Software-Trigger, Ereignisliste, Flanken-Ansicht (PST-Diag 1), Geräte-Einstellungen |
-| **Einstellungen** | Unterreiter **Rolle/Lauf** (Prüfstand, Anzeige beim Messen, Lauf, Filter, Klima, Verluste mit Ausrollversuch und Assistent) · **Verbindung** (Messboard, Geräte-Einstellungen der Basis, Prüfen, Datenbank) · **Zange** (Kopplung, Aufnahme & Log, Tasten der Zange, Tests, Geräte-Einstellungen) · **Lambda** (Heizung, λ/AFR, AFR-Eingang, Prüfen) · **ECU** (rusEFI, .ini, Kanal-Setup) · **Software & Firmware** (Kachel PyST mit installierter/verfügbarer Version, Kundenansicht mit vier Karten, Expertenmodus) · **WiFi** (WLAN der Basis, Steckdosen) |
+| **Einstellungen** | Unterreiter **Rolle/Lauf** (Prüfstand, Anzeige beim Messen, Lauf, Filter, Klima, Verluste mit Rollen-Kalibrierung und Ausrollversuch) · **Verbindung** (Messboard, Geräte-Einstellungen der Basis, Prüfen, Datenbank) · **Zange** (Kopplung, Aufnahme & Log, Tasten der Zange, Tests, Geräte-Einstellungen) · **Lambda** (Heizung, λ/AFR, AFR-Eingang, Prüfen) · **ECU** (rusEFI, .ini, Kanal-Setup) · **Software & Firmware** (Kachel PyST mit installierter/verfügbarer Version, Kundenansicht mit vier Karten, Expertenmodus) · **WiFi** (WLAN der Basis, Steckdosen) |
 
 - Unten die **Statusleiste** mit drei Feldern (PST Basis · PST Zange/Mega · PST/Lambda ECU) und dem Umschalter
   **☀ Tag | ☾ Nacht | Auto** (auch Menü *Ansicht › Darstellung*). Fenstergröße unter *Ansicht › Größe*.
@@ -94,33 +95,26 @@ Ausführliche Anleitung zu jeder Funktion: **[PyST-Wiki](https://github.com/chil
   erscheinen automatisch im Auswerter und im CSV-Export.
 
 Noch nicht am Prüfstand bestätigt: Mega- und F446-Flashen aus PyST, Übersetzungsart **Funkenmessung**, Zangentasten im
-Fenster „Übersetzung live abgleichen“, Ausrollversuch-Assistent mit abgehobenem Rad.
+Fenster „Übersetzung live abgleichen“, Rollen-Kalibrierung mit abgehobenem Rad und Aufteilung der Verluste.
 
 ## Ausrollversuch (Einstellungen › Rolle/Lauf)
 
-Bestimmt die Verluste von Rolle, Rad, Kette und Getriebeausgang. Damit weist PyST neben der Radleistung die
-**Motorleistung** aus. Bedient wird er in der Gruppe „Verluste – Ausrollversuch“ unter Einstellungen › Rolle/Lauf
-(früher eigener Reiter „Kalibrierung“).
+Bestimmt die Verluste zwischen Motor und Rolle. Damit weist PyST neben der Radleistung die **Motorleistung** aus.
+Bedient wird er in der Gruppe „Verluste – Ausrollversuch“ unter Einstellungen › Rolle/Lauf (früher eigener Reiter
+„Kalibrierung“). Zwei Messungen:
 
-**Ablauf für den Fahrer**
+- **Rollen-Kalibrierung** (Assistent, Rad abgehoben): **einmal** je Prüfstand, neu nur nach Umbau an der Rolle. Misst,
+  wie schnell die Rolle von allein ausrollt – die Verluste der Rolle allein (Lager, Luft). Wird als
+  Prüfstands-Kalibrierung gespeichert, **nicht** in M0/M1.
+- **Ausrollversuch nach dem Lauf** (Kupplung ziehen): misst die Verluste **gesamt** (Rolle, Reifen, Kette,
+  Getriebeausgang); „Übernehmen“ trägt sie in M0/M1/m2 ein (Motor = Rad + Verluste). Mit Rollen-Kalibrierung teilt
+  PyST sie auf: gesamt = Rolle + **Reifen/Kette/Getriebe** (Differenz).
 
-1. In der Gruppe „Verluste – Ausrollversuch“ **Ausrollversuch nach jedem Lauf** einschalten (bleibt gespeichert). Ausgeschaltet
-   läuft alles exakt wie bisher.
-2. Lauf wie immer. Bei *n Stop* zeigt das Statusfeld in der Kopfzeile **GAS WEG – KUPPLUNG ZIEHEN!**
-3. Gas weg und **gleich die Kupplung ziehen**, gezogen halten, nicht bremsen, nicht schalten. Nach dem Laufende
-   steht **KUPPLUNG ZIEHEN – ausrollen lassen** (blau), die Aufzeichnung läuft weiter.
-4. Das Ausrollen endet bei der eingestellten Motordrehzahl (Rolle × i, Vorgabe 3000 1/min, 0 = bis Stillstand),
-   nach der Höchstdauer (Vorgabe 120 s), wenn die Drehzahl wieder steigt, keine Daten mehr kommen oder mit
-   **Ausrollen beenden (Esc)**. Der Lauf ist dann schon fertig und wird wie immer ausgewertet und gespeichert
-   (das Ausrollen steht mit in `roh.csv`, das Ergebnis unter `"ausrollen"` in `lauf.json`).
-5. In der Gruppe „Verluste – Ausrollversuch“ Kurve und Fit-Güte prüfen und **Übernehmen** drücken. Erst dann werden
-   M0, M1, n1 und m2 in die Gruppe „Verluste (Werte für die Rechnung)“ eingetragen; der Lauf des Versuchs wird damit neu gerechnet.
-   „Markierten Lauf auswerten“ wertet das Ausrollen eines gespeicherten Laufs nachträglich aus.
+**Rollen-Kalibrierung – Assistent (Rad abgehoben, nur die Rolle)**
 
-**Ausrollversuch ohne Lauf – Assistent (Rad abgehoben, nur die Rolle)**
-
-Knopf **Ausrollversuch (Assistent) …** in derselben Gruppe. Ein eigenes Fenster (nicht modal) führt in fünf Schritten
-durch den Versuch, mit großen Zahlen, die man vom Motorrad aus lesen kann:
+Oben in der Gruppe steht „Rollen-Kalibrierung: vom 09.11.2026, Verlust bei Rolle 1600 1/min (Motor 10960) = 30,0 Nm /
+6,8 PS“ bzw. „noch nicht kalibriert“, daneben der Knopf **Rollen-Kalibrierung (Assistent) …**. Ein eigenes Fenster
+(nicht modal) führt in fünf Schritten durch die Messung, mit großen Zahlen, die man vom Motorrad aus lesen kann:
 
 1. **Vorbereitung:** Messboard verbunden und Rollendaten da (sonst Knopf „Verbinden“), kurze Erklärung.
 2. **Beschleunigen:** Rolle mit dem Motorrad auf die Zieldrehzahl bringen. Groß Rolle [1/min] und km/h, Balken bis
@@ -130,24 +124,42 @@ durch den Versuch, mit großen Zahlen, die man vom Motorrad aus lesen kann:
    geht nur über der Mindestdrehzahl (70 % des Ziels, mindestens 40 % über n_ende), sonst zurück zu Schritt 2 mit
    „zu langsam – nochmal beschleunigen“.
 4. **Messung:** Aufzeichnung ab „Messung starten“, Live-Kurve Drehzahl über Zeit. Ende bei n_ende (Rolle × i wie
-   oben), Stillstand, Wiederanstieg, ohne Daten oder nach der Höchstdauer (Messzeit); „Beenden und auswerten“ oder
+   unten), Stillstand, Wiederanstieg, ohne Daten oder nach der Höchstdauer (Messzeit); „Beenden und auswerten“ oder
    „Abbrechen“ (auch Esc) jederzeit.
-5. **Ergebnis:** Auswertung wie oben, nur **ohne Kupplungserkennung** (`ausrollen.analyse(..., kupplung=False)`): die
-   Ausrollphase beginnt bei „Messung starten“, ein kurzer Übergang am Anfang wird verworfen. Diagramm und Werte wie in
-   der Gruppe „Letzter Ausrollversuch“ (dort steht das Ergebnis danach auch). **Übernehmen** wie oben, **Nochmal**
-   (zurück zu Schritt 2), **Schließen**.
+5. **Ergebnis:** Auswertung wie beim Ausrollversuch, nur **ohne Kupplungserkennung**
+   (`ausrollen.analyse(..., kupplung=False)`): die Ausrollphase beginnt bei „Messung starten“, ein kurzer Übergang am
+   Anfang wird verworfen. Diagramm (neuer Fit, bisherige Kalibrierung gestrichelt) und Werte; **Als
+   Rollen-Kalibrierung speichern**, **Nochmal** (zurück zu Schritt 2), **Schließen**.
 
-Gemessen werden so nur die **Verluste der Rolle selbst** (Lager, Luft), nicht Rad, Kette und Getriebeausgang. Die
-Quelle heißt „Ausrollversuch Rolle allein …“. Übernommen rechnet PyST „Motor = Rad + Verluste“ nur mit diesen
-Verlusten: Der Wert „Motor“ ist dann die Leistung, die der Reifen an die Rolle abgibt (die Rolle verbraucht beim
-Beschleunigen selbst Lager- und Luftverluste) – noch nicht die Motorleistung. Das steht im Assistenten, in der Gruppe
-„Verluste“ und in der Quelle. Für die Verluste bis zur Kupplung bleibt der Ausrollversuch nach dem Lauf.
+Gespeichert wird die Kalibrierung für den Prüfstand (nicht je Fahrzeug) in `einstellungen.json` unter
+`"rollen_kalibrierung"`: M0, M1, n1, m2, Datum, R², gemessener Bereich und der Ordner der Rohdaten
+(`ausrollen.RollenKalibrierung`). Sie bleibt über den Neustart erhalten und steht in den Parametern jedes neuen Laufs
+(`rk_m0`, `rk_m1`, `rk_n1`, `rk_m2`, `rk_quelle` in `lauf.json`; ältere Läufe ohne diese Felder laden wie bisher, ohne
+Kalibrierung). Die Rohdaten der Messung liegen in `~/PyST/messungen/JJMMTT_HHMMSS_Rollen-Kalibrierung/` (`roh.csv` wie
+bei einem Lauf, `lauf.json` mit `"art": "rollen_kalibrierung"`, Parametern, Ende und Ergebnis). Nachrechnen:
+`r = storage.load_any(ordner)`, `ausrollen.analyse(r["n_roll"], r["dt"], r["params"], start=0, n_ende=…,
+kupplung=False)`. Solange der Assistent offen ist, startet kein Lauf (START, F1, Taste der Zange); während eines
+Laufs lässt er sich nicht öffnen.
 
-Kein Leistungslauf, keine Laufaufzeichnung: Die Rohdaten der Messung liegen in
-`~/PyST/messungen/JJMMTT_HHMMSS_Ausrollversuch_Rolle/` (`roh.csv` wie bei einem Lauf, `lauf.json` mit `"art":
-"ausrollversuch_rolle"`, Parametern, Ende und Ergebnis). Nachrechnen: `r = storage.load_any(ordner)`,
-`ausrollen.analyse(r["n_roll"], r["dt"], r["params"], start=0, n_ende=…, kupplung=False)`. Solange der Assistent
-offen ist, startet kein Lauf (START, F1, Taste der Zange); während eines Laufs lässt er sich nicht öffnen.
+**Ausrollversuch nach dem Lauf – Ablauf für den Fahrer**
+
+1. In der Gruppe „Verluste – Ausrollversuch“ **Ausrollversuch nach jedem Lauf** einschalten (bleibt gespeichert). Ausgeschaltet
+   läuft alles exakt wie bisher.
+2. Lauf wie immer. Bei *n Stop* zeigt das Statusfeld in der Kopfzeile **GAS WEG – KUPPLUNG ZIEHEN!**
+3. Gas weg und **gleich die Kupplung ziehen**, gezogen halten, nicht bremsen, nicht schalten. Nach dem Laufende
+   steht **KUPPLUNG ZIEHEN – ausrollen lassen** (blau), die Aufzeichnung läuft weiter.
+4. Das Ausrollen endet bei der eingestellten Motordrehzahl (Rolle × i, Vorgabe 3000 1/min, 0 = bis Stillstand),
+   nach der Höchstdauer (Vorgabe 120 s), wenn die Drehzahl wieder steigt, keine Daten mehr kommen oder mit
+   **Ausrollen beenden (Esc)**. Der Lauf ist dann schon fertig und wird wie immer ausgewertet und gespeichert
+   (das Ausrollen steht mit in `roh.csv`, das Ergebnis unter `"ausrollen"` in `lauf.json`, mit Kalibrierung dazu
+   `"aufteilung"`).
+5. In der Gruppe „Letzter Ausrollversuch“ Kurve und Fit-Güte prüfen. Mit Rollen-Kalibrierung stehen dort gesamt, Rolle
+   und Reifen/Kette/Getriebe in Nm und PS (bei Pmax des Laufs, bei n1 und oben) und im Diagramm als drei Kurven
+   (gesamt rot, Rolle grün, Reifen/Kette/Getriebe orange). Fällt die Differenz rechnerisch unter 0, steht ein Hinweis
+   dabei (Kalibrierung bzw. Ausrollversuch wiederholen). Ohne Kalibrierung: „nur gesamt – Rolle nicht kalibriert“.
+6. **Übernehmen** drücken. Erst dann werden M0, M1, n1 und m2 (gesamt) in die Gruppe „Verluste (Werte für die
+   Rechnung)“ eingetragen; der Lauf des Versuchs wird damit neu gerechnet. „Markierten Lauf auswerten“ wertet das
+   Ausrollen eines gespeicherten Laufs nachträglich aus.
 
 **Formel**
 
@@ -167,6 +179,13 @@ offen ist, startet kein Lauf (START, F1, Taste der Zange); während eines Laufs 
   M_Motor = k · J / i² · a + Mv / i (wie bisher), Radanteil = k · J / i² · a. Ergebnis-Zeile, PDF-Bericht,
   `lauf.json` und die Kanäle „Leistung Rad“ / „Verlustleistung“ im Auswerter weisen beides getrennt aus und
   nennen die Herkunft der Verluste (Ausrollversuch mit Datum und R², oder „von Hand eingetragen“).
+- Mit Rollen-Kalibrierung zusätzlich **Reifen an Rolle** = k · J / i² · a + Mv_Rolle / i (die Leistung, die der
+  Reifen an die Rolle abgibt) und **Antriebsverlust** (Reifen, Kette, Getriebe) = Motor − Reifen an Rolle bei der
+  Drehzahl von Pmax: Ergebniszeile, PDF-Bericht, `lauf.json` (`p_reifen_max_ps`, `antriebsverlust_ps_bei_pmax`,
+  `rollen_kalibrierung`) und die Kanäle „Leistung Reifen an Rolle“ / „Antriebsverlust“. Die Kurven Rad und Motor
+  bleiben unverändert.
+- Aufteilung des Ausrollversuchs: Mv_Reifen/Kette/Getriebe(n) = Mv_gesamt(n) − Mv_Rolle(n) (`ausrollen.aufteilen`),
+  immer mit der aktuellen Kalibrierung.
 
 **Grenzen**
 
@@ -179,10 +198,12 @@ offen ist, startet kein Lauf (START, F1, Taste der Zange); während eines Laufs 
   (m2 ≠ 0) lässt sich im LabVIEW-XML nicht abbilden; dort stehen nur M0/M1.
 - Meldungen statt Ergebnis bei: keine Ausrolldaten, zu kurz (unter 3 s), Drehzahlbereich zu klein
   (unter 20 %), Rolle beschleunigt, Kupplung nicht gezogen erkennbar, Verlustmoment negativ.
-- Simulator: Port `SIM:ausrollen` (Kupplung 0,8 s nach dem Gaswegnehmen gezogen, Verlust von Rad/Kette).
-  Port `SIM:rolle` für den Assistenten: Haltedrehzahl, Vollgas bis 11500 1/min, 4 s oben halten, dann Rad ab; die
-  Rolle läuft mit bekanntem Verlust aus (M0 8 Nm, M1 30 Nm bei 1600 1/min, m2 5), unter 2000 1/min (Rolle × i)
-  kommt das Rad wieder auf die Rolle und alles beginnt von vorn. Ein Auslauf dauert gut 90 s.
+- Simulator: beide Ports haben dieselbe Rolle (M0 8 Nm, M1 30 Nm bei 1600 1/min, m2 5). Port `SIM:ausrollen`
+  (Kupplung 0,8 s nach dem Gaswegnehmen gezogen): dazu Reifen/Kette/Getriebe 4 Nm + 0,08 Nm/(rad/s) an der Rolle.
+  Port `SIM:rolle` für die Rollen-Kalibrierung: Haltedrehzahl, Vollgas bis 11500 1/min, 4 s oben halten, dann Rad
+  ab; die Rolle läuft allein aus, unter 2000 1/min (Rolle × i) kommt das Rad wieder auf die Rolle und alles beginnt
+  von vorn. Ein Auslauf dauert gut 90 s. Kalibrierung mit `SIM:rolle`, dann ein Lauf mit `SIM:ausrollen` ergibt die
+  Aufteilung des Simulators (Rolle rund zwei Drittel, Reifen/Kette/Getriebe ein Drittel).
 
 ## Oszi / Dauermessung (ab 1.3)
 
@@ -609,8 +630,8 @@ pyst/htmlexport.py HTML-Ansicht zum Weitergeben (uPlot eingebettet)
 pyst/share_ui.py  Dialoge Weitergeben und Import von Mitschnitten
 pyst/runner.py    Ablauf eines Laufs (mit Ausrollen)
 pyst/ausrollen.py Ausrollversuch: Erkennung, Fit des Verlustmoments, Prüfungen (ohne Oberfläche)
-pyst/kalib_page.py Ausrollversuch: Gruppe „Verluste – Ausrollversuch“ in Einstellungen › Rolle/Lauf (früher Reiter „Kalibrierung“)
-pyst/ausroll_assistent.py Ausrollversuch-Assistent: Rad abgehoben, Verluste der Rolle allein (5 Schritte, nicht modal)
+pyst/kalib_page.py Gruppe „Verluste – Ausrollversuch“ in Einstellungen › Rolle/Lauf: Rollen-Kalibrierung, Ausrollversuch, Aufteilung
+pyst/ausroll_assistent.py Assistent Rollen-Kalibrierung: Rad abgehoben, Verluste der Rolle allein (5 Schritte, nicht modal)
 pyst/storage.py   Speichern/Laden (CSV, JSON, LabVIEW-XML, .pyst, Terminal-Mitschnitte)
 pyst/lvxml.py     LabVIEW-Datenspeicher lesen/schreiben
 pyst/sim.py       Simulator (Firmware + Motor + Rolle, PyST-Basis mit Zange, Zange per USB, Fake-Zange für das Update ZangeUpdSimDevice, Fake-Basis für das ESP-Update BasisEspUpdSimDevice)

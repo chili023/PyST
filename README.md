@@ -11,7 +11,8 @@ Open-Source-Leistungsprüfstand (Rollenprüfstand):
   **Funkenmessung**. Passt auch auf ein MacBook mit 1280 Punkten Breite.
 - **Neu in 1.4.2:** alte Läufe und Mittelwerte über **＋** ins Messdiagramm holen, Nachfrage vor START bei
   unverändertem Setup, große Anweisungen (GO, GAS WEG) und großes Ergebnis über dem Diagramm, Fähnchen am Cursor, bis
-  12 Live-Felder, **Ausrollversuch-Assistent** (Verluste der Rolle allein, Rad abgehoben) und Unterreiter
+  12 Live-Felder, **Rollen-Kalibrierung** (einmal mit abgehobenem Rad, teilt den Ausrollversuch in Rolle und
+  Reifen/Kette/Getriebe auf) und Unterreiter
   **Software & Firmware** mit der PyST-Version. Siehe [Release Notes 1.4.2](docs/RELEASE_NOTES_1.4.2.md).
 - **PyST-Basis mit Funk-Zündzange:** Klima, Lambda, EGT, Funk-Zange mit frei belegbaren Tasten, WLAN, WLAN-Steckdosen
   (Gebläse/Absaugung automatisch), signierte Firmware-Updates direkt aus PyST.

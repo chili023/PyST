@@ -21,11 +21,16 @@ Auswertung (analyse):
 Plausibilitaet: zu kurz, Drehzahlbereich zu klein, Rolle verzoegert nicht, Kupplung nicht erkennbar gezogen,
 Verlustmoment negativ -> ok = False mit Meldung fuer den Anwender.
 
-Ohne Kupplung (analyse(..., kupplung=False), Assistent „Ausrollversuch (Assistent)“, ausroll_assistent.py): Das Rad
-ist von der Rolle abgehoben, die Rolle laeuft ab „Messung starten“ (start) frei aus. Keine Kupplungserkennung, kein
+Ohne Kupplung (analyse(..., kupplung=False), Rollen-Kalibrierung, Assistent ausroll_assistent.py): Das Rad ist
+von der Rolle abgehoben, die Rolle laeuft ab „Messung starten“ (start) frei aus. Keine Kupplungserkennung, kein
 Zuendsignal; verworfen werden wie oben UEBERGANG_MIN_S und ein Anfang, der nicht zum Verlauf passt (Rad noch nicht
-ganz frei). Gemessen sind dann nur die Verluste der Rolle selbst (Lager, Luft): Ergebnis art = ART_ROLLE, Quelle
-„Ausrollversuch Rolle allein …“.
+ganz frei). Gemessen sind dann nur die Verluste der Rolle selbst (Lager, Luft): Ergebnis art = ART_ROLLE. Es wird
+nicht in M0/M1 eingetragen, sondern als RollenKalibrierung gespeichert (einmal je Pruefstand, einstellungen.json
+"rollen_kalibrierung", in DynoParams rk_m0/rk_m1/rk_n1/rk_m2).
+
+Aufteilung (aufteilen): Ausrollversuch nach dem Lauf (gesamt: Rolle, Reifen, Kette, Getriebeausgang) minus
+Rollen-Kalibrierung = Reifen/Kette/Getriebe. Faellt die Differenz irgendwo im gemessenen Bereich unter 0 (Rolle
+allein verliert mehr als alles zusammen), steht ein Hinweis dabei; gezeichnet wird sie trotzdem, wie gerechnet.
 
 Grenzen: J ist die Rollentraegheit (wie in der Leistungsrechnung); die Traegheit von Rad und Getriebeausgang ist
 nicht enthalten, ihr Anteil wird beim Beschleunigen wie beim Ausrollen gleich vernachlaessigt.
@@ -99,6 +104,7 @@ class AusrollErgebnis:
     punkte_m: np.ndarray = field(default_factory=lambda: np.zeros(0))   # Klassenmittel Verlustmoment [Nm]
     datum: str = ""
     art: str = ART_KUPPLUNG                   # ART_KUPPLUNG (nach dem Lauf) oder ART_ROLLE (Rad abgehoben)
+    rohdaten: str = ""                        # Ordner der Rohdaten (Assistent), sonst ""
 
     @property
     def rolle_allein(self) -> bool:
@@ -114,7 +120,7 @@ class AusrollErgebnis:
         except ValueError:
             d = self.datum
         r2 = f", R² {self.r2:.3f}".replace(".", ",") if np.isfinite(self.r2) else ""
-        return f"Ausrollversuch {'Rolle allein ' if self.rolle_allein else ''}{d}{r2}"
+        return f"{'Rollen-Kalibrierung' if self.rolle_allein else 'Ausrollversuch'} {d}{r2}"
 
     def params_fuer(self, p: physics.DynoParams) -> physics.DynoParams:
         """Kopie von p mit den Verlusten dieses Ausrollversuchs."""
@@ -129,7 +135,8 @@ class AusrollErgebnis:
                 "m1": self.m1, "n1": self.n1, "m2": self.m2, "quadratisch": self.quadratisch,
                 "r2": _num(self.r2), "rms_nm": _num(self.rms_nm), "n_von": self.n_von, "n_bis": self.n_bis,
                 "dauer_s": self.dauer_s, "verworfen_s": self.verworfen_s, "kupplung": self.kupplung,
-                "datum": self.datum, "quelle": self.quelle() if self.ok else "", "ratio": self.ratio, "art": self.art}
+                "datum": self.datum, "quelle": self.quelle() if self.ok else "", "ratio": self.ratio, "art": self.art,
+                "rohdaten": self.rohdaten}
         if punkte:
             d["punkte_n"] = [round(float(x), 2) for x in self.punkte_n]
             d["punkte_m"] = [round(float(x), 4) for x in self.punkte_m]
@@ -140,7 +147,7 @@ class AusrollErgebnis:
         """Gegenstueck zu als_dict (unbekannte Schluessel werden uebergangen)."""
         r = cls(ok=bool(d.get("ok")))
         for k in ("meldung", "m0", "m1", "n1", "m2", "quadratisch", "n_von", "n_bis", "dauer_s", "verworfen_s",
-                  "kupplung", "datum", "ratio", "art"):
+                  "kupplung", "datum", "ratio", "art", "rohdaten"):
             if d.get(k) is not None:
                 setattr(r, k, type(getattr(r, k))(d[k]))
         r.hinweise = list(d.get("hinweise") or [])
@@ -153,6 +160,191 @@ class AusrollErgebnis:
 
 def _num(x: float):
     return float(x) if np.isfinite(x) else None
+
+
+def _datum_text(datum: str, uhrzeit: bool = True) -> str:
+    try:
+        return _dt.datetime.fromisoformat(datum).strftime("%d.%m.%Y %H:%M" if uhrzeit else "%d.%m.%Y")
+    except ValueError:
+        return datum
+
+
+def _k(x: float, dec: int = 1) -> str:
+    return f"{x:.{dec}f}".replace(".", ",") if x is not None and np.isfinite(x) else "–"
+
+
+# ---------------------------------------------------------------------------------------------- Rollen-Kalibrierung
+KALIB_KEY = "rollen_kalibrierung"     # einstellungen.json
+
+
+@dataclass
+class RollenKalibrierung:
+    """Verlustmoment der Rolle allein (Lager, Luft), einmal gemessen mit abgehobenem Rad (Assistent). Gilt fuer den
+    Pruefstand, nicht je Fahrzeug; neu nur nach einem Umbau an der Rolle. Gespeichert in einstellungen.json unter
+    KALIB_KEY, in DynoParams als rk_m0/rk_m1/rk_n1/rk_m2/rk_quelle (lauf.json)."""
+    m0: float = 0.0
+    m1: float = 0.0
+    n1: float = 1.0
+    m2: float = 0.0
+    quadratisch: bool = True
+    datum: str = ""
+    r2: float = float("nan")
+    rms_nm: float = float("nan")
+    n_von: float = 0.0                       # gemessener Bereich, Rollendrehzahl [1/min]
+    n_bis: float = 0.0
+    ratio: float = 1.0                       # Uebersetzung bei der Messung (nur Anzeige ueber Motordrehzahl)
+    rohdaten: str = ""                       # Ordner der Rohdaten (roh.csv, lauf.json)
+
+    @property
+    def gueltig(self) -> bool:
+        return bool(self.m0 or self.m1 or self.m2)
+
+    def mv(self, n_roll) -> np.ndarray:
+        return physics.loss_torque(np.asarray(n_roll, float), self.m0, self.m1, self.n1, self.m2)
+
+    def quelle(self) -> str:
+        r2 = f", R² {self.r2:.3f}".replace(".", ",") if np.isfinite(self.r2) else ""
+        return f"Rollen-Kalibrierung {_datum_text(self.datum)}{r2}" if self.datum else "Rollen-Kalibrierung"
+
+    def bezug(self) -> float:
+        """Rollendrehzahl [1/min] fuer die Kurzanzeige: n1, sonst obere gemessene Drehzahl."""
+        return self.n1 if self.n1 > 100 else max(self.n_von, 100.0)
+
+    def kurztext(self, ratio: Optional[float] = None) -> str:
+        """„vom 09.11.2026, Verlust bei Rolle 1600 1/min (Motor 10960) = 30,0 Nm / 6,8 PS“"""
+        n = self.bezug()
+        i = ratio if ratio and ratio > 0 else self.ratio
+        m = float(self.mv(n))
+        d = _datum_text(self.datum, uhrzeit=False)
+        return (f"{'vom ' + d + ', ' if d else ''}Verlust bei Rolle {n:.0f} 1/min (Motor {n * i:.0f}) = "
+                f"{_k(m)} Nm / {_k(float(verlust_ps(n, m)))} PS")
+
+    def in_params(self, p: physics.DynoParams) -> physics.DynoParams:
+        """Kopie von p mit dieser Kalibrierung (rk_*)."""
+        q = physics.DynoParams(**p.__dict__)
+        q.rk_m0, q.rk_m1, q.rk_n1, q.rk_m2 = self.m0, self.m1, self.n1, self.m2
+        q.rk_quelle = self.quelle()
+        return q
+
+    def als_dict(self) -> Dict:
+        return {"m0": self.m0, "m1": self.m1, "n1": self.n1, "m2": self.m2, "quadratisch": self.quadratisch,
+                "datum": self.datum, "r2": _num(self.r2), "rms_nm": _num(self.rms_nm), "n_von": self.n_von,
+                "n_bis": self.n_bis, "ratio": self.ratio, "rohdaten": self.rohdaten, "quelle": self.quelle()}
+
+    @classmethod
+    def aus_dict(cls, d) -> Optional["RollenKalibrierung"]:
+        """Gegenstueck zu als_dict; None bei leerem oder kaputtem Eintrag und ohne Verlust."""
+        if not isinstance(d, dict):
+            return None
+        k = cls()
+        try:
+            for f in ("m0", "m1", "n1", "m2", "n_von", "n_bis", "ratio"):
+                if d.get(f) is not None:
+                    setattr(k, f, float(d[f]))
+            for f in ("datum", "rohdaten"):
+                if d.get(f) is not None:
+                    setattr(k, f, str(d[f]))
+            k.quadratisch = bool(d.get("quadratisch", True))
+            k.r2 = float(d["r2"]) if d.get("r2") is not None else float("nan")
+            k.rms_nm = float(d["rms_nm"]) if d.get("rms_nm") is not None else float("nan")
+        except (TypeError, ValueError):
+            return None
+        return k if k.gueltig else None
+
+    @classmethod
+    def aus_ergebnis(cls, r: "AusrollErgebnis", rohdaten: str = "") -> "RollenKalibrierung":
+        return cls(m0=r.m0, m1=r.m1, n1=r.n1, m2=r.m2, quadratisch=r.quadratisch, datum=r.datum, r2=r.r2,
+                   rms_nm=r.rms_nm, n_von=r.n_von, n_bis=r.n_bis, ratio=r.ratio, rohdaten=rohdaten or r.rohdaten)
+
+    @classmethod
+    def aus_params(cls, p: Optional[physics.DynoParams]) -> Optional["RollenKalibrierung"]:
+        """Nur die Verlustwerte (rk_*) aus DynoParams, z.B. aus einem gespeicherten Lauf; None = nicht kalibriert."""
+        m = [float(getattr(p, k, 0.0) or 0.0) for k in ("rk_m0", "rk_m1", "rk_m2")]
+        if p is None or not any(m):
+            return None
+        return cls(m0=m[0], m1=m[1], n1=float(getattr(p, "rk_n1", 1.0)), m2=m[2], ratio=float(p.ratio))
+
+
+@dataclass
+class Aufteilung:
+    """Ausrollversuch nach dem Lauf (gesamt) = Rolle (Kalibrierung) + Reifen/Kette/Getriebe (Differenz)."""
+    gesamt: "AusrollErgebnis"
+    rolle: RollenKalibrierung
+
+    def mv_gesamt(self, n) -> np.ndarray:
+        return self.gesamt.mv(n)
+
+    def mv_rolle(self, n) -> np.ndarray:
+        return self.rolle.mv(n)
+
+    def mv_antrieb(self, n) -> np.ndarray:
+        """Reifen, Kette, Getriebeausgang [Nm an der Rolle] = gesamt - Rolle (kann rechnerisch < 0 sein)."""
+        return self.gesamt.mv(n) - self.rolle.mv(n)
+
+    def negativ_bereich(self) -> Optional[Tuple[float, float]]:
+        """Rollendrehzahlen [1/min] im gemessenen Bereich, in denen die Differenz < 0 ist (None = nirgends)."""
+        g = np.linspace(self.gesamt.n_bis, self.gesamt.n_von, 60)
+        neg = g[self.mv_antrieb(g) < 0]
+        return (float(neg.min()), float(neg.max())) if len(neg) else None
+
+    def hinweis(self) -> str:
+        b = self.negativ_bereich()
+        if b is None:
+            return ""
+        i = self.gesamt.ratio
+        return (f"Reifen/Kette/Getriebe rechnerisch negativ (Rolle {b[0]:.0f}–{b[1]:.0f} 1/min, Motor "
+                f"{b[0] * i:.0f}–{b[1] * i:.0f}): Laut Kalibrierung verliert die Rolle allein dort mehr als alles "
+                "zusammen beim Ausrollversuch. Rolle seither umgebaut oder anders warm? Rollen-Kalibrierung bzw. "
+                "Ausrollversuch wiederholen. Die Kurve zeigt den gerechneten Wert.")
+
+    def bezugspunkte(self, n_pmax_motor: Optional[float] = None) -> List[Tuple[str, float]]:
+        """(Name, Rollendrehzahl) fuer die Werte: bei Pmax (wenn bekannt), bei n1 (wenn im Bereich) und oben."""
+        r = self.gesamt
+        i = r.ratio if r.ratio > 0 else 1.0
+        pkt: List[Tuple[str, float]] = []
+        if n_pmax_motor and n_pmax_motor > 0:
+            pkt.append(("bei Pmax", n_pmax_motor / i))
+        if r.n_bis < r.n1 < r.n_von - 50:
+            pkt.append(("bei n1", r.n1))
+        pkt.append(("oben", r.n_von))
+        return pkt
+
+    def werte(self, n_roll: float) -> Dict[str, float]:
+        """Nm und PS bei n_roll: gesamt, rolle, antrieb (dazu *_ps, n_roll, n_motor)."""
+        g, ro = float(self.mv_gesamt(n_roll)), float(self.mv_rolle(n_roll))
+        out = {"n_roll": float(n_roll), "n_motor": float(n_roll) * self.gesamt.ratio,
+               "gesamt": g, "rolle": ro, "antrieb": g - ro}
+        for k in ("gesamt", "rolle", "antrieb"):
+            out[k + "_ps"] = float(verlust_ps(n_roll, out[k]))
+        return out
+
+    def text(self, n_pmax_motor: Optional[float] = None) -> str:
+        """Eine Zeile fuer Ergebnis und Statusleiste, bei Pmax (sonst oben)."""
+        name, n = self.bezugspunkte(n_pmax_motor)[0]
+        w = self.werte(n)
+        return (f"gesamt {_k(w['gesamt_ps'])} PS = Rolle {_k(w['rolle_ps'])} + Reifen/Kette/Getriebe "
+                f"{_k(w['antrieb_ps'])} PS ({name}, Motor {w['n_motor']:.0f} 1/min)")
+
+    def kurz(self, n_pmax_motor: Optional[float] = None) -> str:
+        """Kurzfassung fuer das Band: „Rolle 6,4 + Reifen/Kette/Getriebe 3,8 PS bei Pmax“."""
+        name, n = self.bezugspunkte(n_pmax_motor)[0]
+        w = self.werte(n)
+        return f"Rolle {_k(w['rolle_ps'])} + Reifen/Kette/Getriebe {_k(w['antrieb_ps'])} PS {name}"
+
+    def als_dict(self, n_pmax_motor: Optional[float] = None) -> Dict:
+        """Fuer lauf.json: Werte an den Bezugspunkten und die verwendete Kalibrierung."""
+        return {"rollen_kalibrierung": self.rolle.quelle(),
+                "rolle": {"m0": self.rolle.m0, "m1": self.rolle.m1, "n1": self.rolle.n1, "m2": self.rolle.m2},
+                "punkte": [{"bezug": name, **{k: round(v, 3) for k, v in self.werte(n).items()}}
+                           for name, n in self.bezugspunkte(n_pmax_motor)],
+                "hinweis": self.hinweis()}
+
+
+def aufteilen(r: Optional["AusrollErgebnis"], kal: Optional[RollenKalibrierung]) -> Optional[Aufteilung]:
+    """Aufteilung eines Ausrollversuchs nach dem Lauf; None ohne Kalibrierung, bei Fehler oder Rad abgehoben."""
+    if r is None or not r.ok or r.rolle_allein or kal is None or not kal.gueltig:
+        return None
+    return Aufteilung(r, kal)
 
 
 # ---------------------------------------------------------------------------------------------- Hilfen

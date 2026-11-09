@@ -55,15 +55,27 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
   8 Felder ohne Rollen.
 - **UMGEBUNG** steht in einer Zeile, **ERGEBNIS** kompakt nebeneinander.
 
-**6. Ausrollversuch-Assistent (Einstellungen › Rolle/Lauf, Gruppe „Verluste – Ausrollversuch“)**
-- Knopf **Ausrollversuch (Assistent) …**: ein Fenster führt in fünf Schritten durch den Versuch ohne Leistungslauf:
-  Vorbereitung, Beschleunigen (Rolle auf die Zieldrehzahl), Rad von der Rolle, Messung, Ergebnis (Übernehmen, Nochmal).
-- Gemessen werden nur die **Verluste der Rolle** (Lager, Luft), weil das Rad abgehoben ist.
-- Zum Ausprobieren: Simulator-Port `SIM:rolle`.
+**6. Rollen-Kalibrierung und Aufteilung der Verluste (Einstellungen › Rolle/Lauf, Gruppe „Verluste – Ausrollversuch“)**
+- **Einmal** messen, wie schnell die Rolle **von allein** ausrollt: Knopf **Rollen-Kalibrierung (Assistent) …**. Ein
+  Fenster führt in fünf Schritten durch den Versuch ohne Leistungslauf: Vorbereitung, Beschleunigen (Rolle auf die
+  Zieldrehzahl), Rad von der Rolle, Messung, Ergebnis. Wiederholen nur nach einem Umbau an der Rolle.
+- Das Ergebnis (Verluste der Rolle allein: Lager, Luft) wird mit **Als Rollen-Kalibrierung speichern** für den
+  Prüfstand abgelegt, nicht je Fahrzeug, mit Datum, R² und Ordner der Rohdaten. Es geht **nicht** in M0/M1.
+  Die Gruppe zeigt „Rollen-Kalibrierung: vom …, Verlust bei … 1/min = … Nm / … PS“ bzw. „noch nicht kalibriert“.
+- Der **Ausrollversuch nach dem Lauf** (Kupplung ziehen) misst wie bisher die Verluste **gesamt** (Rolle, Reifen,
+  Kette, Getriebeausgang); **Übernehmen** trägt sie wie bisher in M0/M1/m2 ein (Motor = Rad + Verluste). Mit
+  Rollen-Kalibrierung teilt PyST sie auf: **gesamt = Rolle + Reifen/Kette/Getriebe**, als Tabelle in Nm und PS (bei
+  Pmax, bei n1, oben) und als drei Kurven. Fällt der Anteil Reifen/Kette/Getriebe rechnerisch unter 0, steht ein
+  Hinweis dabei.
+- Im Ergebnis eines Laufs steht mit Kalibrierung zusätzlich **Reifen an Rolle** (Rad + Verlust der Rolle) und der
+  **Antriebsverlust** (Motor − Reifen an Rolle): Ergebniszeile, `lauf.json`, PDF-Bericht, Kanäle in der Auswertung.
+  Die Kurven Rad und Motor bleiben wie bisher.
+- Zum Ausprobieren: Simulator-Port `SIM:rolle` für die Kalibrierung, `SIM:ausrollen` für den Lauf mit Kupplung (beide
+  mit derselben Rolle).
 
-| Schritt 2: Beschleunigen | Schritt 5: Ergebnis |
+| Kalibrierung, Schritt 5: Ergebnis | Ausrollversuch nach dem Lauf: Aufteilung |
 |---|---|
-| ![Assistent Schritt 2](bilder/v142_ausroll_2_beschleunigen.png) | ![Assistent Schritt 5](bilder/v142_ausroll_5_ergebnis.png) |
+| ![Assistent Schritt 5](bilder/v142_ausroll_5_ergebnis.png) | ![Aufteilung der Verluste](bilder/v142_ausroll_aufteilung.png) |
 
 **7. Software & Firmware (früher Einstellungen › Firmware)**
 - Neue Kachel **PyST (Software)** ganz oben: installierte und verfügbare PyST-Version, Datenordner und Knopf zur
@@ -90,10 +102,11 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 
 ## Hinweise und Annahmen
 
-- **Ausrollversuch-Assistent:** Mit abgehobenem Rad misst er nur die Verluste der Rolle, nicht Rad, Kette und
-  Getriebeausgang. Übernimmt man das Ergebnis, ist der Wert „Motor“ die **Reifenleistung an der Rolle** (Leistung, die
-  der Reifen an die Rolle abgibt), noch nicht die Motorleistung. Für die Verluste bis zur Kupplung bleibt der
-  Ausrollversuch nach dem Lauf mit gezogener Kupplung.
+- **Rollen-Kalibrierung:** Mit abgehobenem Rad misst der Assistent nur die Verluste der Rolle. Sie gelten für den
+  Prüfstand (Einstellungen, `"rollen_kalibrierung"` in `einstellungen.json`) und werden bei jedem Lauf in `lauf.json`
+  mitgeschrieben (`rk_m0` … `rk_m2`). Ältere Läufe ohne diese Felder laden wie bisher, ohne Aufteilung. Die
+  Aufteilung des Ausrollversuchs nutzt immer die **aktuelle** Kalibrierung; die Trägheit von Rad und Getriebe bleibt
+  wie bisher unberücksichtigt.
 - **Ø automatisch mitteln:** „Dasselbe Setup“ heißt gleiches Fahrzeug, gleiches Setup und gleiche Setup-Werte; ein
   Lauf mit Werten „nur für diesen Lauf“ zählt als anderes Setup. Ein Lauf ohne Auto-Speichern zählt erst nach dem
   Speichern. Gemittelt wird wie in Auswertung › Mittelwert bilden (Raster 50 1/min, oben 300 1/min weg).
@@ -109,7 +122,7 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 
 ## Noch nicht an der Hardware bestätigt
 
-- Ausrollversuch-Assistent mit abgehobenem Rad.
+- Rollen-Kalibrierung mit abgehobenem Rad und die Aufteilung der Verluste.
 - Aus 1.4.1: Mega und F446 aus PyST flashen, Übersetzungsart **Funkenmessung**, Zangentasten im Abgleichfenster,
   Updates im Format 2 und Firmware 0.4.0 von Basis, Zange und Basis-ESP.
 
