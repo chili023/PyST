@@ -893,7 +893,7 @@ class LogViewer(QtWidgets.QWidget):
         rows = [self.rows[rid] for rid in reihe]
         self.bez = lauf_bezeichnungen(rows)
         vid = next((r.vehicle_id for r in rows if r.vehicle_id), None)
-        felder = self.db.schnellwert_plaetze(vid)
+        felder = [f for f in self.db.schnellwert_plaetze(vid) if f]     # Spalten = belegte Plaetze des Fahrzeugs
         setups = self._setup_names()
         zellen = schnellwert_zellen([self.db.lauf_setup(r) for r in rows], felder)
         eintraege = []

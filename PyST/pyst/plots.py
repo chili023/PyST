@@ -112,6 +112,17 @@ def _nice_range(lo: float, hi: float) -> Tuple[float, float]:
     return math.floor(lo / step + 1e-9) * step, math.ceil(hi / step - 1e-9) * step
 
 
+def feld_zahl(v: float) -> str:
+    """Zahl fuer ein Achsfeld: nie in Exponentenschreibweise (12500 statt 1.25e+04), hoechstens 4 gueltige
+    Stellen hinter dem Komma noetig (0.85, 1.3, 12500, 0.005)."""
+    if v is None or not math.isfinite(v):
+        return ""
+    if abs(v - round(v)) < 1e-9 * max(1.0, abs(v)):
+        return str(int(round(v)))
+    dez = min(6, max(0, 3 - int(math.floor(math.log10(abs(v))))))
+    return f"{v:.{dez}f}".rstrip("0").rstrip(".")
+
+
 def fmt_value(v: float) -> str:
     """Kompakte Zahl fuer Anzeigen/Legende."""
     if v is None or not math.isfinite(v):
@@ -133,6 +144,8 @@ def fmt_value(v: float) -> str:
 # Achsgrenzen, die der Benutzer festlegen kann (0 = automatisch)
 LIMIT_KEYS = ("n_lo", "n_hi", "ps_lo", "ps_hi", "nm_lo", "nm_hi", "lam_lo", "lam_hi", "egt_lo", "egt_hi")
 LAMBDA_DEFAULT = (0.7, 1.3)          # untere Achse links, in λ (im AFR-Modus x 14,7)
+EGT_DEFAULT = (0.0, 1000.0)          # untere Achse rechts mit EGT, solange keine EGT-Werte da sind [°C]
+EGT_SCHRITTE = (100.0, 125.0, 150.0, 200.0, 250.0, 300.0, 400.0, 500.0)   # Teilung dafuer (k = 3: 0–900, 4: 0–1000)
 
 
 def _even_intervals(span: float, prefer=(4, 3, 5, 6, 2)) -> int:
@@ -491,8 +504,9 @@ class DynoPlot(pg.GraphicsLayoutWidget):
             return f" [{unit}]" if unit and unit != "λ" else (" λ" if unit else "")
 
         def text(side):
-            """Beschriftungen vom laengsten zum kuerzesten (DualAxisPlot nimmt die laengste, die passt)."""
-            titel = [self.lower_title(key) for key in self.lower[side]]
+            """Beschriftungen vom laengsten zum kuerzesten (DualAxisPlot nimmt die laengste, die passt). Nur
+            Kanaele mit Werten (sonst alle belegten): ein ECU-Kanal ohne ECU verlaengert den Titel nicht."""
+            titel = [self.lower_title(key) for key in self._mit_daten(side)]
             mehrere = len(titel) > 1
             marke = [LOWER_MARKS[i % MAX_LOWER] + " " if mehrere else "" for i in range(len(titel))]
             out = ["   ".join(f"{m}{label}{einheit(unit)}" for m, (label, unit) in zip(marke, titel))]
@@ -503,21 +517,41 @@ class DynoPlot(pg.GraphicsLayoutWidget):
             if mehrere:
                 out.append(" / ".join(label for label, _u in titel))
             if titel:
+                if mehrere:
+                    out.append(f"{titel[0][0]}{einheit(titel[0][1])} …")
                 out.append(titel[0][0] + (" …" if mehrere else ""))
             return out
-        self.bottom.set_labels(text("left"), text("right"), self.LAM_COLOR, self.EGT_COLOR)
+        neu = (text("left"), text("right"), self.LAM_COLOR, self.EGT_COLOR)
+        if getattr(self.bottom, "_labels", None) != neu:
+            self.bottom.set_labels(*neu)
         self.bottom.pi.getAxis("left").setStyle(showValues=bool(self.lower["left"]))
         self.bottom.pi.getAxis("right").setStyle(showValues=bool(self.lower["right"]))
 
+    def _werte(self, key: str) -> List[np.ndarray]:
+        """Endliche Werte eines Kanals aller Laeufe im Diagramm (EGT ohne Sensor = 0 zaehlt nicht)."""
+        out = []
+        for d in self.data.values():
+            y = d.get(key)
+            if y is None or not len(y):
+                continue
+            y = y[np.isfinite(y)]
+            if key in EGT_KEYS:
+                y = y[y > 0]
+            if len(y):
+                out.append(y)
+        return out
+
     def _lower_range(self, side: str):
-        vals = [d[k] for d in self.data.values() for k in self.lower[side] if k in d and len(d[k])]
-        vals = [v[np.isfinite(v)] for v in vals]
+        vals = [v for k in self.lower[side] for v in self._werte(k)]
         vals = np.concatenate(vals) if vals else np.array([])
         if side == "left" and self.lower["left"] == ["lam"] and not self.lambda_mode:
             vals = vals * 14.7
-        if all(k in EGT_KEYS for k in self.lower[side]):
-            vals = vals[vals > 0]
         return (float(vals.min()), float(vals.max())) if len(vals) else None
+
+    def _mit_daten(self, side: str) -> List[str]:
+        """Kanaele einer Seite mit Werten; keiner hat welche: alle (Achstitel zeigt dann die Belegung)."""
+        mit = [k for k in self.lower[side] if self._werte(k)]
+        return mit or list(self.lower[side])
 
     # ------------------------------------------------------------ Zusatzkanaele
     def set_overlays(self, defs: List[Tuple[str, str, str]]):
@@ -754,7 +788,7 @@ class DynoPlot(pg.GraphicsLayoutWidget):
             v = self.limits.get(key, 0.0)
             if key.startswith("lam_"):
                 v *= self._lam_factor()
-            fld.set_fixed("" if not v else f"{v:.4g}")
+            fld.set_fixed("" if not v else feld_zahl(v))
 
     def _place_fields(self):
         def rect(item):
@@ -867,18 +901,35 @@ class DynoPlot(pg.GraphicsLayoutWidget):
                     lam_hi = lam_lo + k * lam_step
         rng = self._lower_range("right")
         egt_like = all(key in EGT_KEYS for key in self.lower["right"])
+        mit_egt = any(key in EGT_KEYS for key in self.lower["right"])
+        if rng is not None and rng[1] - rng[0] < 1e-9 and abs(rng[1]) < 1e-9:
+            rng = None                                     # nur Nullen (kein Sensor): wie ohne Daten
         egt_lo = lim["egt_lo"] or (0.0 if egt_like or rng is None else min(0.0, rng[0]))
         if lim["egt_hi"] > egt_lo:
             egt_step = (lim["egt_hi"] - egt_lo) / k
+        elif rng is None:
+            # ohne Werte: EGT rund 0–1000 °C (ganzzahlige Teilung passend zu den k Intervallen links), andere
+            # Kanaele 0–k – statt „0.00“ an allen Strichen
+            if mit_egt:
+                egt_step = next((st for st in EGT_SCHRITTE if egt_lo + st * k >= EGT_DEFAULT[1] * 0.9),
+                                EGT_SCHRITTE[-1])
+            else:
+                egt_step = 1.0
         else:
-            top = rng[1] * 1.05 if rng else (800.0 if egt_like else 1.0)
-            span = max(100.0, top - egt_lo) if egt_like else max(1e-6, top - egt_lo)
+            top = rng[1] * 1.05 if rng[1] > 0 else rng[1] * 0.95
+            span = max(100.0, top - egt_lo) if egt_like else top - egt_lo
+            if span < 1e-9:                                 # alle Werte gleich: Bereich um den Wert
+                lo_n, hi_n = _nice_range(rng[0], rng[1])
+                if not lim["egt_lo"]:
+                    egt_lo = lo_n
+                span = max(1e-6, hi_n - egt_lo)
             egt_step = nice_step(span / k)
-            if not lim["egt_lo"] and rng is not None and not egt_like:
+            if not lim["egt_lo"] and not egt_like:
                 egt_lo = math.floor(egt_lo / egt_step + 1e-9) * egt_step
-                egt_step = nice_step(max(1e-6, top - egt_lo) / k)
+                egt_step = nice_step(max(1e-6, top - egt_lo, span) / k)
         egt_top = egt_lo + egt_step * k
         self.bottom.set_scales((lam_lo, lam_hi, lam_step), (egt_lo, egt_top, egt_step))
+        self._lower_axis_labels()
         eff = {"n_lo": (x_lo, 500), "n_hi": (x_hi, 500), "ps_lo": (ps_lo, ps_step), "ps_hi": (ps_top, ps_step),
                "nm_lo": (nm_lo, nm_step), "nm_hi": (nm_top, nm_step), "lam_lo": (lam_lo, lam_step),
                "lam_hi": (lam_hi, lam_step), "egt_lo": (egt_lo, egt_step), "egt_hi": (egt_top, egt_step)}

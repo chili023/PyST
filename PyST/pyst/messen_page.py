@@ -3,8 +3,12 @@ Reiter Messen (Entwurf Oberflaeche 2026-11-08, Runden 2 und 3): Bausteine und Me
 gui.MainWindow geerbt (die Methoden arbeiten auf dem Hauptfenster: self.plot, self.ctrl, self.db …).
 
 Aufbau von oben nach unten:
-  Kopfzeile    Fahrzeug | Setup | Notiz | Auto-Speichern | Laufzustand (StatusFeld) | Trennen | START (F1) | Abbrechen (Esc)
-  Setup-Werte  3 Schnellwerte (db.schnellwert_plaetze je Fahrzeug, Feld per Klick auf den Titel), direkt editierbar;
+  Kopfzeile    Fahrzeug | Setup | Notiz | Auto-Speichern | Laufzustand (StatusFeld) | Trennen/Verbinden |
+               Lauf-Einstellungen … (Unterzeile: Übersetzung, Filter; Popup LaufEinstellungen mit Übersetzungsart von
+               Hand/Funkenmessung, Einmessen, Filter, n vom Gas/n Stop – dieselben Felder wie Einstellungen › Rolle/Lauf) |
+               START (F1), im Lauf derselbe Knopf rot: Abbrechen (Esc) bzw. Ausrollen beenden (Esc)
+  Setup-Werte  Schnellwerte (db.schnellwert_plaetze je Fahrzeug, 0 … SCHNELLWERT_MAX Plaetze: „＋“ fuegt an, Titel-Menue
+               waehlt das Feld oder entfernt den Platz), direkt editierbar;
                geaendert: gelb mit „vorher 135“, Marke „✎ Setup: …“, Knoepfe Als neues Setup speichern … /
                nur für diesen Lauf / Verwerfen; die Setup-Auswahl zeigt „✎ geändert“
   Mitte        Läufe als SeitenLeiste (32-px-Streifen, Overlay nach 300 ms, Anpinnen) | Diagramm mit „GAS WEG“,
@@ -31,8 +35,8 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import mittelwert, theme
 from .bg import wait_in_thread, waiting
 from .channels import fault_text, lambda_from_afr
-from .db import (ART_LAUF, ECU_PREFIX, LIVE_KANAELE, LIVE_STANDARD, MESSPLAETZE, SETUP_FIELDS, field_label,
-                 messplaetze, wert_text)
+from .db import (ART_LAUF, ECU_PREFIX, LIVE_KANAELE, LIVE_STANDARD, MESSPLAETZE, SCHNELLWERT_MAX,
+                 SCHNELLWERT_STANDARD, SETUP_FIELDS, field_label, messplaetze, wert_text)
 from .kacheln import GROSS, KLEIN, Kanal, SeitenLeiste, WertKachel, farb_icon, schloss_icon, zahl
 from .plots import EXTRA_PREFIX, DynoPlot, fmt_value, run_color
 from .runner import ACTIVE, COAST, DONE, RUN, WAIT
@@ -45,6 +49,9 @@ KLIMA_ALLE_S = 300.0                       # T/p zwischen den Laeufen hoechstens
 KLIMA_ERSTES_S = 10.0                      # erstes Lesen so lange nach dem Verbinden (falls kein START davor)
 GAS_WEG_HALTEN_S = 2.0                     # „GAS WEG“ steht so lange nach dem letzten Erreichen von n Stop
 GEAENDERT = "  ✎ geändert"                 # Zusatz in der Setup-Auswahl
+START_TEXT = "START  (F1)"                  # derselbe Knopf im Lauf: ABBRECHEN_TEXT bzw. AUSROLLEN_TEXT
+ABBRECHEN_TEXT = "Abbrechen  (Esc)"
+AUSROLLEN_TEXT = "Ausrollen beenden\n(Esc)"
 LEISTE_BREITE = 440                        # Laeufe-Liste (Overlay bzw. angepinnt)
 SPALTE_BREITE = 330                        # rechte Spalte
 MW_BREITE = 3.6                            # Linienbreite Mittelwert (Laeufe 2,0)
@@ -382,10 +389,45 @@ class GrenzenDialog(QtWidgets.QDialog):
 
 
 # =============================================================================================== Setup-Werte
+class KurzText(QtWidgets.QLabel):
+    """Einzeiliger Hinweis, der sich kuerzt statt die Zeile umzubrechen (zu schmal: ganz leer). text() = voller Text."""
+
+    def __init__(self, text: str = ""):
+        super().__init__()
+        self._voll = ""
+        self.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+        self.setMinimumWidth(0)
+        self.setText(text)
+
+    def setText(self, text: str):
+        self._voll = text or ""
+        self._kuerzen()
+
+    def text(self) -> str:
+        return self._voll
+
+    def sizeHint(self) -> QtCore.QSize:
+        return QtCore.QSize(self.fontMetrics().horizontalAdvance(self._voll) + 4, super().sizeHint().height())
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        return QtCore.QSize(0, super().minimumSizeHint().height())
+
+    def _kuerzen(self):
+        b = self.width() - 4
+        t = "" if b < 60 else self.fontMetrics().elidedText(self._voll, QtCore.Qt.ElideRight, b)
+        if super().text() != t:
+            super().setText(t)
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._kuerzen()
+
+
 class SetupZeile(QtWidgets.QFrame):
-    """Zeile SETUP-WERTE: 3 Schnellwerte des Setups, direkt editierbar. Aenderungen gelten zunaechst nur fuer
-    die Messung („ungespeichert“) – sie werden als neues Setup gespeichert, fuer den Lauf bestaetigt oder verworfen."""
-    feld_gewaehlt = QtCore.Signal(int, str)        # Platz, Setup-Feld ("" = leer)
+    """Zeile SETUP-WERTE: Schnellwerte des Setups (Anzahl je Fahrzeug waehlbar, „＋“ fuegt einen Platz an, das
+    Titel-Menue aendert oder entfernt ihn), direkt editierbar. Aenderungen gelten zunaechst nur fuer die Messung
+    („ungespeichert“) – sie werden als neues Setup gespeichert, fuer den Lauf bestaetigt oder verworfen."""
+    plaetze_geaendert = QtCore.Signal(list)        # Felder aller Plaetze ("" = leer) nach Wahl/Hinzufuegen/Entfernen
     geaendert = QtCore.Signal()                    # Aenderungen oder „nur für diesen Lauf“ anders
     neu_speichern = QtCore.Signal()
     HOEHE = 46
@@ -399,60 +441,95 @@ class SetupZeile(QtWidgets.QFrame):
         self.sid: Optional[int] = None
         self.name = ""
         self.basis: Dict[str, Any] = {}
-        self.felder: List[str] = ["", "", ""]
+        self.felder: List[str] = list(SCHNELLWERT_STANDARD)
         self.aend: Dict[str, str] = {}
         self.nur_lauf = False
         self.fahrzeug = ""
         self.gemisch = ""
         self._geladen = False
-        lay = UmbruchLayout(self, abstand=6, zeilenabstand=6)
-        lay.setContentsMargins(10, 4, 10, 4)
+        self.lay = UmbruchLayout(self, abstand=6, zeilenabstand=6)
+        self.lay.setContentsMargins(10, 4, 10, 4)
         self.titel = QtWidgets.QLabel("SETUP-WERTE")
-        lay.add(self.titel)
-        lay.addSpacing(4)
         self.titel_knoepfe: List[QtWidgets.QToolButton] = []
         self.edits: List[QtWidgets.QLineEdit] = []
         self.vorher: List[QtWidgets.QLabel] = []
-        for i in range(3):
-            b = QtWidgets.QToolButton()
-            b.setAutoRaise(True)
-            b.setPopupMode(QtWidgets.QToolButton.InstantPopup)
-            b.setToolTip("Setup-Feld für diesen Platz wählen (gilt für das Fahrzeug)")
-            m = QtWidgets.QMenu(b)
-            m.aboutToShow.connect(lambda i=i, m=m: self._menue(i, m))
-            b.setMenu(m)
-            e = QtWidgets.QLineEdit()
-            e.setFixedWidth(68)
-            e.setAlignment(QtCore.Qt.AlignCenter)
-            e.textEdited.connect(lambda _t, i=i: self._editiert(i))
-            v = QtWidgets.QLabel("")
-            v.hide()
-            lay.add_gruppe(b, e, v)                    # Feld, Wert und „vorher“ bleiben beim Umbruch zusammen
-            lay.addSpacing(10)
-            self.titel_knoepfe.append(b)
-            self.edits.append(e)
-            self.vorher.append(v)
-        lay.addStretch(1)
-        self.ruhe = QtWidgets.QLabel("")
-        lay.add(self.ruhe)
+        self.b_plus = QtWidgets.QToolButton()
+        self.b_plus.setText("＋")
+        self.b_plus.setAutoRaise(True)
+        self.b_plus.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        self.b_plus.setToolTip("Platz hinzufügen: Setup-Feld wählen (gilt für das Fahrzeug)")
+        m = QtWidgets.QMenu(self.b_plus)
+        m.aboutToShow.connect(lambda m=m: self._menue(-1, m))
+        self.b_plus.setMenu(m)
+        self.ruhe = KurzText()
+        self.ruhe.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         self.marke = QtWidgets.QLabel("")
         self.marke.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
         self.marke.setMinimumWidth(160)
         self.marke.installEventFilter(self)
-        aktion = lay.neue_gruppe()                     # Marke und Knoepfe brechen gemeinsam um
-        lay.add(self.marke, 3, gruppe=aktion)
         self.b_neu = QtWidgets.QPushButton("Als neues Setup speichern …")
         theme.rolle(self.b_neu, "primaer")
         self.b_neu.setToolTip("Neues Setup aus dem gewählten und den geänderten Werten anlegen")
         self.b_lauf = QtWidgets.QPushButton("nur für diesen Lauf")
         self.b_lauf.setToolTip("Setup bleibt, die Werte werden nur beim Lauf gespeichert")
         self.b_weg = QtWidgets.QPushButton("Verwerfen")
-        for b in (self.b_neu, self.b_lauf, self.b_weg):
-            lay.add(b, gruppe=aktion)
         self.b_neu.clicked.connect(self.neu_speichern.emit)
         self.b_lauf.clicked.connect(lambda: self.set_nur_lauf(True))
         self.b_weg.clicked.connect(self.verwerfen)
+        self._plaetze_bauen()
         theme.bei_wechsel(self, lambda _t: self._zeigen())
+
+    @staticmethod
+    def _wert_breite(e: QtWidgets.QLineEdit, text: str):
+        """Wertfeld so breit wie sein Text (Zahlen 68 px, Texte wie „Akrapovic“ bis 150 px)."""
+        f = QtGui.QFont(e.font())
+        f.setPixelSize(15)
+        f.setWeight(QtGui.QFont.ExtraBold)
+        b = max(68, min(150, QtGui.QFontMetrics(f).horizontalAdvance(text) + 22))
+        if e.width() != b or e.minimumWidth() != b:
+            e.setFixedWidth(b)
+
+    def _plaetze_bauen(self):
+        """So viele Plaetze (Titel, Wert, „vorher“) wie Felder, dann die Zeile neu anordnen: Titel | Plaetze | ＋ |
+        Stretch | Ruhetext | Marke + Knoepfe."""
+        while len(self.titel_knoepfe) < len(self.felder):
+            i = len(self.titel_knoepfe)
+            b = QtWidgets.QToolButton(self)
+            b.setAutoRaise(True)
+            b.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+            b.setToolTip("Setup-Feld für diesen Platz wählen oder den Platz entfernen (gilt für das Fahrzeug)")
+            m = QtWidgets.QMenu(b)
+            m.aboutToShow.connect(lambda i=i, m=m: self._menue(i, m))
+            b.setMenu(m)
+            e = QtWidgets.QLineEdit(self)
+            e.setFixedWidth(68)
+            e.setAlignment(QtCore.Qt.AlignCenter)
+            e.textEdited.connect(lambda _t, i=i: self._editiert(i))
+            e.textChanged.connect(lambda t, e=e: self._wert_breite(e, t))
+            v = QtWidgets.QLabel("", self)
+            v.hide()
+            self.titel_knoepfe.append(b)
+            self.edits.append(e)
+            self.vorher.append(v)
+        while len(self.titel_knoepfe) > len(self.felder):
+            for w in (self.titel_knoepfe.pop(), self.edits.pop(), self.vorher.pop()):
+                w.hide()
+                w.deleteLater()
+        lay = self.lay
+        lay.leeren()
+        lay.add(self.titel)
+        lay.addSpacing(4)
+        for b, e, v in zip(self.titel_knoepfe, self.edits, self.vorher):
+            lay.add_gruppe(b, e, v)                    # Feld, Wert und „vorher“ bleiben beim Umbruch zusammen
+            lay.addSpacing(10)
+        lay.add(self.b_plus)
+        lay.add(self.ruhe, 1)                          # nimmt den Rest der Zeile, kuerzt sich statt umzubrechen
+        aktion = lay.neue_gruppe()                     # Marke und Knoepfe brechen gemeinsam um
+        lay.add(self.marke, 3, gruppe=aktion)
+        for b in (self.b_neu, self.b_lauf, self.b_weg):
+            lay.add(b, gruppe=aktion)
+        self.b_plus.setVisible(len(self.felder) < SCHNELLWERT_MAX)
+        self.updateGeometry()
 
     # ------------------------------------------------------------ Daten
     def set_setup(self, sid: Optional[int], name: str, basis: Optional[Dict[str, Any]], felder: Sequence[str],
@@ -463,15 +540,17 @@ class SetupZeile(QtWidgets.QFrame):
         if sid != self.sid or not self._geladen:
             self.aend, self.nur_lauf = {}, False
         self.sid, self.name, self.basis = sid, name or "", dict(basis or {})
-        self.felder = (list(felder) + ["", "", ""])[:3]
         self.fahrzeug, self.gemisch = fahrzeug, gemisch or ""
         self._geladen = True
-        self._zeigen()
+        self.set_felder(felder)
         self.geaendert.emit()
         return weg
 
     def set_felder(self, felder: Sequence[str]):
-        self.felder = (list(felder) + ["", "", ""])[:3]
+        """Felder der Plaetze (Anzahl beliebig bis SCHNELLWERT_MAX, "" = Platz leer)."""
+        self.felder = list(felder)[:SCHNELLWERT_MAX]
+        if len(self.felder) != len(self.titel_knoepfe):
+            self._plaetze_bauen()
         self._zeigen()
 
     def wert(self, feld: str) -> str:
@@ -568,17 +647,23 @@ class SetupZeile(QtWidgets.QFrame):
 
     # ------------------------------------------------------------ Darstellung
     def _menue(self, i: int, m: QtWidgets.QMenu):
+        """Feldwahl fuer Platz i; i = -1: Menue des Knopfs „＋“ (neuer Platz am Ende)."""
         m.clear()
         efi = self.gemisch.startswith("EFI")
         haupt = ["Einspritzung / ECU" if efi else "Vergaser", "Zündung", "Antrieb", "Ein- und Auslass"]
         gruppen = dict(SETUP_FIELDS)
+        jetzt = self.felder[i] if i >= 0 else None
 
         def eintrag(menu, key, label):
             a = menu.addAction(label)
             a.setCheckable(True)
-            a.setChecked(self.felder[i] == key)
+            a.setChecked(jetzt == key)
+            if i < 0 and key in self.felder and key:
+                a.setEnabled(False)                    # steht schon auf einem Platz
             a.triggered.connect(lambda _c=False, k=key: self._waehle(i, k))
 
+        if i < 0:
+            m.addSection("Platz hinzufügen")
         for g in haupt:
             m.addSection(g)
             for key, label, _typ in gruppen.get(g, []):
@@ -592,14 +677,35 @@ class SetupZeile(QtWidgets.QFrame):
                 eintrag(weitere, key, label)
         m.addSeparator()
         eintrag(m, "", "leer lassen")
+        if i >= 0:
+            weg = m.addAction("Platz entfernen")
+            weg.triggered.connect(lambda _c=False: self.platz_entfernen(i))
         if self.fahrzeug:
             h = m.addAction(f"Auswahl gilt für {self.fahrzeug}")
             h.setEnabled(False)
 
     def _waehle(self, i: int, key: str):
+        if i < 0:
+            self.platz_hinzufuegen(key)
+            return
         self.felder[i] = key
         self._zeigen()
-        self.feld_gewaehlt.emit(i, key)
+        self.plaetze_geaendert.emit(list(self.felder))
+
+    def platz_hinzufuegen(self, key: str = "") -> bool:
+        """Neuen Platz am Ende (False, wenn schon SCHNELLWERT_MAX Plaetze da sind)."""
+        if len(self.felder) >= SCHNELLWERT_MAX:
+            return False
+        self.set_felder(self.felder + [key])
+        self.plaetze_geaendert.emit(list(self.felder))
+        return True
+
+    def platz_entfernen(self, i: int) -> bool:
+        if not 0 <= i < len(self.felder):
+            return False
+        self.set_felder(self.felder[:i] + self.felder[i + 1:])
+        self.plaetze_geaendert.emit(list(self.felder))
+        return True
 
     def _zeigen(self):
         T = theme.tokens()
@@ -611,6 +717,10 @@ class SetupZeile(QtWidgets.QFrame):
             self.setStyleSheet(f"QFrame#setupzeile {{ background: {T['panel']}; border: 1px solid {T['border']};"
                                " border-radius: 4px; } QLabel { background: transparent; }")
         self.titel.setStyleSheet(f"color: {T['text']}; font-size: 13px; font-weight: 700; letter-spacing: 1px;")
+        self.b_plus.setStyleSheet(f"QToolButton {{ color: {T['text2']}; font-size: 15px; font-weight: 700;"
+                                  f" border: 1px dashed {T['border_strong']}; border-radius: 4px; padding: 1px 7px;"
+                                  f" background: transparent; }} QToolButton:hover {{ color: {T['text']};"
+                                  f" border-color: {T['accent_border']}; }} QToolButton::menu-indicator {{ image: none; }}")
         for i, feld in enumerate(self.felder):
             b, e, v = self.titel_knoepfe[i], self.edits[i], self.vorher[i]
             b.setText(f"{field_label(feld) if feld else 'leer'}  ▾")
@@ -643,6 +753,7 @@ class SetupZeile(QtWidgets.QFrame):
         else:
             ruhe = "Kein Fahrzeug gewählt"
         self.ruhe.setText(ruhe)
+        self.ruhe.setToolTip(ruhe)
         self.ruhe.setStyleSheet(f"color: {T['text2']}; font-size: 13px;")
         self.ruhe.setVisible(not geaendert)
         self.b_neu.setVisible(geaendert)
@@ -864,16 +975,17 @@ class LaufListe(QtWidgets.QWidget):
         self.hinweis.setWordWrap(True)
         theme.rolle(self.hinweis, "neben")
         lay.addWidget(self.hinweis)
-        grid = QtWidgets.QGridLayout()
-        grid.setSpacing(4)
+        # die Übersetzung steht nicht mehr hier, sondern oben unter „Lauf-Einstellungen …“ (gilt fuer den naechsten
+        # Lauf, nicht fuer die Laeufe der Liste; nachtraeglich je Lauf: Kontextmenue „Mit aktuellen Einstellungen
+        # neu rechnen“)
+        knoepfe = QtWidgets.QHBoxLayout()
+        knoepfe.setSpacing(4)
         self.b_none = QtWidgets.QPushButton("Alle ausblenden")
         self.b_view = QtWidgets.QPushButton("In Auswertung")
         self.b_del = QtWidgets.QPushButton("Löschen")
-        self.b_ratio = QtWidgets.QPushButton("Übersetzung einmessen …")
-        self.b_ratio.setStyleSheet("font-weight: 600;")
-        for i, b in enumerate((self.b_none, self.b_view, self.b_del, self.b_ratio)):
-            grid.addWidget(b, i // 2, i % 2)
-        lay.addLayout(grid)
+        for b in (self.b_none, self.b_view, self.b_del):
+            knoepfe.addWidget(b)
+        lay.addLayout(knoepfe)
         theme.bei_wechsel(self, lambda _t: self._stil())
 
     def _stil(self):
@@ -931,6 +1043,305 @@ class ReferenzDialog(QtWidgets.QDialog):
         return it.data(QtCore.Qt.UserRole) if it else None
 
 
+# =============================================================================================== Lauf-Einstellungen
+LAUF_FELDER = (("ratio", "Übersetzung nKW/nRolle"), ("ma_s", "Gleitender Mittelwert [s]"),
+               ("dq_s", "Differenzenquotient ± [s]"), ("ma", "Gleitender Mittelwert [Punkte]"),
+               ("dq", "Differenzenquotient [Punkte]"), ("n_min", "n vom Gas [1/min]"),
+               ("n_stop", "n Stop [1/min] (0 = aus)"))
+ART_KURZ = {"hand": ("Hand", "von Hand"), "funken": ("Funken", "Funkenmessung, zuletzt gemessen")}
+
+
+def filter_text(seite, kurz: bool = False) -> str:
+    """Filter der Rolle/Lauf-Seite kurz: „Standard“ (1,75 / 0,75 s), „2,00 / 0,75 s“ bzw. „35 / 15 Pkt.“"""
+    from .gui import FILTER_S_DEFAULT
+    f = seite.fields
+    if seite.filter_seconds:
+        ma, dq = f["ma_s"].value(), f["dq_s"].value()
+        if abs(ma - FILTER_S_DEFAULT[0]) < 1e-9 and abs(dq - FILTER_S_DEFAULT[1]) < 1e-9:
+            return "Std." if kurz else "Standard"
+        return f"{zahl(ma, 2)} / {zahl(dq, 2)} s"
+    return f"{zahl(f['ma'].value())} / {zahl(f['dq'].value())} Pkt."
+
+
+def lauf_stand(seite) -> Tuple[List[str], str]:
+    """Stand fuer den Knopf „Lauf-Einstellungen …“: (Unterzeilen vom laengsten zum kuerzesten, Tooltip)."""
+    f = seite.fields
+    i = zahl(f["ratio"].value(), 3)
+    a, a_lang = ART_KURZ.get(seite.ratio_art.currentData() or "hand", ART_KURZ["hand"])
+    filt = filter_text(seite)
+    zeilen = [f"Übersetzung {i} ({a}) · Filter: {filt}", f"i {i} ({a}) · Filter {filt}",
+              f"i {i} {a} · Filter {filter_text(seite, kurz=True)}", f"i {i} {a}"]
+    n_stop = f["n_stop"].value()
+    werte = (f"{zahl(f['ma_s'].value(), 2)} / {zahl(f['dq_s'].value(), 2)} s" if filt == "Standard" else "")
+    tip = (f"Übersetzung nKW/nRolle {i} ({a_lang})\nFilter: {filt}" + (f" ({werte})" if werte else "")
+           + f"\nn vom Gas {zahl(f['n_min'].value())} 1/min · n Stop "
+           + (f"{zahl(n_stop)} 1/min" if n_stop else "aus")
+           + "\n\nKlick: Übersetzung, Filter und Laufgrenzen ändern")
+    return zeilen, tip
+
+
+class LaufKnopf(QtWidgets.QPushButton):
+    """Knopf „Lauf-Einstellungen …“ mit kleiner zweiter Zeile (Stand der Übersetzung und Filter). Die zweite Zeile
+    nimmt den laengsten Text, der passt; der volle Stand steht im Tooltip."""
+    TITEL = "Lauf-Einstellungen …"
+
+    def __init__(self):
+        super().__init__()
+        self.setAccessibleName(self.TITEL)
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(6, 1, 6, 2)
+        lay.setSpacing(0)
+        self.oben = QtWidgets.QLabel(self.TITEL)
+        self.unten = QtWidgets.QLabel("")
+        for lab in (self.oben, self.unten):
+            lab.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+            lab.setAlignment(QtCore.Qt.AlignCenter)
+            lab.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
+            lay.addWidget(lab)
+        self._zeilen: List[str] = []
+        theme.bei_wechsel(self, lambda _t: self._stil())
+
+    def _stil(self):
+        T = theme.tokens()
+        an = self.isEnabled()
+        self.oben.setStyleSheet(f"color: {T['text'] if an else T['dim']}; font-size: 13px; font-weight: 700;")
+        self.unten.setStyleSheet(f"color: {T['text2'] if an else T['dim']}; font-size: 11px;")
+
+    def changeEvent(self, ev):
+        super().changeEvent(ev)
+        if ev.type() == QtCore.QEvent.EnabledChange:
+            self._stil()
+
+    def set_stand(self, zeilen: Sequence[str], tip: str):
+        self._zeilen = list(zeilen)
+        self.setToolTip(tip)
+        self._kuerzen()
+        self.updateGeometry()
+
+    def stand(self) -> str:
+        """Gezeigte Unterzeile."""
+        return self.unten.text()
+
+    @staticmethod
+    def _fm(px: int, fett: bool = False) -> QtGui.QFontMetrics:
+        f = QtGui.QFont()
+        f.setPixelSize(px)
+        f.setBold(fett)
+        return QtGui.QFontMetrics(f)
+
+    def _kuerzen(self):
+        fm = self._fm(11)
+        platz = self.width() - 14
+        text = next((z for z in self._zeilen if fm.horizontalAdvance(z) <= platz), None)
+        if text is None:
+            text = fm.elidedText(self._zeilen[-1], QtCore.Qt.ElideRight, platz) if self._zeilen else ""
+        if self.unten.text() != text:
+            self.unten.setText(text)
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self._kuerzen()
+
+    def sizeHint(self) -> QtCore.QSize:
+        unter = self._zeilen[1] if len(self._zeilen) > 1 else ""
+        w = max(self._fm(13, True).horizontalAdvance(self.TITEL), self._fm(11).horizontalAdvance(unter))
+        return QtCore.QSize(w + 24, 36)
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        return QtCore.QSize(self._fm(13, True).horizontalAdvance(self.TITEL) + 18, 36)
+
+
+class LaufEinstellungen(QtWidgets.QFrame):
+    """Popup am Knopf „Lauf-Einstellungen …“: Übersetzung (Art von Hand / Funkenmessung, Wert, „Übersetzung
+    einmessen …“), Filter und Laufgrenzen (n vom Gas, n Stop). Die Felder spiegeln die von Einstellungen › Rolle/Lauf
+    (seite = SettingsPage, dieselben Einstellungen): Aenderungen gelten sofort und stehen an beiden Orten."""
+    einmessen = QtCore.Signal()
+    alle_einstellungen = QtCore.Signal()
+    geschlossen = QtCore.Signal()
+
+    def __init__(self, seite, parent: Optional[QtWidgets.QWidget] = None):
+        super().__init__(parent, QtCore.Qt.Popup)
+        from .gui import UEBERSETZUNG_ARTEN, UEBERSETZUNG_TIP
+        self.setObjectName("laufpopup")
+        self.seite = seite
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(14, 10, 14, 10)
+        lay.setSpacing(6)
+        lay.addWidget(abschnitt("ÜBERSETZUNG  nKW/nRolle"))
+        self.art: Dict[str, QtWidgets.QRadioButton] = {}
+        self._gruppe = QtWidgets.QButtonGroup(self)
+        texte_art = {"hand": "von Hand (Wert eintragen oder einmessen)",
+                     "funken": "Funkenmessung (aus Zündung/Rolle jedes Laufs)"}
+        for art, text in UEBERSETZUNG_ARTEN:
+            rb = QtWidgets.QRadioButton(texte_art.get(art, text))
+            rb.setToolTip(UEBERSETZUNG_TIP)
+            self._gruppe.addButton(rb)
+            rb.toggled.connect(lambda an, art=art: an and self._art_gewaehlt(art))
+            lay.addWidget(rb)
+            self.art[art] = rb
+        self.spins: Dict[str, QtWidgets.QDoubleSpinBox] = {}
+        row = QtWidgets.QHBoxLayout()
+        self.ratio_label = QtWidgets.QLabel("Übersetzung")
+        row.addWidget(self.ratio_label)
+        row.addWidget(self._spiegel("ratio"))
+        self.b_einmessen = QtWidgets.QPushButton("Übersetzung einmessen …")
+        self.b_einmessen.setToolTip("Übersetzung bei konstanter Drehzahl aus Zündung oder rusEFI einmessen")
+        self.b_einmessen.clicked.connect(self._einmessen)
+        row.addWidget(self.b_einmessen)
+        row.addStretch(1)
+        lay.addLayout(row)
+        self.art_hinweis = QtWidgets.QLabel("")
+        self.art_hinweis.setWordWrap(True)
+        theme.rolle(self.art_hinweis, "neben")
+        lay.addWidget(self.art_hinweis)
+
+        lay.addWidget(abschnitt("FILTER"))
+        self.filter_form = QtWidgets.QFormLayout()
+        self.filter_form.setLabelAlignment(QtCore.Qt.AlignRight)
+        self.filter_mode = QtWidgets.QComboBox()
+        self.filter_mode.addItems([seite.filter_mode.itemText(i) for i in range(seite.filter_mode.count())])
+        self.filter_mode.currentIndexChanged.connect(lambda i: seite.filter_mode.setCurrentIndex(i))
+        fr = QtWidgets.QHBoxLayout()
+        fr.addWidget(self.filter_mode, 1)
+        self.b_standard = QtWidgets.QPushButton("Standard")
+        self.b_standard.setToolTip("Filter auf den Standard: Mittelwert 1,75 s, Differenz ±0,75 s (= LabVIEW 35/15 "
+                                   "bei 20 Hz)")
+        self.b_standard.clicked.connect(self._filter_standard)
+        fr.addWidget(self.b_standard)
+        self.filter_form.addRow("Filter in", fr)
+        texte = dict(LAUF_FELDER)
+        for key in ("ma_s", "dq_s", "ma", "dq"):
+            self.filter_form.addRow(texte[key], self._spiegel(key))
+        self.filter_hinweis = QtWidgets.QLabel("")
+        self.filter_hinweis.setWordWrap(True)
+        theme.rolle(self.filter_hinweis, "neben")
+        self.filter_form.addRow(self.filter_hinweis)
+        lay.addLayout(self.filter_form)
+
+        lay.addWidget(abschnitt("LAUFGRENZEN"))
+        grenzen = QtWidgets.QFormLayout()
+        grenzen.setLabelAlignment(QtCore.Qt.AlignRight)
+        for key in ("n_min", "n_stop"):
+            grenzen.addRow(texte[key], self._spiegel(key))
+        lay.addLayout(grenzen)
+        self.b_alle = QtWidgets.QPushButton("Alle Einstellungen › Rolle/Lauf …")
+        self.b_alle.setCursor(QtCore.Qt.PointingHandCursor)
+        self.b_alle.clicked.connect(self._alle)
+        lay.addWidget(self.b_alle, 0, QtCore.Qt.AlignLeft)
+
+        seite.filter_art_geaendert.connect(lambda _on: self.abgleichen())
+        seite.ratio_art.currentIndexChanged.connect(lambda _i: self.abgleichen())
+        theme.bei_wechsel(self, lambda _t: self._stil())
+        self.abgleichen()
+
+    def _stil(self):
+        T = theme.tokens()
+        self.setStyleSheet(f"QFrame#laufpopup {{ background: {T['panel']}; border: 1px solid {T['border_strong']};"
+                           " border-radius: 4px; }")
+        self.b_alle.setStyleSheet(f"QPushButton {{ color: {T['info_fg']}; border: none; background: transparent;"
+                                  " text-decoration: underline; padding: 2px 0; font-weight: 600; }")
+
+    def _spiegel(self, key: str) -> QtWidgets.QDoubleSpinBox:
+        """Drehfeld, das das gleichnamige Feld der Rolle/Lauf-Seite spiegelt (in beide Richtungen)."""
+        src = self.seite.fields[key]
+        sp = QtWidgets.QDoubleSpinBox()
+        sp.setRange(src.minimum(), src.maximum())
+        sp.setDecimals(src.decimals())
+        sp.setSingleStep(src.singleStep())
+        sp.setKeyboardTracking(False)
+        sp.setMinimumWidth(96)
+        sp.setValue(src.value())
+        sp.valueChanged.connect(src.setValue)
+
+        def nach(v, sp=sp):
+            if sp.value() != v:
+                sp.blockSignals(True)
+                sp.setValue(v)
+                sp.blockSignals(False)
+            self._hinweise()
+        src.valueChanged.connect(nach)
+        self.spins[key] = sp
+        return sp
+
+    def abgleichen(self):
+        """Alles aus der Rolle/Lauf-Seite uebernehmen (auch nach Aenderungen dort ohne Signal, z.B. set_params)."""
+        s = self.seite
+        for key, sp in self.spins.items():
+            if sp.value() != s.fields[key].value():
+                sp.blockSignals(True)
+                sp.setValue(s.fields[key].value())
+                sp.blockSignals(False)
+            sp.setEnabled(s.fields[key].isEnabled())
+        idx = 0 if s.filter_seconds else 1
+        if self.filter_mode.currentIndex() != idx:
+            self.filter_mode.blockSignals(True)
+            self.filter_mode.setCurrentIndex(idx)
+            self.filter_mode.blockSignals(False)
+        for key in ("ma_s", "dq_s"):
+            self.filter_form.setRowVisible(self.spins[key], s.filter_seconds)
+        for key in ("ma", "dq"):
+            self.filter_form.setRowVisible(self.spins[key], not s.filter_seconds)
+        rb = self.art.get(s.ratio_art.currentData() or "hand")
+        if rb is not None and not rb.isChecked():
+            rb.blockSignals(True)
+            rb.setChecked(True)
+            rb.blockSignals(False)
+        self._hinweise()
+        self.adjustSize()
+
+    def _hinweise(self):
+        s = self.seite
+        funken = (s.ratio_art.currentData() or "hand") == "funken"
+        self.ratio_label.setText("Startwert" if funken else "Übersetzung")
+        self.art_hinweis.setText("Wird nach jedem Lauf aus Zündung/Rolle bestimmt und übernommen; bis dahin rechnen "
+                                 "Live-Kurve und Laufgrenzen mit dem Startwert." if funken else
+                                 "Gilt für jeden Lauf, bis sie geändert oder neu eingemessen wird.")
+        self.filter_hinweis.setText(s.filter_label.text())
+        self.b_standard.setEnabled(filter_text(s) != "Standard")
+
+    def _art_gewaehlt(self, art: str):
+        c = self.seite.ratio_art
+        i = c.findData(art)
+        if i >= 0 and c.currentIndex() != i:
+            c.setCurrentIndex(i)
+        self._hinweise()
+
+    def _filter_standard(self):
+        from .gui import FILTER_S_DEFAULT
+        s = self.seite
+        s.filter_mode.setCurrentIndex(0)
+        s.fields["ma_s"].setValue(FILTER_S_DEFAULT[0])
+        s.fields["dq_s"].setValue(FILTER_S_DEFAULT[1])
+        self.abgleichen()
+
+    def _einmessen(self):
+        self.hide()
+        self.einmessen.emit()
+
+    def _alle(self):
+        self.hide()
+        self.alle_einstellungen.emit()
+
+    def zeigen_an(self, knopf: QtWidgets.QWidget):
+        """Unter dem Knopf, rechtsbuendig zu ihm, innerhalb des Bildschirms."""
+        self.abgleichen()
+        self.adjustSize()
+        g = knopf.mapToGlobal(QtCore.QPoint(knopf.width(), knopf.height() + 2))
+        x, y = g.x() - self.width(), g.y()
+        scr = knopf.screen().availableGeometry() if knopf.screen() is not None else None
+        if scr is not None:
+            scr = scr.united(knopf.window().frameGeometry())    # Fenster groesser als der Bildschirm: im Fenster
+            x = max(scr.left(), min(x, scr.right() - self.width()))
+            if y + self.height() > scr.bottom():
+                y = max(scr.top(), knopf.mapToGlobal(QtCore.QPoint(0, 0)).y() - self.height() - 2)
+        self.move(x, y)
+        self.show()
+
+    def hideEvent(self, ev):
+        super().hideEvent(ev)
+        self.geschlossen.emit()
+
+
 # =============================================================================================== Logik
 class MessenMixin:
     """Reiter Messen im Hauptfenster (gui.MainWindow erbt das)."""
@@ -978,24 +1389,28 @@ class MessenMixin:
         kopf.addSpacing(6)
         rechts = kopf.neue_gruppe()                        # Laufzustand + Knoepfe bleiben zusammen
         self.zustand = StatusFeld("", hoehe=36, schrift_px=15)
-        self.zustand.setMinimumWidth(190)
+        self.zustand.setMinimumWidth(160)
         self.zustand.setMaximumWidth(300)
         self.zustand.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         self.status = self.zustand                 # frueher die grosse Statuszeile (text())
         kopf.add(self.zustand, 3, breite=260, gruppe=rechts)     # bei Platzmangel nicht zuerst auf 190
+        # Knoepfe: Trennen/Verbinden | Lauf-Einstellungen … | START (im Lauf: Abbrechen bzw. Ausrollen beenden)
         self.connect_main = QtWidgets.QPushButton("Verbinden")
-        self.start_btn = QtWidgets.QPushButton("START  (F1)")
-        self.abort_btn = QtWidgets.QPushButton("Abbrechen  (Esc)")
-        for b, breite in ((self.connect_main, 100), (self.start_btn, 130), (self.abort_btn, 130)):
+        self.lauf_btn = LaufKnopf()
+        self.start_btn = QtWidgets.QPushButton(START_TEXT)
+        # feste Mindestbreiten: der Text im Lauf („Abbrechen (Esc)“) aendert die Zeile nicht (kein Umbruch im Lauf)
+        for b, breite in ((self.connect_main, 90), (self.lauf_btn, 0), (self.start_btn, 130)):
             b.setFixedHeight(36)
-            b.setMinimumWidth(breite)
+            if breite:
+                b.setMinimumWidth(breite)
             kopf.add(b, gruppe=rechts)
-        self.start_btn.setStyleSheet("QPushButton { font-size: 16px; font-weight: 800; }")
+        theme.bei_wechsel(self.start_btn, lambda _t: self._start_knopf_stil())
+        self.lauf_popup: Optional[LaufEinstellungen] = None
         lay.addLayout(kopf)
 
         # ---- Setup-Werte
         self.setup_zeile = SetupZeile()
-        self.setup_zeile.feld_gewaehlt.connect(self._schnellwert_feld)
+        self.setup_zeile.plaetze_geaendert.connect(self._schnellwert_plaetze)
         self.setup_zeile.geaendert.connect(self._setup_combo_marke)
         self.setup_zeile.neu_speichern.connect(self._setup_neu_dialog)
         lay.addWidget(self.setup_zeile)
@@ -1037,7 +1452,7 @@ class MessenMixin:
         self.laufliste = LaufListe()
         ll = self.laufliste
         self.run_tree, self.run_filter, self.b_ref = ll.run_tree, ll.run_filter, ll.b_ref
-        self.b_none, self.b_view, self.b_del, self.b_ratio = ll.b_none, ll.b_view, ll.b_del, ll.b_ratio
+        self.b_none, self.b_view, self.b_del = ll.b_none, ll.b_view, ll.b_del
         self.run_filter.setCurrentIndex(self.settings.get("run_filter", 1))
         self.laeufe_leiste = SeitenLeiste("Läufe", ll, center, breite=LEISTE_BREITE)
         self.laeufe_leiste.set_zustand(self.settings.get("laeufe_leiste"))
@@ -1137,6 +1552,69 @@ class MessenMixin:
         self.settings["laeufe_leiste"] = self.laeufe_leiste.zustand()
         _speichern(self.settings)
 
+    # ------------------------------------------------------------------ Knoepfe oben rechts
+    def _lauf_aktiv(self) -> bool:
+        return self.ctrl is not None and self.ctrl.state in ACTIVE
+
+    def _start_oder_abbruch(self):
+        """Ein Knopf: START (F1) bzw. im Lauf Abbrechen/Ausrollen beenden (Esc)."""
+        if self._lauf_aktiv():
+            self.on_abort()
+        else:
+            self.on_start()
+
+    def _start_knopf_stil(self):
+        """START normal (fett), im Lauf rot wie ein Fehler: Abbrechen bzw. Ausrollen beenden."""
+        b = self.start_btn
+        T = theme.tokens()
+        if self._lauf_aktiv():
+            coast = self.ctrl.state == COAST
+            b.setText(AUSROLLEN_TEXT if coast else ABBRECHEN_TEXT)
+            b.setToolTip("Ausrollen beenden – der Lauf ist schon fertig und wird ausgewertet (Esc)" if coast else
+                         "Lauf abbrechen (Esc)")
+            b.setStyleSheet(f"QPushButton {{ font-size: {12 if coast else 14}px; font-weight: 800; background: {T['err_bg']};"
+                            f" color: {T['err_text']}; border: 1px solid {T['err_bg']}; }}"
+                            f"QPushButton:hover {{ border: 2px solid {T['err_text']}; }}")
+        else:
+            b.setText(START_TEXT)
+            b.setToolTip("Lauf starten (F1)")
+            b.setStyleSheet("QPushButton { font-size: 16px; font-weight: 800; }")
+
+    def _lauf_knopf_stand(self, *_a):
+        """Unterzeile/Tooltip von „Lauf-Einstellungen …“ nach Aenderung von Übersetzung, Art, Filter, Grenzen."""
+        if hasattr(self, "lauf_btn"):
+            self.lauf_btn.set_stand(*lauf_stand(self.page_settings))
+
+    def _lauf_popup_zeigen(self):
+        if self._lauf_aktiv():
+            return
+        if self.lauf_popup is None:
+            p = self.lauf_popup = LaufEinstellungen(self.page_settings, self)
+            p.einmessen.connect(self.on_measure_ratio)
+            p.alle_einstellungen.connect(lambda: self.show_page(self.page_settings))
+            p.geschlossen.connect(self._persist)
+        self.lauf_popup.zeigen_an(self.lauf_btn)
+
+    def _uebersetzung_art_geaendert(self, _i=None):
+        from .gui import UEBERSETZUNG_ART
+        art = self.page_settings.ratio_art.currentData() or "hand"
+        if self.settings.get(UEBERSETZUNG_ART) != art:
+            self.settings[UEBERSETZUNG_ART] = art
+            _speichern(self.settings)
+        self._lauf_knopf_stand()
+
+    def _verbinde_lauf_einstellungen(self):
+        """Knopf, Popup und Stand an die Rolle/Lauf-Seite haengen (aus gui._wire)."""
+        s = self.page_settings
+        self.start_btn.clicked.connect(self._start_oder_abbruch)
+        self.lauf_btn.clicked.connect(self._lauf_popup_zeigen)
+        for key, _t in LAUF_FELDER:
+            s.fields[key].valueChanged.connect(self._lauf_knopf_stand)
+        s.filter_art_geaendert.connect(self._lauf_knopf_stand)
+        s.ratio_art.currentIndexChanged.connect(self._uebersetzung_art_geaendert)
+        self._lauf_knopf_stand()
+        self._start_knopf_stil()
+
     # ------------------------------------------------------------------ Laufzustand
     def _set_status(self, text: str, color: str):
         """Laufzustand neben START. color: Stufe (ok/warn/err/info, "" = neutral) oder eine alte feste Farbe."""
@@ -1201,10 +1679,9 @@ class MessenMixin:
             if c.itemText(i) != t:
                 c.setItemText(i, t)
 
-    def _schnellwert_feld(self, platz: int, feld: str):
+    def _schnellwert_plaetze(self, felder: List[str]):
+        """Plaetze der Setup-Werte geaendert (Feld gewaehlt, Platz hinzugefuegt/entfernt): je Fahrzeug speichern."""
         vid, _name = self._fahrzeug()
-        felder = list(self.setup_zeile.felder)
-        felder[platz] = feld
         self.db.set_schnellwert_plaetze(vid, felder)
 
     # ------------------------------------------------------------------ Setup speichern / nachfragen

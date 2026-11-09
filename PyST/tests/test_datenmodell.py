@@ -170,12 +170,28 @@ class AnsichtJeFahrzeug(unittest.TestCase):
         db = self.db
         self.assertEqual(db.schnellwert_plaetze(self.v1), dbm.SCHNELLWERT_STANDARD)
         self.assertEqual(db.schnellwert_plaetze(None), ["hauptduese", "clip", "zzp"])
+        # beliebig viele Plaetze (unbekannte Felder -> leerer Platz), hoechstens SCHNELLWERT_MAX
         db.set_schnellwert_plaetze(self.v1, ["vario", "", "gibtsnicht", "zzp"])
-        self.assertEqual(db.schnellwert_plaetze(self.v1), ["vario", "", ""])
+        self.assertEqual(db.schnellwert_plaetze(self.v1), ["vario", "", "", "zzp"])
         self.assertEqual(db.schnellwert_plaetze(self.v2), dbm.SCHNELLWERT_STANDARD)
         db.set_schnellwert_plaetze(None, ["rollen"])
-        self.assertEqual(db.schnellwert_plaetze(self.v2), ["rollen", "", ""])
-        self.assertEqual(db.schnellwert_plaetze(self.v1), ["vario", "", ""])
+        self.assertEqual(db.schnellwert_plaetze(self.v2), ["rollen"])
+        self.assertEqual(db.schnellwert_plaetze(self.v1), ["vario", "", "", "zzp"])
+        db.set_schnellwert_plaetze(self.v1, ["zzp"] * 20)
+        self.assertEqual(len(db.schnellwert_plaetze(self.v1)), dbm.SCHNELLWERT_MAX)
+        db.set_schnellwert_plaetze(self.v1, [])                          # 0 Plaetze ist erlaubt
+        self.assertEqual(db.schnellwert_plaetze(self.v1), [])
+
+    def test_schnellwert_plaetze_alte_eintraege(self):
+        """Gespeichert von PyST bis 1.4 (immer genau 3, leere Plaetze als ""): gilt unveraendert weiter; ein
+        kaputter Eintrag faellt auf den Standard zurueck."""
+        db = self.db
+        db.set_vehicle_pref(self.v1, "schnellwerte", ["hauptduese", "", "zzp"])
+        self.assertEqual(db.schnellwert_plaetze(self.v1), ["hauptduese", "", "zzp"])
+        db.set_vehicle_pref(self.v1, "schnellwerte", ["clip", 7, None])
+        self.assertEqual(db.schnellwert_plaetze(self.v1), ["clip", "", ""])
+        db.set_vehicle_pref(self.v1, "schnellwerte", "hauptduese")
+        self.assertEqual(db.schnellwert_plaetze(self.v1), dbm.SCHNELLWERT_STANDARD)
 
     def test_live_plaetze(self):
         db = self.db

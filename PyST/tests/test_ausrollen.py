@@ -293,6 +293,54 @@ class Rundlauf(unittest.TestCase):
                                       n_meas=run["n_meas"], n_ende=5000.0)
                 self.assertAlmostEqual(c.m1, ctrl.coast.m1, delta=0.01 * abs(ctrl.coast.m1))
 
+    def test_uebersetzung_aus_den_funken(self):
+        """Einstellung Funkenmessung: Uebersetzung am Laufende aus Zuendung/Rolle (ohne Ausrollphase, dort
+        Leerlauf), Lauf damit gerechnet; von Hand bleibt der eingestellte Wert."""
+        class FakeLink:
+            port, lost, mode, default_mode = "SIM", 0, "N", "N"
+
+            def __init__(self, frames):
+                self.frames = list(frames)
+
+            def drain_frames(self):
+                out, self.frames = self.frames[:30], self.frames[30:]
+                return out
+
+            def start(self):
+                pass
+
+            def stop(self):
+                pass
+
+        faelle = ((SimEngine(ratio=7.2), False, 7.2), (ausroll_engine(ratio=7.2), True, 7.2))
+        for engine, aus, soll in faelle:
+            for funken in (False, True):
+                with self.subTest(ausrollen=aus, funken=funken):
+                    frames = sim_frames(engine, 150 if aus else 40)
+                    ctrl = runner.RunController(FakeLink(frames), physics.DynoParams(ratio=6.5, n_stop=0),
+                                                auto_climate=False)
+                    ctrl.ausrollen = aus
+                    ctrl.coast_n_ende, ctrl.coast_t_max = 5000.0, 1e6
+                    ctrl.ratio_aus_funken = funken
+                    ctrl.start()
+                    while ctrl.state not in (runner.DONE, runner.ABORTED) and ctrl.link.frames:
+                        ctrl._last_eval = 0.0
+                        ctrl.poll()
+                    if ctrl.state != runner.DONE:
+                        ctrl.finish()
+                    if not funken:
+                        self.assertIsNone(ctrl.ratio_gemessen)
+                        self.assertEqual(ctrl.params.ratio, 6.5)
+                        continue
+                    self.assertIsNotNone(ctrl.ratio_gemessen)
+                    self.assertAlmostEqual(ctrl.ratio_gemessen, soll, delta=0.02)
+                    self.assertEqual(ctrl.params.ratio, ctrl.ratio_gemessen)
+                    self.assertIsNotNone(ctrl.result)
+                    self.assertGreater(ctrl.result.p_max, 1.0)
+        # ohne Zuendsignal: nicht bestimmbar, eingestellter Wert bleibt
+        ctrl = runner.RunController(FakeLink([]), physics.DynoParams(ratio=6.5), auto_climate=False)
+        self.assertIsNone(ctrl.ratio_aus_den_funken(np.full(50, 1200.0), np.zeros(50)))
+
     def test_ohne_ausrollen_unveraendert(self):
         fr = sim_frames(SimEngine(), 30)
         fr2 = sim_frames(SimEngine(), 30)
@@ -407,8 +455,8 @@ class Gui(unittest.TestCase):
         self.assertTrue(self.run_gui(60, lambda: w.ctrl.state == gui.COAST))
         self.run_gui(0.3)
         self.assertIn("KUPPLUNG ZIEHEN", w.status.text())
-        self.assertIn("Ausrollen beenden", w.abort_btn.text())
-        self.assertFalse(w.start_btn.isEnabled())
+        self.assertIn("Ausrollen beenden", w.start_btn.text())     # START ist im Lauf der Abbrechen-Knopf
+        self.assertTrue(w.start_btn.isEnabled())
         self.assertTrue(self.run_gui(20, lambda: w.ctrl.state == gui.DONE and w._done_handled))
         self.assertIsNotNone(w.ctrl.coast)
         self.assertIs(w.page_kalib.result, w.ctrl.coast)
@@ -418,7 +466,7 @@ class Gui(unittest.TestCase):
         with open(os.path.join(folder, "lauf.json"), encoding="utf-8") as fh:
             self.assertIn("ausrollen", json.load(fh))
         self.assertEqual(w.page_kalib.result_rid, w.db.runs()[0].id)
-        self.assertEqual(w.abort_btn.text(), "Abbrechen  (Esc)")
+        self.assertEqual(w.start_btn.text(), "START  (F1)")
 
 
 if __name__ == "__main__":

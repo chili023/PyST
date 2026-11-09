@@ -4,7 +4,8 @@ Umbrechende Bedienzeile (UmbruchLayout): verhaelt sich wie ein QHBoxLayout, sola
 
 Elemente sind Widgets, Unter-Layouts oder Gruppen (gruppe=…): eine Gruppe bleibt beim Umbruch zusammen (z.B.
 „Fahrzeug“ + Auswahl). Umgebrochen wird erst, wenn die Elemente sonst unter ihre Mindestbreite kaemen; die
-Mindestbreite der ganzen Zeile ist die der breitesten Gruppe. So bleiben Texte und Knoepfe vollstaendig lesbar, auch
+Mindestbreite der ganzen Zeile ist die der breitesten Gruppe. Eine Gruppe ohne Mindestbreite (Hinweis, der sich
+kuerzt) bricht nie um, sie bekommt den Rest der Zeile. So bleiben Texte und Knoepfe vollstaendig lesbar, auch
 bei schmalen Fenstern (MacBook 1280 Punkte).
 """
 import itertools
@@ -80,6 +81,11 @@ class UmbruchLayout(QtWidgets.QLayout):
     def addSpacing(self, px: int, gruppe: int = 0):
         sp = QtWidgets.QSpacerItem(px, 0, QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Minimum)
         self._eintraege.append(_Eintrag(sp, 0, 0, True, gruppe))
+        self.invalidate()
+
+    def leeren(self):
+        """Alle Eintraege herausnehmen (die Widgets bleiben bestehen und koennen neu hinzugefuegt werden)."""
+        self._eintraege.clear()
         self.invalidate()
 
     def count(self) -> int:
@@ -188,7 +194,10 @@ class UmbruchLayout(QtWidgets.QLayout):
         zeilen: List[List[_Eintrag]] = [[]]
         for g in self._gruppen():
             fuell = all(e.abstand or e.stretch_platz() for e in g)
-            if zeilen[-1] and not fuell and self._breite_zeile(zeilen[-1] + g, self._min) > verfuegbar:
+            # Gruppe ohne Mindestbreite (z.B. ein Hinweis, der sich kuerzt) bricht nie um: sie nimmt den Rest
+            nachgiebig = not fuell and all(self._min(e) == 0 for e in g)
+            if zeilen[-1] and not fuell and not nachgiebig \
+                    and self._breite_zeile(zeilen[-1] + g, self._min) > verfuegbar:
                 zeilen.append([])
             if not zeilen[-1] and fuell:
                 continue                                  # kein Abstand/Stretch am Zeilenanfang

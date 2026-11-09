@@ -64,6 +64,15 @@ REITER_KALIB = 5          # ... "reiter_neu" ohne "reiter_kalib": Indizes ab hie
 REITER_14 = ["messen", "fahrzeuge", "auswertung", "oszi", "ecu", "verluste", None]
 UNTER_14 = ["rolle", "verbindung", "zange", "tasten", "pruefen", "firmware"]
 
+# Woher die Uebersetzung nKW/nRolle eines Laufs kommt (Einstellung UEBERSETZUNG_ART): von Hand eingetragen bzw.
+# eingemessen, oder aus den Funken jedes Laufs (runner.RunController.ratio_aus_funken)
+UEBERSETZUNG_ART = "uebersetzung_art"
+UEBERSETZUNG_ARTEN = (("hand", "von Hand (eingetragen/eingemessen)"), ("funken", "Funkenmessung (jeder Lauf)"))
+UEBERSETZUNG_TIP = ("von Hand: der eingetragene bzw. eingemessene Wert gilt für jeden Lauf.\n"
+                    "Funkenmessung: nach jedem Lauf wird die Übersetzung aus Zündung/Rolle des Laufs bestimmt "
+                    "(getrimmter Mittelwert wie beim Einmessen) und der Lauf damit ausgewertet; der Wert wird "
+                    "übernommen. Bis dahin rechnen Live-Kurve und Laufgrenzen mit dem eingetragenen Wert.")
+
 # (Feld, Beschriftung, Min, Max, Nachkommastellen)
 PARAM_FIELDS = {
     "Prüfstand": [
@@ -158,6 +167,7 @@ class SettingsPage(QtWidgets.QScrollArea):
     """Unterreiter Rolle/Lauf (oben Prüfstand, Lauf, Filter, Klima; unten Verluste mit dem Ausrollversuch) und, als
     eigene Seiten, Verbindung (conn_page) und die Gruppe Gemisch (box_gemisch, Unterreiter Lambda)."""
     losses_changed = QtCore.Signal()
+    filter_art_geaendert = QtCore.Signal(bool)      # Filter in Sekunden (True) / Messpunkten, auch aus set_params
 
     def __init__(self, settings: dict):
         super().__init__()
@@ -213,10 +223,17 @@ class SettingsPage(QtWidgets.QScrollArea):
                 sp.setKeyboardTracking(False)
                 self.fields[key] = sp
                 ziel = "Verluste" if key in LOSS_KEYS else "Filter" if group.startswith("Filter") else group
-                if key == "ratio":                 # neben dem Knopf „Übersetzung einmessen …“
+                if key == "ratio":                 # Art, Wert und der Knopf „Übersetzung einmessen …“
+                    self.ratio_art = QtWidgets.QComboBox()
+                    for art, text in UEBERSETZUNG_ARTEN:
+                        self.ratio_art.addItem(text, art)
+                    self.ratio_art.setToolTip(UEBERSETZUNG_TIP)
+                    self.ratio_art.setCurrentIndex(max(0, self.ratio_art.findData(
+                        settings.get(UEBERSETZUNG_ART, "hand"))))
+                    boxes[ziel].addRow("Übersetzung aus", self.ratio_art)
                     self.ratio_btn = QtWidgets.QPushButton("Übersetzung einmessen …")
                     self.ratio_btn.setToolTip("Übersetzung nKW/nRolle aus Zündung oder rusEFI einmessen "
-                                              "(auch unter Messen)")
+                                              "(auch unter Messen › Lauf-Einstellungen …)")
                     boxes[ziel].addRow(label, sp)
                     boxes[ziel].addRow("", self.ratio_btn)
                     continue
@@ -354,6 +371,7 @@ class SettingsPage(QtWidgets.QScrollArea):
         for k in ("ma", "dq"):
             self.filter_form.setRowVisible(self.fields[k], not on)
         self.update_filter_label()
+        self.filter_art_geaendert.emit(on)
 
     def params(self) -> physics.DynoParams:
         d = {k: sp.value() for k, sp in self.fields.items()}
@@ -751,8 +769,6 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         s.lambda_radio.toggled.connect(self._lambda_mode_changed)
         for k in ("ma", "dq", "ma_s", "dq_s"):
             s.fields[k].valueChanged.connect(lambda _=None: s.update_filter_label(self._current_rate()))
-        self.start_btn.clicked.connect(self.on_start)
-        self.abort_btn.clicked.connect(self.on_abort)
         self.plot.cursor_moved.connect(self._cursor_moved)
         self.plot.cursor_left.connect(self._cursor_left)
         self.run_tree.itemChanged.connect(self._run_item_changed)
@@ -764,13 +780,11 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.b_none.clicked.connect(self.on_hide_all)
         self.b_view.clicked.connect(lambda: self._open_in_viewer(self._current_run_id()))
         self.b_del.clicked.connect(self.on_delete)
-        self.b_ratio.clicked.connect(self.on_measure_ratio)
         self.page_kalib.uebernehmen.connect(self._apply_coast)
         self.page_kalib.lauf_auswerten.connect(self._coast_from_run)
         s.losses_changed.connect(lambda: self.page_kalib.set_current(s.params()))
         self.page_kalib.set_current(s.params())
-        s.fields["ratio"].valueChanged.connect(self._show_ratio)
-        self._show_ratio(s.fields["ratio"].value())
+        self._verbinde_lauf_einstellungen()       # START/Abbrechen, Lauf-Einstellungen … (messen_page)
         self.viewer.import_btn.clicked.connect(self.on_import)
         self.viewer.pdf_btn.clicked.connect(lambda: self.on_pdf())
         self.viewer.csv_btn.clicked.connect(lambda: self.on_csv(self.viewer.current_run_id()))
@@ -997,16 +1011,16 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
     def _update_buttons(self):
         busy = self.ctrl is not None and self.ctrl.state in ACTIVE
         connected = self.link is not None
-        self.start_btn.setEnabled(connected and not busy)
-        self.abort_btn.setEnabled(busy)
-        coast = busy and self.ctrl.state == COAST
-        self.abort_btn.setText("Ausrollen beenden  (Esc)" if coast else "Abbrechen  (Esc)")
+        self.start_btn.setEnabled(connected or busy)       # im Lauf: Abbrechen bzw. Ausrollen beenden
+        self._start_knopf_stil()
+        self.lauf_btn.setEnabled(not busy)
+        if busy and self.lauf_popup is not None:
+            self.lauf_popup.hide()
         self.page_kalib.lauf_btn.setEnabled(not busy)
         self.page_kalib.apply_btn.setEnabled(not busy and self.page_kalib.result is not None
                                              and self.page_kalib.result.ok)
         s = self.page_settings
         s.climate_btn.setEnabled(connected and not busy)
-        self.b_ratio.setEnabled(not busy)
         s.connect_btn.setText("Trennen" if connected else "Verbinden")
         self.connect_main.setText("Trennen" if connected else "Verbinden")
         self.connect_main.setToolTip(f"Messboard: {self.link.port}" if connected else
@@ -1330,11 +1344,6 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         if self.page_settings.live_check.isChecked():
             self.link.start()
 
-    def _show_ratio(self, v: float):
-        self.b_ratio.setText(f"Übersetzung {v:.3f} …")
-        self.b_ratio.setToolTip("Übersetzung nKW/nRolle eintragen oder einmessen – gehört zum Lauf, vor jedem "
-                                "Lauf prüfen")
-
     def on_measure_ratio(self):
         if self.ctrl and self.ctrl.state in ACTIVE:
             return
@@ -1373,6 +1382,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.ctrl.ausrollen = self.page_kalib.enabled()
         self.ctrl.coast_n_ende, self.ctrl.coast_t_max, self.ctrl.coast_quadratisch = self.page_kalib.config()
         self.ctrl.ecu = self.page_rusefi.active_link()
+        self.ctrl.ratio_aus_funken = (s.ratio_art.currentData() or "hand") == "funken"
         self.plot.remove(LIVE_KEY)
         self.plot.freeze(True)                     # Skalierung wie beim vorherigen Lauf
         self.result_label.setText("")
@@ -1398,6 +1408,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         r = self.ctrl.result
         self.plot.freeze(False)
         coast = self.ctrl.coast
+        ratio_text = self._ratio_aus_funken_uebernehmen()
         if r is None:
             self._set_status("Fertig – keine Auswertung möglich", farben.BALKEN_FEHLER)
             if coast is not None:
@@ -1405,6 +1416,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             return
         self.result_label.setText(r.summary() + f"\nEnde: {self.ctrl.message or r.end_reason}   |   "
                                   f"{len(self.ctrl.frames)} Telegramme, {self.link.lost} verloren"
+                                  + (f"\n{ratio_text}" if ratio_text else "")
                                   + (f"\n{self.ctrl.coast_text()}" if coast is not None else ""))
         if r.verluste:
             self._set_status(f"Motor {r.p_max:.1f} PS bei {r.n_pmax:.0f} 1/min  ·  Rad {r.p_rad_max:.1f} PS",
@@ -1423,6 +1435,22 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             self.band.zeige(("Ausrollversuch ausgewertet – unter Einstellungen › Rolle/Lauf › Verluste prüfen und übernehmen"
                              if coast.ok else f"Ausrollversuch: {coast.meldung}"),
                             farben.GUT if coast.ok else farben.FEHLER, 8.0)
+
+    def _ratio_aus_funken_uebernehmen(self) -> str:
+        """Uebersetzung aus den Funken (Einstellung „uebersetzung_art“): gemessenen Wert eintragen. -> Hinweistext
+        fuer die Ergebniszeile ("" bei Uebersetzung von Hand)."""
+        c = self.ctrl
+        if not getattr(c, "ratio_aus_funken", False):
+            return ""
+        if c.ratio_gemessen is None:
+            text = (f"Übersetzung aus den Funken nicht bestimmbar (kein Zündsignal?) – eingestellte "
+                    f"{c.params.ratio:.3f} verwendet")
+            self.statusBar().showMessage(text, 10000)
+            return text
+        alt = self.page_settings.fields["ratio"].value()
+        self.page_settings.fields["ratio"].setValue(c.ratio_gemessen)
+        self._persist()
+        return f"Übersetzung aus den Funken: {c.ratio_gemessen:.3f} (vorher {alt:.3f}) – übernommen"
 
     # ------------------------------------------------------------------ Ausrollversuch
     def _coast_label(self, rid) -> str:

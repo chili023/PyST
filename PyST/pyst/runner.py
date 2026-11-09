@@ -8,6 +8,12 @@ Ausrollversuch (ausrollen = True): MESSUNG --Laufende--> AUSROLLEN ("Kupplung zi
 Aufzeichnung laeuft weiter, bis die Rolle unter n_ende (Motordrehzahl Rolle x i) faellt, die Drehzahl wieder
 steigt, t_max vergeht, keine Telegramme mehr kommen oder end_coast() (Knopf). Dann FERTIG: Lauf wie bisher
 ausgewertet, dazu coast = ausrollen.analyse(...) (Verlustmoment). Ausgeschaltet: Ablauf exakt wie bisher.
+
+Uebersetzung aus den Funken (ratio_aus_funken = True, Einstellung „uebersetzung_art“ = "funken"): beim Laufende wird
+die Uebersetzung aus Zuendung/Rolle des Laufs bestimmt (getrimmter Mittelwert wie „Übersetzung einmessen …“,
+physics.trimmed_ratio; nur Messpunkte vor dem Ausrollen mit Rolle >= 30 % ihres Hoechstwerts) und der Lauf damit
+ausgewertet (ratio_gemessen). Live-Kurve, „n vom Gas“ und n Stop rechnen bis dahin mit der eingestellten Uebersetzung.
+Ohne brauchbares Zuendsignal bleibt die eingestellte Uebersetzung (ratio_gemessen = None).
 """
 import time
 from dataclasses import dataclass
@@ -69,11 +75,17 @@ class RunController:
         self._coast_last = 0.0
         self._coast_min = float("inf")
         self._coast_hist: List[float] = []
+        self._coast_i = 0              # erstes Telegramm des Ausrollens (0 = kein Ausrollen)
+        # Uebersetzung aus den Funken des Laufs
+        self.ratio_aus_funken = False
+        self.ratio_gemessen: Optional[float] = None
 
     # ---------------------------------------------------------------- Steuerung
     def start(self):
         self.result = self.live_result = None
         self.coast, self.coast_reason = None, ""
+        self._coast_i = 0
+        self.ratio_gemessen = None
         self.frames = []
         self.basis_events = []
         self.ecu_data = None
@@ -171,6 +183,7 @@ class RunController:
         self._coast_t0 = self._coast_last = time.time()
         self._coast_min = float("inf")
         self._coast_hist = []
+        self._coast_i = len(self.frames)
 
     def _coast_tick(self, now: float, new: List[Frame]):
         """Ende des Ausrollens pruefen (bei jedem poll mit neuen Telegrammen waehrend AUSROLLEN).
@@ -209,8 +222,23 @@ class RunController:
                 + (f", m2 {c.m2:.3f}" if c.quadratisch else "") + f", R² {c.r2:.3f} – unter "
                 "Einstellungen › Rolle/Lauf › Verluste übernehmen")
 
+    def ratio_aus_den_funken(self, n_roll: np.ndarray, n_meas: np.ndarray) -> Optional[float]:
+        """Uebersetzung nKW/nRolle aus Zuendung und Rolle des Laufs (ohne Ausrollen), None = nicht bestimmbar."""
+        ende = self._coast_i or len(n_roll)
+        nr, nm = np.asarray(n_roll[:ende], float), np.asarray(n_meas[:ende], float)
+        ok = np.isfinite(nr) & np.isfinite(nm) & (nr > 30.0) & (nm > 0)
+        if ok.sum() < 5:
+            return None
+        ok &= nr >= 0.3 * float(np.max(nr[ok]))
+        r = physics.trimmed_ratio(nm[ok], nr[ok])
+        return r if r is not None and 0.01 <= r <= 100.0 else None
+
     def finish(self):
         n_roll, dt, n_meas, afr, egt = self.arrays()
+        if self.ratio_aus_funken:
+            self.ratio_gemessen = self.ratio_aus_den_funken(n_roll, n_meas)
+            if self.ratio_gemessen is not None:
+                self.params.ratio = self.ratio_gemessen
         self.result = physics.evaluate(n_roll, dt, self.params, n_meas, afr, egt, require_end=False)
         if self.state == COAST:
             start = self.result.end_index if self.result is not None and self.result.end_index >= 0 else None

@@ -1,5 +1,6 @@
 """Stufe 2, Reiter Messen: Zustand neben START, Setup-Werte-Zeile mit Nachfrage vor START und Schnappschuss,
 Live-Plaetze je Fahrzeug, Schloss/Plaetze der Laufliste, Mittelwert als Referenz mit Band, Band im DynoPlot."""
+import gc
 import json
 import os
 import sys
@@ -31,6 +32,12 @@ def pump(sec: float = 0.0):
 
 # ============================================================================================== Bausteine
 class Bausteine(unittest.TestCase):
+    def tearDown(self):
+        # Widgets ohne Eltern (Zeilen, Diagramme) mit Lambda-Zyklen im Hauptthread aufraeumen, nicht spaeter durch
+        # eine Garbage Collection in einem Hintergrund-Thread (Verbinden, Klima)
+        gc.collect()
+        APP.processEvents()
+
     def test_setup_zeile_aenderung_marke_name(self):
         z = mp.SetupZeile()
         z.set_setup(5, "Serie, HD 135, Auspuff Arrow", {"hauptduese": "135", "clip": "3"},
@@ -50,6 +57,100 @@ class Bausteine(unittest.TestCase):
         z.verwerfen()
         self.assertFalse(z.ist_geaendert())
         self.assertEqual(z.wert("clip"), "3")
+
+    def test_setup_zeile_variable_plaetze(self):
+        """Plaetze hinzufuegen (＋), Feld waehlen, entfernen; hoechstens SCHNELLWERT_MAX; jede Aenderung meldet die
+        ganze Liste."""
+        from pyst.db import SCHNELLWERT_MAX
+        z = mp.SetupZeile()
+        gemeldet = []
+        z.plaetze_geaendert.connect(gemeldet.append)
+        z.set_setup(5, "Serie", {"hauptduese": "135", "clip": "3", "zzp": "18", "auspuff": "Arrow"},
+                    ["hauptduese", "clip", "zzp"], "Aprilia RS 125", "Vergaser")
+        self.assertEqual(len(z.edits), 3)
+        self.assertTrue(z.platz_hinzufuegen("auspuff"))
+        self.assertEqual(z.felder, ["hauptduese", "clip", "zzp", "auspuff"])
+        self.assertEqual(len(z.edits), 4)
+        self.assertEqual(z.edits[3].text(), "Arrow")
+        self.assertEqual(gemeldet[-1], ["hauptduese", "clip", "zzp", "auspuff"])
+        # Menue des Knopfs ＋: Feld, das schon auf einem Platz steht, ist gesperrt
+        m = z.b_plus.menu()
+        z._menue(-1, m)
+        hd = next(a for a in m.actions() if a.text().startswith("Hauptdüse"))
+        self.assertFalse(hd.isEnabled())
+        # Titel-Menue eines Platzes: Feld wechseln, Platz entfernen
+        m = z.titel_knoepfe[1].menu()
+        z._menue(1, m)
+        weg = next(a for a in m.actions() if a.text() == "Platz entfernen")
+        weg.trigger()
+        self.assertEqual(z.felder, ["hauptduese", "zzp", "auspuff"])
+        self.assertEqual(len(z.edits), 3)
+        self.assertEqual(z.edits[1].text(), "18")
+        z.set_wert("auspuff", "Akrapovic")                 # Aenderung bleibt auch nach Entfernen des Platzes
+        z.platz_entfernen(2)
+        self.assertEqual(z.aenderungen(), {"auspuff": "Akrapovic"})
+        while z.platz_hinzufuegen(""):
+            pass
+        self.assertEqual(len(z.felder), SCHNELLWERT_MAX)
+        self.assertFalse(z.b_plus.isVisibleTo(z))
+        z.set_felder([])
+        self.assertEqual((z.felder, len(z.edits)), ([], 0))
+        self.assertTrue(z.b_plus.isVisibleTo(z))
+
+    def test_hinweis_kuerzt_statt_umzubrechen(self):
+        """Ruhetext der Setup-Zeile (KurzText) bricht die Zeile nie um, er kuerzt sich bzw. bleibt leer."""
+        from pyst.umbruch import UmbruchLayout
+        w = QtWidgets.QWidget()
+        lay = UmbruchLayout(w, abstand=6)
+        lay.setContentsMargins(0, 0, 0, 0)
+        b = QtWidgets.QPushButton("Platz")
+        b.setFixedWidth(200)
+        lay.add(b)
+        k = mp.KurzText("Setup unverändert: Season 2026")
+        lay.add(k, 1)
+        self.assertEqual(lay.heightForWidth(203), lay.heightForWidth(900))
+        w.resize(240, 40)
+        w.show()
+        pump(0.05)
+        self.assertEqual(k.text(), "Setup unverändert: Season 2026")
+        self.assertEqual(QtWidgets.QLabel.text(k), "")                 # 34 px: zu schmal -> leer
+        w.resize(900, 40)
+        pump(0.05)
+        self.assertEqual(QtWidgets.QLabel.text(k), "Setup unverändert: Season 2026")
+        w.close()
+
+    def test_achsfelder_ohne_exponent_und_egt_ohne_daten(self):
+        from pyst.plots import feld_zahl
+        self.assertEqual([feld_zahl(v) for v in (12500, 12500.0, 0.85, 1.3, 0.005, 18.0, 650.5)],
+                         ["12500", "12500", "0.85", "1.3", "0.005", "18", "650.5"])
+        p = DynoPlot()
+        p.set_limits({"n_hi": 12500, "n_lo": 3000, "lam_hi": 1.25})
+        self.assertEqual((p.fields["n_hi"].text(), p.fields["n_lo"].text(), p.fields["lam_hi"].text()),
+                         ("12500", "3000", "1.25"))
+        # unten rechts EGT (Board) + ein ECU-Kanal ohne Werte, EGT ohne Sensor (0): ganzzahlige Skala bis ~1000 °C
+        p.set_lower(["lam", "x:lambdaValue"], ["egt1", "x:egt"], {"x:lambdaValue": ("Lambda (ECU)", "λ"),
+                                                                  "x:egt": ("EGT (ECU)", "°C")})
+        n = np.linspace(3000, 12500, 60)
+        p.set_curves("1", n, n / 400, n / 500, lam=np.full(60, 0.92), egt1=np.zeros(60))
+        p.auto_scale()
+        lo, hi, st = p.bottom._scales[1]
+        self.assertEqual(lo, 0.0)
+        self.assertGreaterEqual(hi, 900.0)
+        self.assertLessEqual(hi, 1000.0)
+        self.assertEqual(st, round(st))
+        ticks = [t for t, _l in p.bottom.pi.getAxis("right")._tickLevels[0]]
+        self.assertTrue(all(abs(t - round(t)) < 1e-9 for t in ticks))
+        self.assertNotIn("e+", p.fields["egt_hi"].placeholderText())
+        self.assertEqual(p.fields["egt_hi"].placeholderText(), str(int(hi)))
+        # Achstitel links: nur der Kanal mit Werten -> vollstaendig „Lambda λ“
+        self.assertEqual(p.bottom._label_shown[0] if p.bottom._label_shown else p.bottom._labels[0][0], "Lambda λ")
+        # Werte, die alle gleich sind (z.B. konstanter ECU-Kanal), geben einen echten Bereich
+        p.set_lower(["lam"], ["x:egt"], {"x:egt": ("EGT (ECU)", "°C")})
+        p.set_curves("1", n, n / 400, n / 500, lam=np.full(60, 0.92), extra={"egt": np.full(60, 0.0)})
+        p.auto_scale()
+        lo, hi, st = p.bottom._scales[1]
+        self.assertGreater(hi - lo, 0.5)
+        self.assertGreater(st, 0.1)
 
     def test_hilfsfunktionen(self):
         self.assertEqual(mp.tick_dez(0, 200), 0)
@@ -105,6 +206,8 @@ class Messen(unittest.TestCase):
         from conftest import close_window
         close_window(self.w, APP)
         theme.manager().setze(theme.TAG, speichern=False)
+        gc.collect()
+        APP.processEvents()
 
     def _laeufe(self, n=6):
         ids = []
@@ -222,6 +325,108 @@ class Messen(unittest.TestCase):
         dlg2 = mp.ReferenzDialog([], [w.db.run(mw)], w)
         self.assertTrue(dlg2.b_weitere.isChecked())
         self.assertEqual(dlg2.liste.count(), 1)
+
+    def test_schnellwert_plaetze_je_fahrzeug(self):
+        """5 Plaetze fuer ein Fahrzeug: gespeichert, beim Fahrzeugwechsel eigene Plaetze, Auswertung zeigt die Spalten."""
+        w = self.w
+        z = w.setup_zeile
+        z.platz_hinzufuegen("auspuff")
+        z.platz_hinzufuegen("kerze")
+        self.assertEqual(w.db.schnellwert_plaetze(self.vid), ["hauptduese", "clip", "zzp", "auspuff", "kerze"])
+        vid2 = w.db.save_vehicle({"hersteller": "Honda", "modell": "NSR", "gemisch": "Vergaser"})
+        w._reload_vehicle_combo(vid2)
+        self.assertEqual(len(z.edits), 3)
+        w._reload_vehicle_combo(self.vid, self.sid)
+        self.assertEqual(z.felder, ["hauptduese", "clip", "zzp", "auspuff", "kerze"])
+        self.assertEqual(len(z.edits), 5)
+        ids = self._laeufe(2)
+        w.viewer.add_runs(ids)
+        pump(0.1)
+        self.assertEqual(w.viewer.leiste.felder, ["hauptduese", "clip", "zzp", "auspuff", "kerze"])
+
+    def test_start_wird_abbrechen(self):
+        """Nur noch Trennen | Lauf-Einstellungen | START; im Lauf ist START der rote Abbrechen-Knopf (Esc)."""
+        w, gui = self.w, self.gui
+        self.assertFalse(hasattr(w, "abort_btn"))
+        self.assertFalse(hasattr(w, "b_ratio"))
+        self.assertEqual(w.start_btn.text(), mp.START_TEXT)
+        self.assertFalse(w.start_btn.isEnabled())           # nicht verbunden
+        self.assertEqual(w.connect_main.text(), "Verbinden")
+        w.page_settings.port_combo.setEditText(gui.DEFAULT_SIM_PORT)
+        self.assertTrue(w.on_connect())
+        try:
+            self.assertEqual(w.connect_main.text(), "Trennen")
+            self.assertTrue(w.start_btn.isEnabled())
+            w.start_btn.click()                              # START
+            self.assertIn(w.ctrl.state, gui.ACTIVE)
+            self.assertEqual(w.start_btn.text(), mp.ABBRECHEN_TEXT)
+            self.assertTrue(w.start_btn.isEnabled())
+            self.assertIn(theme.tokens()["err_bg"], w.start_btn.styleSheet())
+            self.assertFalse(w.lauf_btn.isEnabled())
+            self.assertFalse(w.connect_main.isEnabled())
+            w.on_start()                                     # F1 im Lauf: nichts
+            self.assertIn(w.ctrl.state, gui.ACTIVE)
+            w.start_btn.click()                              # Abbrechen
+            self.assertEqual(w.ctrl.state, gui.ABORTED)
+            self.assertEqual(w.start_btn.text(), mp.START_TEXT)
+            self.assertNotIn(theme.tokens()["err_bg"], w.start_btn.styleSheet())
+            self.assertTrue(w.lauf_btn.isEnabled())
+            w.on_start()                                     # F1
+            self.assertIn(w.ctrl.state, gui.ACTIVE)
+            w.on_abort()                                     # Esc
+            self.assertEqual(w.ctrl.state, gui.ABORTED)
+        finally:
+            w.on_connect()                                   # trennen
+        self.assertEqual(w.connect_main.text(), "Verbinden")
+
+    def test_lauf_einstellungen_popup(self):
+        """Popup am Knopf: Übersetzungsart, Wert, Filter und Grenzen wirken auf dieselben Felder wie Einstellungen ›
+        Rolle/Lauf (in beide Richtungen); der Knopf zeigt den Stand."""
+        from pyst import gui
+        w = self.w
+        s = w.page_settings
+        s.fields["ratio"].setValue(6.85)
+        self.assertIn("6,850 (von Hand)", w.lauf_btn.toolTip())
+        self.assertIn("6,850", w.lauf_btn.stand())
+        w._lauf_popup_zeigen()
+        p = w.lauf_popup
+        self.assertTrue(p.isVisible())
+        # Art: Funkenmessung -> Einstellung und Rolle/Lauf-Seite
+        p.art["funken"].setChecked(True)
+        self.assertEqual(s.ratio_art.currentData(), "funken")
+        self.assertEqual(w.settings[gui.UEBERSETZUNG_ART], "funken")
+        self.assertIn("Funken", w.lauf_btn.toolTip())
+        s.ratio_art.setCurrentIndex(s.ratio_art.findData("hand"))       # andersherum
+        self.assertTrue(p.art["hand"].isChecked())
+        # Werte in beide Richtungen
+        p.spins["ratio"].setValue(7.1)
+        self.assertAlmostEqual(s.fields["ratio"].value(), 7.1)
+        self.assertIn("7,100", w.lauf_btn.toolTip())
+        s.fields["n_stop"].setValue(10800)
+        self.assertEqual(p.spins["n_stop"].value(), 10800)
+        p.spins["n_min"].setValue(4500)
+        self.assertEqual(s.params().n_min, 4500)
+        # Filter: Standard, geaendert, Messpunkte
+        p._filter_standard()
+        self.assertIn("Standard", w.lauf_btn.toolTip())
+        p.spins["ma_s"].setValue(2.0)
+        self.assertAlmostEqual(s.fields["ma_s"].value(), 2.0)
+        self.assertIn("2,00 / 0,75 s", w.lauf_btn.toolTip())
+        p.filter_mode.setCurrentIndex(1)
+        self.assertFalse(s.filter_seconds)
+        self.assertIn("Pkt.", w.lauf_btn.toolTip())
+        s.set_filter_seconds(True)                            # ohne Signal (wie set_params): abgleichen beim Oeffnen
+        p.hide()
+        w._lauf_popup_zeigen()
+        self.assertEqual(p.filter_mode.currentIndex(), 0)
+        # Schliessen speichert; Link fuehrt zur ganzen Seite
+        p.b_alle.click()
+        self.assertFalse(p.isVisible())
+        self.assertIs(w.current_page(), s)
+        self.assertAlmostEqual(w.settings["params"]["ratio"], 7.1)
+        # Unterzeile passt in den Knopf
+        fm = w.lauf_btn._fm(11)
+        self.assertLessEqual(fm.horizontalAdvance(w.lauf_btn.stand()), w.lauf_btn.width())
 
     def test_laufliste_als_seitenleiste_und_cursorzeile(self):
         w = self.w

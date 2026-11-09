@@ -183,7 +183,8 @@ def schnellwert_pfeil(neu: Any, alt: Any) -> str:
 
 
 # ------------------------------------------------------------ Ansicht je Fahrzeug
-SCHNELLWERT_ANZAHL = 3
+SCHNELLWERT_ANZAHL = 3          # Standard-Anzahl (frueher fest)
+SCHNELLWERT_MAX = 8             # hoechstens so viele Plaetze je Fahrzeug
 SCHNELLWERT_STANDARD = ["hauptduese", "clip", "zzp"]
 
 LIVE_ANZAHL = 5
@@ -740,18 +741,19 @@ class Database:
         return True
 
     def schnellwert_plaetze(self, vid: Optional[int]) -> List[str]:
-        """Die 3 Setup-Felder der Schnellwert-Zeile (Messen) und der Laufleiste (Auswertung); "" = Platz leer."""
+        """Setup-Felder der Schnellwert-Zeile (Messen) und der Laufleiste (Auswertung); "" = Platz leer.
+        Beliebig viele (0 … SCHNELLWERT_MAX) je Fahrzeug; gespeicherte Listen aelterer Versionen (3 Plaetze) gelten
+        weiter, ohne Eintrag die 3 Standardfelder."""
         keys = self.vehicle_pref(vid, "schnellwerte", None)
         if not isinstance(keys, list):
             keys = SCHNELLWERT_STANDARD
         known = set(all_setup_keys())
-        keys = [k if isinstance(k, str) and k in known else "" for k in keys]
-        return (keys + [""] * SCHNELLWERT_ANZAHL)[:SCHNELLWERT_ANZAHL]
+        return [k if isinstance(k, str) and k in known else "" for k in keys][:SCHNELLWERT_MAX]
 
     def set_schnellwert_plaetze(self, vid: Optional[int], keys: List[str]) -> bool:
         known = set(all_setup_keys())
-        keys = [k if k in known else "" for k in list(keys)[:SCHNELLWERT_ANZAHL]]
-        return self.set_vehicle_pref(vid, "schnellwerte", (keys + [""] * SCHNELLWERT_ANZAHL)[:SCHNELLWERT_ANZAHL])
+        keys = [k if isinstance(k, str) and k in known else "" for k in list(keys)[:SCHNELLWERT_MAX]]
+        return self.set_vehicle_pref(vid, "schnellwerte", keys)
 
     def live_plaetze(self, vid: Optional[int]) -> List[Dict[str, Any]]:
         """Die 5 Live-Plaetze (Messen): [{"kanal", "min", "max", "zonen": [[von, bis, stufe], ...]}],
