@@ -12,10 +12,13 @@ Aufbau von oben nach unten:
                waehlt das Feld oder entfernt den Platz), direkt editierbar;
                geaendert: gelb mit „vorher 135“, Marke „✎ Setup: …“, Knoepfe Als neues Setup speichern … /
                nur für diesen Lauf / Verwerfen; die Setup-Auswahl zeigt „✎ geändert“
-  Mitte        Läufe als SeitenLeiste (32-px-Streifen, Overlay nach 300 ms, Anpinnen) | Diagramm mit „GAS WEG“,
-               Legende der Referenz und der Zeile „▸ Werte am Cursor“ (Klick: Tabelle) | rechte Spalte
-  rechts       UMGEBUNG T/p mit Alter, LIVE Drehzahl gross + 5 Plaetze (db.live_plaetze je Fahrzeug, Kanal per
-               Klick auf den Titel, Balkengrenzen per Rechtsklick), ERGEBNIS Pmax/Mmax
+  Mitte        Läufe als SeitenLeiste (32-px-Streifen, Overlay nach 300 ms, Anpinnen) | Diagramm mit Fähnchen am
+               Cursor (plots.CursorFahnen), Legende (Referenz; Option ANZEIGE_LEGENDE: alle Läufe), grossen Anzeigen
+               (AnweisungGross, ErgebnisGross) und darunter einer schmalen Ergebniszeile (ErgebnisText) | rechte Spalte
+  rechts       UMGEBUNG T/p mit Alter, LIVE Drehzahl gross (beide fest oben), darunter rollend 0 … LIVE_MAX Plaetze
+               (db.live_plaetze je Fahrzeug, „＋“ fuegt an, Titel-Menue waehlt den Kanal oder entfernt den Platz,
+               Balkengrenzen per Rechtsklick), unten ERGEBNIS Pmax/Mmax. Maus im Diagramm (kein Lauf aktiv): die
+               Kacheln zeigen die Werte des neuesten Laufs an der Cursor-Drehzahl (Titel „LAUF 16:29 bei 9.500 1/min“)
 Diagramm: 5 Plaetze (db.messplaetze) = gesperrte Laeufe (Schloss, auch Mittelwert-Referenzen mit Band min–max)
 und die neuesten Laeufe (rollierend). Das Haekchen blendet einen Platz aus, aeltere Laeufe kommen per Schloss hinein.
 T/p werden nur zwischen den Laeufen gelesen (link.climate() unterbricht den Datenstrom): beim START (wie bisher),
@@ -23,7 +26,13 @@ von Hand und alle KLIMA_ALLE_S, solange nichts laeuft.
 
 Einstellung START_NACHFRAGE ("start_nachfrage_setup", Standard True): bei geaendertem, nicht gespeichertem Setup
 vor START fragen (Neues Setup speichern / Nur für diesen Lauf / Abbrechen). Schalter: Einstellungen › Rolle/Lauf.
+
+Anzeige beim Messen (Einstellungen › Rolle/Lauf und Menue Ansicht, ANZEIGE_OPTIONEN):
+  ERGEBNIS_GROSS   (Standard an)  nach dem Lauf Pmax/Mmax gross ueber dem Diagramm (weg mit START, Klick, Esc)
+  ANWEISUNG_GROSS  (Standard an)  Laufzustand gross fuer den Fahrer (GO – Vollgas!, GAS WEG …); aus: nur „GAS WEG“
+  ANZEIGE_LEGENDE  (Standard aus) Legende aller Läufe im Diagramm (Farbe, Datum/Zeit, Setup bzw. Notiz)
 """
+import html
 import json
 import math
 import os
@@ -37,10 +46,10 @@ from . import mittelwert, tasten, theme
 from .abgleich_dialog import AbgleichDialog, skala_bereich
 from .bg import wait_in_thread, waiting
 from .channels import fault_text, lambda_from_afr
-from .db import (ART_LAUF, ECU_PREFIX, LIVE_KANAELE, LIVE_STANDARD, MESSPLAETZE, SCHNELLWERT_MAX,
+from .db import (ART_LAUF, ECU_PREFIX, LIVE_KANAELE, LIVE_MAX, LIVE_STANDARD, MESSPLAETZE, SCHNELLWERT_MAX,
                  SCHNELLWERT_STANDARD, SETUP_FIELDS, field_label, messplaetze, wert_text)
 from .kacheln import GROSS, KLEIN, Kanal, SeitenLeiste, WertKachel, farb_icon, schloss_icon, zahl
-from .plots import EXTRA_PREFIX, DynoPlot, fmt_value, run_color
+from .plots import EXTRA_PREFIX, DynoPlot, run_color
 from .runner import ACTIVE, COAST, DONE, RUN, WAIT
 from .statusleiste import StatusFeld
 from .umbruch import UmbruchLayout
@@ -57,6 +66,24 @@ AUSROLLEN_TEXT = "Ausrollen beenden\n(Esc)"
 LEISTE_BREITE = 440                        # Laeufe-Liste (Overlay bzw. angepinnt)
 SPALTE_BREITE = 330                        # rechte Spalte
 MW_BREITE = 3.6                            # Linienbreite Mittelwert (Laeufe 2,0)
+ANWEISUNG_HALTEN_S = 0.6                   # grosse Anweisung (ausser GAS WEG) so lange nach dem letzten Zustand
+# Anzeige beim Messen: Einstellung -> (Standard, Text im Menue Ansicht bzw. unter Einstellungen › Rolle/Lauf, Tooltip)
+ERGEBNIS_GROSS = "anzeige_ergebnis_gross"
+ANWEISUNG_GROSS = "anzeige_anweisung_gross"
+ANZEIGE_LEGENDE = "anzeige_legende"
+ANZEIGE_OPTIONEN = {
+    ERGEBNIS_GROSS: (True, "Ergebnis groß nach dem Lauf",
+                     "Nach dem Lauf Pmax und Mmax groß über dem Diagramm (weg mit START, Klick oder Esc)"),
+    ANWEISUNG_GROSS: (True, "Anweisungen groß (GO, GAS WEG …)",
+                      "Laufzustand für den Fahrer groß über dem Diagramm: GO – Vollgas!, GAS WEG, KUPPLUNG ZIEHEN … "
+                      "(aus: nur „GAS WEG“)"),
+    ANZEIGE_LEGENDE: (False, "Legende im Diagramm",
+                      "Legende aller Läufe im Diagramm: Farbe, Datum/Zeit, Setup bzw. Notiz"),
+}
+# Live-Kanal -> Kanal eines gespeicherten Laufs (channels.run_channels), fuer die Werte am Cursor rechts
+LAUF_KANAL = {"ign": "Drehzahl Zündung", "v": "Geschwindigkeit", "egt1": "EGT 1", "egt2": "EGT 2",
+              "lam": "Lambda", "ratio": "Übersetzung gefiltert", "ratio_ecu": "Übersetzung ECU/Rolle gefiltert",
+              "rate": "Messfrequenz"}
 
 # Kurzname eines Setup-Felds in der Marke („HD 135 → HD 138“) und im Vorschlag fuer den neuen Setup-Namen
 KURZ = {"hauptduese": "HD", "nadelduese": "ND", "leerlaufduese": "LLD", "clip": "Clip", "zzp": "ZZP",
@@ -765,9 +792,13 @@ class SetupZeile(QtWidgets.QFrame):
 
 
 # =============================================================================================== Diagramm-Zubehoer
-class GasWegHinweis(QtWidgets.QWidget):
-    """„GAS WEG“ gross ueber dem Diagramm mit dem Grund darunter; verschwindet GAS_WEG_HALTEN_S nach dem letzten
-    zeige() von selbst (takt() regelmaessig aufrufen)."""
+class AnweisungGross(QtWidgets.QWidget):
+    """Anweisung fuer den Fahrer gross mittig ueber dem Diagramm (aus Entfernung lesbar): „GO – Vollgas!“,
+    „Messung … 9.500 1/min“, „GAS WEG“, „KUPPLUNG ZIEHEN“ … in der Farbe der Stufe (theme.status_farben), darunter
+    der Grund. Ersetzt das fruehere GAS-WEG-Band (Option ANWEISUNG_GROSS aus: nur noch „GAS WEG“ wie bisher).
+    zeige() haelt die Anzeige `halten` Sekunden, takt() (regelmaessig aufrufen) blendet danach aus. Die Maus geht
+    hindurch."""
+    GROSS_MAX, GROSS_MIN = 104, 34              # Schriftgroesse der Anweisung (passt sich der Breite an)
 
     def __init__(self, parent: QtWidgets.QWidget):
         super().__init__(parent)
@@ -775,36 +806,52 @@ class GasWegHinweis(QtWidgets.QWidget):
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
-        self.gross = QtWidgets.QLabel("GAS WEG")
+        self.gross = QtWidgets.QLabel("")
         self.gross.setAlignment(QtCore.Qt.AlignCenter)
-        self.gross.setFixedHeight(112)
         self.unter = QtWidgets.QLabel("")
         self.unter.setAlignment(QtCore.Qt.AlignCenter)
-        self.unter.setFixedHeight(34)
+        self.unter.setFixedHeight(36)
         lay.addWidget(self.gross)
         lay.addWidget(self.unter)
+        self.stufe = theme.FEHLER
         self._bis = 0.0
+        self._px = self.GROSS_MAX
         parent.installEventFilter(self)
         theme.bei_wechsel(self, lambda _t: self._stil())
         self.hide()
 
     def _stil(self):
         T = theme.tokens()
-        self.gross.setStyleSheet(f"QLabel {{ background: {T['err_bg']}; color: {T['err_text']}; font-size: 68px;"
-                                 f" font-weight: 900; border: 3px solid {T['err_text']}; border-radius: 10px;"
-                                 " letter-spacing: 6px; }")
-        self.unter.setStyleSheet(f"QLabel {{ background: {T['panel']}; color: {T['text']}; font-size: 16px;"
-                                 f" font-weight: 700; border: 1px solid {T['border']}; border-radius: 5px; }}")
+        bg, fg, _sym = theme.status_farben(self.stufe)
+        self.gross.setStyleSheet(f"QLabel {{ background: {bg}; color: {fg}; font-size: {self._px}px; font-weight: 900;"
+                                 f" border: 3px solid {fg}; border-radius: 12px; letter-spacing: 2px;"
+                                 " padding: 0 18px; }")
+        self.unter.setStyleSheet(f"QLabel {{ background: {T['panel']}; color: {T['text']}; font-size: 18px;"
+                                 f" font-weight: 700; border: 1px solid {T['border']}; border-radius: 5px;"
+                                 " padding: 0 10px; }")
 
-    def zeige(self, titel: str, unter: str, halten: float = GAS_WEG_HALTEN_S):
-        self.gross.setText(titel)
-        self.unter.setText(unter)
-        self.unter.setVisible(bool(unter))
+    def text(self) -> str:
+        """Angezeigte Anweisung (Zeilen mit Leerzeichen verbunden, fuer Tests)."""
+        return " ".join(self.gross.text().split("\n"))
+
+    def zeige(self, titel: str, unter: str = "", stufe: str = theme.FEHLER, halten: float = GAS_WEG_HALTEN_S):
+        """titel: Anweisung (mehrere Zeilen mit \\n), unter: Grund/Zusatz ("" = keiner), stufe: ok | warn | err."""
+        neu = (titel, unter, stufe) != (self.gross.text(), self.unter.text(), self.stufe)
         self._bis = time.time() + halten
-        self._platzieren()
+        if neu:
+            self.gross.setText(titel)
+            self.unter.setText(unter)
+            self.unter.setVisible(bool(unter))
+            if stufe != self.stufe:
+                self.stufe = stufe
+            self._platzieren()
         if not self.isVisible():
             self.show()
         self.raise_()
+
+    def haelt(self, stufe: str) -> bool:
+        """True, solange eine Anweisung dieser Stufe noch steht (z.B. GAS WEG nicht von „Messung …“ ueberschreiben)."""
+        return self.isVisible() and self.stufe == stufe and time.time() <= self._bis
 
     def takt(self):
         if self.isVisible() and time.time() > self._bis:
@@ -816,9 +863,126 @@ class GasWegHinweis(QtWidgets.QWidget):
 
     def _platzieren(self):
         p = self.parentWidget()
-        w = min(560, max(200, p.width() - 40))
-        h = 112 + (40 if self.unter.isVisibleTo(self) or self.unter.text() else 0)
-        self.setGeometry((p.width() - w) // 2, int(p.height() * 0.22), w, h)
+        w = min(980, max(240, p.width() - 40))
+        zeilen = self.gross.text().split("\n") or [""]
+        f = QtGui.QFont(self.gross.font())
+        f.setWeight(QtGui.QFont.Black)
+        px = self.GROSS_MAX
+        while px > self.GROSS_MIN:                     # groesste Schrift, bei der die laengste Zeile passt
+            f.setPixelSize(px)
+            fm = QtGui.QFontMetrics(f)
+            if max(fm.horizontalAdvance(z) + 2 * len(z) for z in zeilen) + 48 <= w:
+                break
+            px -= 4
+        self._px = px
+        self._stil()
+        h_gross = int(px * 1.25 * len(zeilen)) + 16
+        self.gross.setFixedHeight(h_gross)
+        h = h_gross + (42 if self.unter.text() else 0)
+        self.setGeometry((p.width() - w) // 2, max(8, int(p.height() * 0.16)), w, h)
+
+    def eventFilter(self, obj, ev):
+        if obj is self.parentWidget() and ev.type() == QtCore.QEvent.Resize and self.isVisible():
+            self._platzieren()
+        return False
+
+
+class ErgebnisGross(QtWidgets.QFrame):
+    """Ergebnis des eben gemessenen Laufs gross mittig ueber dem Diagramm: Farbmarke des Laufs, „Lauf 16:29 · Setup“,
+    Pmax mit Drehzahl und Mmax mit Drehzahl. Halbtransparenter Hintergrund, Rahmen in der Laufarbe. Klick blendet
+    aus (geschlossen), ebenso START und Esc (MessenMixin)."""
+    geschlossen = QtCore.Signal()
+
+    def __init__(self, parent: QtWidgets.QWidget):
+        super().__init__(parent)
+        self.setObjectName("ergebnisgross")
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setToolTip("Klick oder Esc: ausblenden")
+        self.farbe = "#000000"
+        lay = QtWidgets.QHBoxLayout(self)
+        lay.setContentsMargins(14, 10, 18, 10)
+        lay.setSpacing(14)
+        self.marke = QtWidgets.QFrame()
+        self.marke.setFixedWidth(10)
+        lay.addWidget(self.marke)
+        rechts = QtWidgets.QVBoxLayout()
+        rechts.setSpacing(2)
+        self.kopf = QtWidgets.QLabel("")
+        rechts.addWidget(self.kopf)
+        grid = QtWidgets.QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(0)
+        self.zeilen = {}
+        for r, (key, name) in enumerate((("p", "Pmax"), ("m", "Mmax"))):
+            lab = QtWidgets.QLabel(name)
+            wert = QtWidgets.QLabel("–")
+            wert.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignBaseline)
+            einheit = QtWidgets.QLabel("")
+            bei = QtWidgets.QLabel("")
+            grid.addWidget(lab, r, 0, QtCore.Qt.AlignBaseline)
+            grid.addWidget(wert, r, 1, QtCore.Qt.AlignBaseline)
+            grid.addWidget(einheit, r, 2, QtCore.Qt.AlignBaseline)
+            grid.addWidget(bei, r, 3, QtCore.Qt.AlignBaseline)
+            self.zeilen[key] = (lab, wert, einheit, bei)
+        grid.setColumnStretch(3, 1)
+        rechts.addLayout(grid)
+        self.hinweis = QtWidgets.QLabel("Klick oder Esc: ausblenden")
+        self.hinweis.setAlignment(QtCore.Qt.AlignRight)
+        rechts.addWidget(self.hinweis)
+        lay.addLayout(rechts, 1)
+        parent.installEventFilter(self)
+        theme.bei_wechsel(self, lambda _t: self._stil())
+        self.hide()
+
+    def _stil(self):
+        T = theme.tokens()
+        c = QtGui.QColor(T["panel"])
+        farbe = theme.laufarbe(self.farbe)
+        self.setStyleSheet(f"QFrame#ergebnisgross {{ background: rgba({c.red()},{c.green()},{c.blue()},222);"
+                           f" border: 3px solid {farbe}; border-radius: 12px; }}"
+                           "QLabel { background: transparent; border: none; }")
+        self.marke.setStyleSheet(f"QFrame {{ background: {farbe}; border: none; border-radius: 4px; }}")
+        self.kopf.setStyleSheet(f"color: {T['text']}; font-size: 17px; font-weight: 700;")
+        for key, (lab, wert, einheit, bei) in self.zeilen.items():
+            lab.setStyleSheet(f"color: {T['text2']}; font-size: 20px; font-weight: 700;")
+            wert.setStyleSheet(f"color: {T['p_color' if key == 'p' else 'm_color']}; font-size: 54px;"
+                               " font-weight: 900;")
+            einheit.setStyleSheet(f"color: {T['text']}; font-size: 24px; font-weight: 800;")
+            bei.setStyleSheet(f"color: {T['text']}; font-size: 20px; font-weight: 600;")
+        self.hinweis.setStyleSheet(f"color: {T['text2']}; font-size: 12px;")
+
+    def zeige(self, farbe: str, kopf: str, p_max: float, n_pmax: float, m_max: float, n_mmax: float):
+        """farbe: Basisfarbe des Laufs (theme.laufarbe passt sie an), kopf z.B. „Lauf 16:29 · HD 140, Clip 2“."""
+        self.farbe = farbe
+        self.kopf.setText(kopf)
+        kw = p_max * 0.73549875 if p_max is not None and math.isfinite(p_max) else None
+        for key, (v, n, einheit) in (("p", (p_max, n_pmax, "PS")), ("m", (m_max, n_mmax, "Nm"))):
+            _lab, wert, ein, bei = self.zeilen[key]
+            wert.setText(zahl(v, 1))
+            ein.setText(einheit)
+            zusatz = f"   ({zahl(kw, 1)} kW)" if key == "p" and kw is not None else ""
+            bei.setText(f"bei {zahl(n)} 1/min{zusatz}")
+        self._stil()
+        self._platzieren()
+        self.show()
+        self.raise_()
+
+    def werte_text(self) -> str:
+        """„Pmax 31,6 PS bei 9.850 1/min · Mmax …“ (fuer Tests)."""
+        return " · ".join(" ".join(x.text() for x in self.zeilen[k]) for k in ("p", "m"))
+
+    def _platzieren(self):
+        p = self.parentWidget()
+        self.adjustSize()
+        w = min(max(self.sizeHint().width(), 420), max(200, p.width() - 40))
+        h = self.sizeHint().height()
+        self.setGeometry((p.width() - w) // 2, max(8, int(p.height() * 0.14)), w, h)
+
+    def mousePressEvent(self, ev):
+        if ev.button() == QtCore.Qt.LeftButton:
+            self.hide()
+            self.geschlossen.emit()
+        super().mousePressEvent(ev)
 
     def eventFilter(self, obj, ev):
         if obj is self.parentWidget() and ev.type() == QtCore.QEvent.Resize and self.isVisible():
@@ -852,92 +1016,6 @@ class ErgebnisText(QtWidgets.QLabel):
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
         self._kuerzen()
-
-
-class CursorZeile(QtWidgets.QFrame):
-    """Schmale Zeile „▸ Werte am Cursor …“ unter dem Diagramm; Klick klappt die Tabelle auf. Rechts der
-    Ergebnis-/Hinweistext."""
-    HINWEIS = "Maus ins Diagramm – Werte aller sichtbaren Läufe erscheinen hier (Klick: Tabelle)"
-    HINWEIS_KURZ = "Maus ins Diagramm – Werte am Cursor (Klick: Tabelle)"
-    TRENN = " &nbsp;·&nbsp; "
-
-    def __init__(self):
-        super().__init__()
-        self.setObjectName("cursorzeile")
-        self.setFixedHeight(28)
-        self.setCursor(QtCore.Qt.PointingHandCursor)
-        lay = QtWidgets.QHBoxLayout(self)
-        lay.setContentsMargins(6, 0, 8, 0)
-        lay.setSpacing(8)
-        self.knopf = QtWidgets.QToolButton()
-        self.knopf.setCheckable(True)
-        self.knopf.setAutoRaise(True)
-        self.knopf.setToolButtonStyle(QtCore.Qt.ToolButtonTextOnly)
-        lay.addWidget(self.knopf)
-        self.werte = QtWidgets.QLabel("")
-        self.werte.setTextFormat(QtCore.Qt.RichText)
-        self.werte.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
-        self.werte.installEventFilter(self)
-        lay.addWidget(self.werte, 3)
-        self.spalten = QtWidgets.QToolButton()
-        self.spalten.setText("Spalten …")
-        self.spalten.setAutoRaise(True)
-        theme.rolle(self.spalten, "klein")
-        self.spalten.setPopupMode(QtWidgets.QToolButton.InstantPopup)
-        lay.addWidget(self.spalten)
-        self.ergebnis = ErgebnisText()
-        lay.addWidget(self.ergebnis, 2)
-        self.knopf.toggled.connect(self._pfeil)
-        self._html = ""
-        theme.bei_wechsel(self, lambda _t: self._stil())
-        self._pfeil(False)
-
-    def _stil(self):
-        T = theme.tokens()
-        self.setStyleSheet(f"QFrame#cursorzeile {{ background: {T['panel']}; border: 1px solid {T['border']};"
-                           " border-radius: 3px; } QLabel { background: transparent; }")
-        self.knopf.setStyleSheet(f"QToolButton {{ color: {T['text']}; font-size: 13px; font-weight: 700; border: none;"
-                                 " background: transparent; padding: 0; }")
-        self.set_werte(self._html)
-
-    def _pfeil(self, auf: bool):
-        self.knopf.setText(("▾" if auf else "▸") + " Werte am Cursor")
-        self.spalten.setVisible(auf)
-
-    def set_werte(self, html: str):
-        """Werte am Cursor („n … · Lauf 1 … · Lauf 2 …“, Teile mit TRENN) oder leer = Hinweis. Bei wenig Platz
-        fallen hintere Laeufe ganz weg („· …“), die Tabelle (Klick) zeigt alle."""
-        self._html = html or ""
-        T = theme.tokens()
-        platz = self.werte.width()
-        if self._html:
-            teile = self._html.split(self.TRENN)
-            html = self._html
-            for n in range(len(teile), 0, -1):
-                html = self.TRENN.join(teile[:n]) + ("" if n == len(teile) else self.TRENN + "…")
-                if n == 1 or self._breite(html) <= platz:
-                    break
-            self.werte.setText(f"<span style='color:{T['text']}'>{html}</span>")
-        else:
-            text = self.HINWEIS if self._breite(self.HINWEIS) <= platz else self.HINWEIS_KURZ
-            self.werte.setText(f"<span style='color:{T['text2']}'>{text}</span>")
-
-    def _breite(self, html: str) -> float:
-        doc = QtGui.QTextDocument()
-        doc.setDocumentMargin(0)
-        doc.setDefaultFont(self.werte.font())
-        doc.setHtml(html)
-        return doc.idealWidth()
-
-    def eventFilter(self, obj, ev):
-        if obj is self.werte and ev.type() == QtCore.QEvent.Resize and ev.size().width() != ev.oldSize().width():
-            self.set_werte(self._html)
-        return super().eventFilter(obj, ev)
-
-    def mousePressEvent(self, ev):
-        if ev.button() == QtCore.Qt.LeftButton:
-            self.knopf.toggle()
-        super().mousePressEvent(ev)
 
 
 class LaufListe(QtWidgets.QWidget):
@@ -1428,38 +1506,23 @@ class MessenMixin:
         self.setup_zeile.neu_speichern.connect(self._setup_neu_dialog)
         lay.addWidget(self.setup_zeile)
 
-        # ---- Mitte: Diagramm mit Zeile „Werte am Cursor“
+        # ---- Mitte: Diagramm (Fähnchen am Cursor, grosse Anzeigen) und schmale Ergebniszeile
         center = QtWidgets.QWidget()
         cl = QtWidgets.QVBoxLayout(center)
         cl.setContentsMargins(0, 0, 0, 0)
-        cl.setSpacing(3)
+        cl.setSpacing(1)
         self.plot = DynoPlot()
         self.plot.set_limits(self.settings.get("plot_limits", {}))
         self.plot.limits_changed.connect(self._limits_changed)
         cl.addWidget(self.plot, 1)
-        self.gas_weg = GasWegHinweis(self.plot)
-        self.cursor_zeile = CursorZeile()
-        self.cursor_toggle = self.cursor_zeile.knopf
-        self.cursor_cols_btn = self.cursor_zeile.spalten
-        self.cursor_menu = QtWidgets.QMenu(self.cursor_cols_btn)
-        self.cursor_menu.aboutToShow.connect(self._fill_cursor_menu)
-        self.cursor_cols_btn.setMenu(self.cursor_menu)
-        self.result_label = self.cursor_zeile.ergebnis
-        cl.addWidget(self.cursor_zeile)
-        self.cursor_table = QtWidgets.QTableWidget(0, 8)
-        self.cursor_table.setHorizontalHeaderLabels(["", "Lauf", "n [1/min]", "PS", "Nm", "λ", "EGT 1", "EGT 2"])
-        self.cursor_table.verticalHeader().setVisible(False)
-        self.cursor_table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
-        self.cursor_table.setColumnWidth(0, 18)
-        self.cursor_table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
-        from .gui import compact_table
-        compact_table(self.cursor_table, row_h=24)
-        self.cursor_table.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        self._fit_cursor_table()
-        cl.addWidget(self.cursor_table)
-        self.cursor_toggle.toggled.connect(self._show_cursor_table)
-        self.cursor_toggle.setChecked(bool(self.settings.get("cursor_tabelle", False)))
-        self._show_cursor_table(self.cursor_toggle.isChecked())
+        self.anweisung = AnweisungGross(self.plot)
+        self.gas_weg = self.anweisung              # frueher GasWegHinweis (zeige/verbergen wie bisher)
+        self.ergebnis_gross = ErgebnisGross(self.plot)
+        self.result_label = ErgebnisText()
+        self.result_label.setFixedHeight(18)
+        self.result_label.setContentsMargins(6, 0, 6, 0)
+        cl.addWidget(self.result_label)
+        self._cursor_lauf: Optional[str] = None    # Lauf, dessen Werte die rechte Spalte gerade am Cursor zeigt
 
         # ---- Laeufe links (Seitenleiste)
         self.laufliste = LaufListe()
@@ -1498,8 +1561,9 @@ class MessenMixin:
         return w
 
     def _rechte_spalte(self) -> QtWidgets.QWidget:
-        inner = QtWidgets.QWidget()
-        lay = QtWidgets.QVBoxLayout(inner)
+        """UMGEBUNG und Drehzahl fest oben, die Live-Plaetze rollen (_Spalte), ERGEBNIS fest unten."""
+        spalte = QtWidgets.QWidget()
+        lay = QtWidgets.QVBoxLayout(spalte)
         lay.setContentsMargins(0, 0, 2, 0)
         lay.setSpacing(5)
         lay.addWidget(abschnitt("UMGEBUNG  (PST-Basis, BME280)"))
@@ -1519,16 +1583,37 @@ class MessenMixin:
         self.k_drehzahl.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.k_drehzahl.customContextMenuRequested.connect(lambda _p: self._grenzen_menue(-1))
         lay.addWidget(self.k_drehzahl)
+        # Live-Plaetze: rollen bei vielen Feldern, „＋“ am Ende fuegt einen Platz an
+        inner = QtWidgets.QWidget()
+        self.live_lay = QtWidgets.QVBoxLayout(inner)
+        self.live_lay.setContentsMargins(0, 0, 0, 0)
+        self.live_lay.setSpacing(5)
         self.live_kacheln: List[WertKachel] = []
-        for i in range(len(LIVE_STANDARD)):
-            k = WertKachel(platz=i + 1, groesse=GROSS)
-            k.kanal_gewaehlt.connect(lambda key, i=i: self._live_gewaehlt(i, key))
-            k.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
-            k.customContextMenuRequested.connect(lambda _p, i=i: self._grenzen_menue(i))
-            k.setToolTip("Klick auf den Titel: Kanal wählen · Rechtsklick: Balkengrenzen")
-            self.live_kacheln.append(k)
-            lay.addWidget(k)
-        lay.addStretch(1)
+        self.live_plus = QtWidgets.QToolButton()
+        self.live_plus.setText("＋")
+        self.live_plus.setAutoRaise(True)
+        self.live_plus.setPopupMode(QtWidgets.QToolButton.InstantPopup)
+        self.live_plus.setToolTip("Platz hinzufügen: Kanal wählen (gilt für das Fahrzeug)")
+        self.live_plus.setFixedHeight(26)
+        self.live_plus.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
+        m = QtWidgets.QMenu(self.live_plus)
+        m.aboutToShow.connect(lambda m=m: self._live_plus_menue(m))
+        self.live_plus.setMenu(m)
+        theme.bei_wechsel(self.live_plus, lambda _t: self.live_plus.setStyleSheet(
+            f"QToolButton {{ color: {theme.farbe('text2')}; font-size: 15px; font-weight: 700; background: transparent;"
+            f" border: 1px dashed {theme.farbe('border_strong')}; border-radius: 4px; }}"
+            f"QToolButton:hover {{ color: {theme.farbe('text')}; border-color: {theme.farbe('accent_border')}; }}"
+            "QToolButton::menu-indicator { image: none; }"))
+        self.live_lay.addWidget(self.live_plus)
+        self.live_lay.addStretch(1)
+        area = _Spalte(self._spalte_anpassen)
+        area.setWidgetResizable(True)
+        area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        area.setWidget(inner)
+        area.setMinimumHeight(40)
+        self.live_flaeche = area
+        lay.addWidget(area, 1)
         self.ergebnis_titel = abschnitt("ERGEBNIS")
         lay.addWidget(self.ergebnis_titel)
         pm = QtWidgets.QHBoxLayout()
@@ -1538,23 +1623,46 @@ class MessenMixin:
         pm.addWidget(self.k_pmax)
         pm.addWidget(self.k_mmax)
         lay.addLayout(pm)
-        area = _Spalte(self._spalte_anpassen)
-        area.setWidgetResizable(True)
-        area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        area.setFrameShape(QtWidgets.QFrame.NoFrame)
-        area.setWidget(inner)
-        area.setMinimumWidth(280)
+        spalte.setMinimumWidth(280)
         self._spalte_gross, self._spalte_h_gross = True, 0
-        return area
+        self._live_kacheln_bauen(len(LIVE_STANDARD))
+        return spalte
+
+    def _live_kacheln_bauen(self, anzahl: int):
+        """So viele Live-Kacheln wie Plaetze (Nummer 1 …), „＋“ nur unter LIVE_MAX."""
+        while len(self.live_kacheln) < anzahl:
+            i = len(self.live_kacheln)
+            k = WertKachel(platz=i + 1, groesse=GROSS if self._spalte_gross else KLEIN)
+            if not self._spalte_gross:
+                kachel_groesse(k, False)
+            k.entfernbar = True
+            k.kanal_gewaehlt.connect(lambda key, i=i: self._live_gewaehlt(i, key))
+            k.entfernen.connect(lambda i=i: self.live_platz_entfernen(i))
+            k.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+            k.customContextMenuRequested.connect(lambda _p, i=i: self._grenzen_menue(i))
+            k.setToolTip("Klick auf den Titel: Kanal wählen oder Platz entfernen · Rechtsklick: Balkengrenzen")
+            self.live_lay.insertWidget(i, k)
+            self.live_kacheln.append(k)
+        while len(self.live_kacheln) > anzahl:
+            k = self.live_kacheln.pop()
+            k.hide()
+            k.deleteLater()
+        self.live_plus.setVisible(anzahl < LIVE_MAX)
+        QtCore.QTimer.singleShot(0, self.live_flaeche, lambda: self._spalte_anpassen(
+            self.live_flaeche.viewport().height()))
 
     def _spalte_anpassen(self, h: int):
-        """Kacheln kompakt, solange die Spalte sonst rollen muesste (kleine Fenster), sonst gross."""
-        inner = self.rechte_spalte.widget() if hasattr(self, "rechte_spalte") else None
-        if inner is None:
+        """Kacheln kompakt, solange die Live-Plaetze sonst rollen muessten (kleine Fenster), sonst gross. Die
+        Drehzahl (fest oben) wird mit kompakt: ihr Hoehenunterschied zaehlt beim Zurueckschalten mit."""
+        area = getattr(self, "live_flaeche", None)
+        if area is None or area.widget() is None:
             return
+        inner = area.widget()
         if self._spalte_gross:
             self._spalte_h_gross = inner.minimumSizeHint().height()
-        gross = h >= self._spalte_h_gross
+            self._dz_gross_h = self.k_drehzahl.sizeHint().height()
+        frei = h if self._spalte_gross else h - (getattr(self, "_dz_gross_h", 0) - self.k_drehzahl.sizeHint().height())
+        gross = frei >= self._spalte_h_gross
         if gross == self._spalte_gross:
             return
         self._spalte_gross = gross
@@ -1696,21 +1804,135 @@ class MessenMixin:
         self.zustand.setToolTip(text)
 
     def _laufzustand_zeigen(self, st: str, lv):
-        """Zustand des Laufs im Feld neben START, „GAS WEG“ gross ueber dem Diagramm."""
+        """Zustand des Laufs im Feld neben START und gross ueber dem Diagramm (Option ANWEISUNG_GROSS; aus: nur
+        „GAS WEG“). Dieselben Texte und Stufen; gross steht der Befehl oben, Einzelheiten darunter."""
+        gross = self.anzeige_an(ANWEISUNG_GROSS)
+        a = self.anweisung
         if st == WAIT:
             self._set_status("GO – Vollgas!", theme.GUT)
+            if gross:
+                a.zeige("GO – Vollgas!", "", theme.GUT, ANWEISUNG_HALTEN_S)
         elif st == RUN:
             if self.ctrl.gas_off():
                 aus = self.ctrl.ausrollen
                 self._set_status("GAS WEG – KUPPLUNG ZIEHEN!" if aus else "GAS WEG!", theme.FEHLER)
                 grund = f"n Stop {zahl(self.ctrl.params.n_stop)} 1/min erreicht – " + (
                     "Kupplung ziehen, ausrollen lassen" if aus else "Lauf wird ausgewertet")
-                self.gas_weg.zeige("GAS WEG", grund)
+                titel = ("GAS WEG –\nKUPPLUNG ZIEHEN!" if aus else "GAS WEG!") if gross else "GAS WEG"
+                a.zeige(titel, grund, theme.FEHLER)
             else:
-                self._set_status(f"Messung … {zahl(lv.n_calc)} 1/min", theme.WARNUNG)
+                text = f"Messung … {zahl(lv.n_calc)} 1/min"
+                self._set_status(text, theme.WARNUNG)
+                if gross and not a.haelt(theme.FEHLER):        # GAS WEG steht seine Zeit
+                    a.zeige(text, "", theme.WARNUNG, ANWEISUNG_HALTEN_S)
         elif st == COAST:
             self._set_status(f"KUPPLUNG ZIEHEN – ausrollen lassen … {zahl(lv.n_calc)} 1/min", "info")
-        self.gas_weg.takt()
+            if gross:
+                a.zeige("KUPPLUNG ZIEHEN", f"ausrollen lassen … {zahl(lv.n_calc)} 1/min", theme.WARNUNG,
+                        ANWEISUNG_HALTEN_S)
+        a.takt()
+
+    # ------------------------------------------------------------------ Anzeige beim Messen (Optionen, gross)
+    def anzeige_an(self, key: str) -> bool:
+        return bool(self.settings.get(key, ANZEIGE_OPTIONEN[key][0]))
+
+    def anzeige_setzen(self, key: str, an: bool):
+        """Option der Anzeige beim Messen schalten (Einstellungen › Rolle/Lauf und Menue Ansicht), speichern."""
+        an = bool(an)
+        if self.settings.get(key) != an:
+            self.settings[key] = an
+            _speichern(self.settings)
+        for w in (getattr(self.page_settings, "anzeige_boxen", {}).get(key),
+                  getattr(self, "anzeige_aktionen", {}).get(key)):
+            if w is not None and w.isChecked() != an:
+                w.blockSignals(True)
+                w.setChecked(an)
+                w.blockSignals(False)
+        if key == ERGEBNIS_GROSS and not an:
+            self.ergebnis_gross.hide()
+        elif key == ANWEISUNG_GROSS and not an and self.anweisung.stufe != theme.FEHLER:
+            self.anweisung.verbergen()
+        elif key == ANZEIGE_LEGENDE:
+            self._legende_zeigen()
+
+    def _anzeige_verbinden(self, menue: QtWidgets.QMenu):
+        """Schalter der Anzeige beim Messen: Kaestchen unter Einstellungen › Rolle/Lauf (page_settings.anzeige_boxen)
+        und abhakbare Eintraege im Menue Ansicht."""
+        self.anzeige_aktionen: Dict[str, QtGui.QAction] = {}
+        menue.addSection("Anzeige beim Messen")
+        for key, (_std, text, tip) in ANZEIGE_OPTIONEN.items():
+            act = menue.addAction(text)
+            act.setCheckable(True)
+            act.setChecked(self.anzeige_an(key))
+            act.setToolTip(tip)
+            act.toggled.connect(lambda an, k=key: self.anzeige_setzen(k, an))
+            self.anzeige_aktionen[key] = act
+            box = getattr(self.page_settings, "anzeige_boxen", {}).get(key)
+            if box is not None:
+                box.setChecked(self.anzeige_an(key))
+                box.toggled.connect(lambda an, k=key: self.anzeige_setzen(k, an))
+        menue.setToolTipsVisible(True)
+
+    def _gross_verbergen(self):
+        """START: grosse Anzeigen weg (Ergebnis des letzten Laufs, Reste der Anweisung)."""
+        self.ergebnis_gross.hide()
+        self.anweisung.verbergen()
+
+    def _esc(self):
+        """Esc: zuerst das grosse Ergebnis ausblenden, sonst wie bisher Abbrechen bzw. Ausrollen beenden."""
+        if self.ergebnis_gross.isVisible() and not self._lauf_aktiv():
+            self.ergebnis_gross.hide()
+            return
+        self.on_abort()
+
+    def _ergebnis_gross_zeigen(self, r, rid: Optional[int] = None):
+        """Nach dem Lauf (gui._finish_run): Pmax/Mmax gross, Farbe und Zeit des gespeicherten Laufs (rid) bzw. der
+        ungespeicherten Kurve."""
+        self.anweisung.verbergen()
+        if r is None or not self.anzeige_an(ERGEBNIS_GROSS):
+            return
+        row = self.db.run(rid) if rid is not None else None
+        farbe = self._run_color(row) if row is not None else theme.farbe("live_curve")
+        zeit = (self._run_label(row).split("  ")[0][-5:] if row is not None
+                else time.strftime("%H:%M") + " (nicht gespeichert)")
+        sid = self.setup_combo.currentData()
+        setup = ((self.db.setup(sid) or {}).get("name", "") if sid else "") or self.run_note.text().strip()
+        kopf = f"Lauf {zeit}" + (f"  ·  {setup}" if setup else "")
+        self.ergebnis_gross.zeige(farbe, kopf, r.p_max, r.n_pmax, r.m_max, r.n_mmax)
+
+    def _legende_zeigen(self):
+        """Legende im Diagramm: Referenzen (Mittelwert mit Band) immer, mit ANZEIGE_LEGENDE alle Läufe
+        (Farbe, Datum/Zeit, Setup bzw. Notiz kurz)."""
+        zeilen = []
+        alle = self.anzeige_an(ANZEIGE_LEGENDE)
+        setups: Dict[int, str] = {}
+        for rid in self._gezeichnet:
+            row = self._laeufe.get(rid)
+            if row is None:
+                continue
+            c = theme.laufarbe(self._lauf_farbe(row))
+            if row.ist_mittelwert:
+                band = BAND_TEXT[band_art(row)]
+                zeilen.append(f"<span style='color:{c}; font-weight:800'>━━ {row.name}</span>"
+                              "&nbsp; gesperrt, Referenz" + (f" · {band}" if band else ""))
+                continue
+            if not alle:
+                continue
+            if row.setup_id and row.setup_id not in setups:
+                setups[row.setup_id] = (self.db.setup(row.setup_id) or {}).get("name", "")
+            text = setups.get(row.setup_id, "") if row.setup_id else ""
+            notiz = (row.notiz or "").strip()
+            if notiz:
+                text = f"{text} · {notiz}" if text else notiz
+            if len(text) > 42:
+                text = text[:41] + "…"
+            zeilen.append(f"<span style='color:{c}; font-weight:900'>━━</span>&nbsp;<b>{self._run_label(row).split('  ')[0]}</b>"
+                          + (f"&nbsp; {html.escape(text)}" if text else ""))
+        if alle and LIVE_KEY in self.plot.data:
+            c = theme.laufarbe(theme.farbe("live_curve"))
+            zeilen.append(f"<span style='color:{c}; font-weight:900'>━━</span>&nbsp;<b>aktuelle Messung</b>"
+                          "&nbsp; nicht gespeichert")
+        self.plot.set_legende("<br>".join(zeilen))
 
     # ------------------------------------------------------------------ Fahrzeug: Ansicht laden
     def _fahrzeug(self) -> Tuple[Optional[int], str]:
@@ -1719,9 +1941,16 @@ class MessenMixin:
 
     def _fahrzeug_ansicht_laden(self):
         """Belegung der Live-Plaetze, Drehzahl, Schnellwerte fuer das gewaehlte Fahrzeug."""
+        self._fahrzeug_titel()
+        self._live_plaetze_anwenden()
+
+    def _fahrzeug_titel(self):
+        """Titel ueber den Live-Kacheln (am Cursor zeigt er statt dessen den Lauf, _cursor_moved)."""
+        if getattr(self, "_cursor_lauf", None) is not None:
+            return
         _vid, name = self._fahrzeug()
         self.live_titel.setText(f"LIVE  ·  Belegung für {name}" if name else "LIVE  ·  Belegung (ohne Fahrzeug)")
-        self._live_plaetze_anwenden()
+        self.live_titel.setToolTip("")
 
     def _setup_zeile_laden(self):
         vid, vname = self._fahrzeug()
@@ -1848,14 +2077,16 @@ class MessenMixin:
         return out
 
     def _live_plaetze_anwenden(self):
-        """Kanaele, Balken und Zonen der 5 Plaetze und der Drehzahl aus der Datenbank (je Fahrzeug)."""
+        """Kanaele, Balken und Zonen der Live-Plaetze (Anzahl je Fahrzeug) und der Drehzahl aus der Datenbank."""
         if not hasattr(self, "live_kacheln"):
             return
         vid, name = self._fahrzeug()
         kan = self._live_kanaele()
         hinweis = f"Auswahl gilt für {name}" if name else "Auswahl gilt ohne Fahrzeug"
         self._kachel_cache.clear()
-        for k, p in zip(self.live_kacheln, self.db.live_plaetze(vid)):
+        plaetze = self.db.live_plaetze(vid)
+        self._live_kacheln_bauen(len(plaetze))
+        for k, p in zip(self.live_kacheln, plaetze):
             kk = list(kan)
             if p["kanal"] and not any(x.schluessel == p["kanal"] for x in kk):
                 ecu = p["kanal"].startswith(ECU_PREFIX)
@@ -1903,13 +2134,58 @@ class MessenMixin:
         self.db.set_vehicle_pref(vid, "drehzahl", d)
         self._live_plaetze_anwenden()
 
+    @staticmethod
+    def _live_platz_neu(key: str) -> Dict[str, Any]:
+        lo, hi, _dez, zonen, _marke = kanal_bereich(key) if key else (0.0, 100.0, 0, [], False)
+        return {"kanal": key, "min": lo, "max": hi, "zonen": [list(z) for z in zonen]}
+
     def _live_gewaehlt(self, i: int, key: str):
         vid, _name = self._fahrzeug()
         plaetze = self.db.live_plaetze(vid)
-        lo, hi, dez, zonen, marke = kanal_bereich(key) if key else (0.0, 100.0, 0, [], False)
-        plaetze[i] = {"kanal": key, "min": lo, "max": hi, "zonen": [list(z) for z in zonen]}
+        if not 0 <= i < len(plaetze):
+            return
+        plaetze[i] = self._live_platz_neu(key)
         self.db.set_live_plaetze(vid, plaetze)
         self._live_plaetze_anwenden()
+
+    def live_platz_hinzufuegen(self, key: str = "") -> bool:
+        """Neuen Live-Platz am Ende (False, wenn schon LIVE_MAX Plaetze da sind)."""
+        vid, _name = self._fahrzeug()
+        plaetze = self.db.live_plaetze(vid)
+        if len(plaetze) >= LIVE_MAX:
+            return False
+        self.db.set_live_plaetze(vid, plaetze + [self._live_platz_neu(key)])
+        self._live_plaetze_anwenden()
+        QtCore.QTimer.singleShot(50, self.live_flaeche, lambda: self.live_flaeche.ensureWidgetVisible(
+            self.live_plus))
+        return True
+
+    def live_platz_entfernen(self, i: int) -> bool:
+        vid, _name = self._fahrzeug()
+        plaetze = self.db.live_plaetze(vid)
+        if not 0 <= i < len(plaetze):
+            return False
+        self.db.set_live_plaetze(vid, plaetze[:i] + plaetze[i + 1:])
+        self._live_plaetze_anwenden()
+        return True
+
+    def _live_plus_menue(self, m: QtWidgets.QMenu):
+        """Menue des Knopfs „＋“: Kanal fuer den neuen Platz (gruppiert nach Quelle wie im Titel einer Kachel)."""
+        m.clear()
+        m.addSection("Platz hinzufügen")
+        gruppen: Dict[str, List[Kanal]] = {}
+        for k in self._live_kanaele():
+            gruppen.setdefault(k.quelle or "PST", []).append(k)
+        for q in [q for q in ("PST", "ECU") if q in gruppen] + [q for q in gruppen if q not in ("PST", "ECU")]:
+            m.addSection(q)
+            for k in gruppen[q]:
+                a = m.addAction(k.titel + (f" [{k.einheit}]" if k.einheit else ""))
+                a.triggered.connect(lambda _c=False, s=k.schluessel: self.live_platz_hinzufuegen(s))
+        m.addSeparator()
+        m.addAction("leer").triggered.connect(lambda _c=False: self.live_platz_hinzufuegen(""))
+        _vid, name = self._fahrzeug()
+        h = m.addAction(f"Auswahl gilt für {name}" if name else "Auswahl gilt ohne Fahrzeug")
+        h.setEnabled(False)
 
     def _grenzen_menue(self, i: int):
         """Rechtsklick auf einen Platz (i = -1: Drehzahl): Balkengrenzen einstellen."""
@@ -1989,6 +2265,14 @@ class MessenMixin:
     def _kacheln_zeigen(self, alle: bool = False):
         if not hasattr(self, "live_kacheln"):
             return
+        if self._cursor_lauf is not None:          # Maus im Diagramm: Werte des Laufs am Cursor
+            if not self._lauf_aktiv():
+                if alle:
+                    self._cursor_moved(self._cursor_n)
+                return
+            self._cursor_lauf = None               # Lauf gestartet: wieder live
+            self._fahrzeug_titel()
+            alle = True
         if alle:
             self._kachel_cache.clear()
         for i, k in enumerate(self.live_kacheln):
@@ -2335,16 +2619,12 @@ class MessenMixin:
         for key in list(self.plot.items) + list(self.plot.bands):
             if key != LIVE_KEY and key not in keys:
                 self.plot.remove(key)
-        gezeichnet, legende = [], []
+        gezeichnet = []
         for rid in ids:
             row = laeufe[rid]
             if row.ist_mittelwert:
                 if self._mittelwert_zeichnen(row):
                     gezeichnet.append(rid)
-                    c = theme.laufarbe(self._lauf_farbe(row))
-                    band = BAND_TEXT[band_art(row)]
-                    legende.append(f"<span style='color:{c}; font-weight:800'>━━ {row.name}</span>"
-                                   "&nbsp; gesperrt, Referenz" + (f" · {band}" if band else ""))
                 continue
             e = self._entry(rid)
             if e is None or e[1] is None:
@@ -2357,7 +2637,7 @@ class MessenMixin:
                                  extra=self._ecu_extra_run(_run, res))
             gezeichnet.append(rid)
         self._gezeichnet = gezeichnet
-        self.plot.set_legende("<br>".join(legende))
+        self._legende_zeigen()
         if not self.plot.frozen and self.plot.data:
             self.plot.auto_scale()
         self._cursor_names = None
@@ -2425,20 +2705,7 @@ class MessenMixin:
         self.k_pmax.set(f"Pmax @ {zahl(d['n'][jp])}", zahl(d["ps"][jp], 1))
         self.k_mmax.set(f"Mmax @ {zahl(d['n'][jm])}", zahl(d["nm"][jm], 1))
 
-    # ------------------------------------------------------------------ Werte am Cursor
-    def _show_cursor_table(self, on: bool):
-        self.cursor_table.setVisible(on)
-        if self.settings.get("cursor_tabelle", False) != on:
-            self.settings["cursor_tabelle"] = on
-            _speichern(self.settings)
-
-    def _fit_cursor_table(self):
-        """Cursor-Tabelle genau so hoch wie ihr Inhalt (mind. eine Zeile), Rest bekommt das Diagramm."""
-        t = self.cursor_table
-        rows = max(1, t.rowCount())
-        t.setFixedHeight(t.horizontalHeader().height() + rows * t.verticalHeader().defaultSectionSize()
-                         + 2 * t.frameWidth() + 1)
-
+    # ------------------------------------------------------------------ Werte am Cursor (rechte Spalte)
     def _cursor_namen(self) -> Dict[str, tuple]:
         """Schluessel im Diagramm -> (Bezeichnung, Farbe, kurze Bezeichnung)."""
         if self._cursor_names is None:
@@ -2456,67 +2723,103 @@ class MessenMixin:
             self._cursor_names = names
         return self._cursor_names
 
+    def _neuester_lauf(self) -> Optional[str]:
+        """Schluessel des neuesten Laufs im Diagramm (die eben gemessene, ungespeicherte Kurve zuerst; Mittelwerte
+        nur, wenn sonst nichts da ist)."""
+        if LIVE_KEY in self.plot.data:
+            return LIVE_KEY
+        laeufe = [self._laeufe[i] for i in self._gezeichnet if i in self._laeufe and str(i) in self.plot.data]
+        echte = [r for r in laeufe if not r.ist_mittelwert] or laeufe
+        return str(max(echte, key=lambda r: r.datum).id) if echte else None
+
+    def lauf_werte_bei(self, key: str, n_rpm: float) -> Optional[Dict[str, Optional[float]]]:
+        """Werte eines Laufs im Diagramm an der Drehzahl n_rpm je Live-Kanal ("n", "egt1", "lam", "v",
+        "ecu:coolant" …; "afr" zusaetzlich). None ausserhalb des Laufs. Gespeicherte Laeufe liefern alle Kanaele
+        (channels.run_channels), die ungespeicherte Kurve und Mittelwerte nur die des Diagramms."""
+        d = self.plot.data.get(key)
+        if d is None or not len(d["n"]):
+            return None
+        n = d["n"]
+        ok = np.isfinite(n)
+        if not ok.any() or n_rpm < np.min(n[ok]) or n_rpm > np.max(n[ok]):
+            return None
+        j = int(np.argmin(np.where(ok, np.abs(n - n_rpm), np.inf)))
+
+        def wert(a):
+            if a is None or j >= len(a):
+                return None
+            v = float(a[j])
+            return v if math.isfinite(v) else None
+
+        out: Dict[str, Optional[float]] = {"n": wert(n), "lam": wert(d.get("lam")), "egt1": wert(d.get("egt1")),
+                                           "egt2": wert(d.get("egt2"))}
+        for k, a in d.items():
+            if k.startswith(EXTRA_PREFIX):
+                out[ECU_PREFIX + k[len(EXTRA_PREFIX):]] = wert(a)
+        row = self._laeufe.get(int(key)) if key.isdigit() else None
+        e = self._entry(int(key)) if row is not None and not row.ist_mittelwert else None
+        if e is not None and e[1] is not None:
+            from .rusefi import COLUMN_PREFIX
+            run, res, ch, _p = e
+            seg = res.segment
+            for kanal, name in LAUF_KANAL.items():
+                if name in ch:
+                    out[kanal] = wert(np.asarray(ch[name].values, float)[seg])
+            for spalte, a in run.get("columns", {}).items():
+                if spalte.startswith(COLUMN_PREFIX):
+                    out[ECU_PREFIX + spalte[len(COLUMN_PREFIX):]] = wert(np.asarray(a, float)[seg])
+        for k in ("egt1", "egt2"):
+            if out.get(k) is not None and out[k] <= 0:
+                out[k] = None                          # kein Sensor
+        lam = out.get("lam")
+        if lam is not None and lam <= 0:
+            out["lam"] = lam = None
+        out["afr"] = lam * 14.7 if lam is not None else None
+        return out
+
     def _cursor_left(self):
         self._cursor_inside = False
-        self.cursor_zeile.set_werte("")
+        if self._cursor_lauf is not None:
+            self._cursor_lauf = None
+            self._fahrzeug_titel()
+            self._kacheln_zeigen(alle=True)
 
     def _cursor_moved(self, n_rpm: float):
+        """Maus im Diagramm (die Fähnchen zeichnet DynoPlot): solange kein Lauf laeuft, zeigen die Live-Kacheln die
+        Werte des neuesten Laufs an der Cursor-Drehzahl."""
         self._cursor_n = n_rpm
         self._cursor_inside = getattr(self.plot, "_cursor_inside", False)
-        names = self._cursor_namen()
+        key = self._neuester_lauf() if self._cursor_inside and not self._lauf_aktiv() else None
+        werte = self.lauf_werte_bei(key, n_rpm) if key is not None else None
+        if key is None:
+            if self._cursor_lauf is not None:
+                self._cursor_left()
+            return
+        self._cursor_lauf = key
+        name, farbe, _k = self._cursor_namen().get(key, (key, theme.farbe("live_curve"), key))
+        zeit = "eben gemessen" if key == LIVE_KEY else (name.split("  ")[0][-5:] if ":" in name else name)
+        bei = f"bei {zahl(werte['n'])} 1/min" if werte else "außerhalb des Laufs"
+        self.live_titel.setText(f"<span style='color:{theme.laufarbe(farbe)}'>■</span> LAUF {zeit}  {bei}")
+        self.live_titel.setToolTip(f"Werte von {name} am Cursor – Maus aus dem Diagramm: wieder live")
+        self._kacheln_lauf(werte or {})
+
+    def _kacheln_lauf(self, werte: Dict[str, Optional[float]]):
+        """Live-Kacheln und Drehzahl mit den Werten eines Laufs (statt live), Quelle „Lauf“."""
+        self._kachel_cache.clear()
         lam_mode = self.page_settings.lambda_radio.isChecked()
-        known = {k for k, _l, _u in self._lower_candidates()}
-        cols = [k for k in self._cursor_cols() if k in known]
-
-        def title(k):
-            label, unit = self.plot.lower_title(k) if not k.startswith(EXTRA_PREFIX) or k in self.plot.lower_labels \
-                else next(((lab + " (ECU)", u) for n, lab, u in self.plot.overlays if EXTRA_PREFIX + n == k), (k, ""))
-            return f"{label} [{unit}]" if unit and unit != "λ" else ("λ" if unit == "λ" else label)
-
-        def fmt(k, x):
-            if x is None or not np.isfinite(x):
-                return ""
-            if k == "lam":
-                return "" if x <= 0 else (f"{x:.3f}" if lam_mode else f"{x * 14.7:.2f}")
-            if k in ("egt1", "egt2"):
-                return f"{x:.0f}" if x > 0 else ""
-            return fmt_value(x)
-
-        rows, teile = [], []
-        for key in self.plot.data:
-            v = self.plot.values_at(key, n_rpm)
-            label, color, kurz_name = names.get(key, (key, theme.farbe("live_curve"), key))
-            if v is None:
-                rows.append((color, label, "", "", "") + ("",) * len(cols))
+        for k in [self.k_drehzahl] + self.live_kacheln:
+            kanal = k.kanal
+            if not kanal:
                 continue
-            rows.append((color, label, f"{v['n']:.0f}", f"{v['ps']:.2f}", f"{v['nm']:.2f}")
-                        + tuple(fmt(k, v.get(k)) for k in cols))
-            lam = v.get("lam")
-            lam_t = ""
-            if lam is not None and np.isfinite(lam) and lam > 0:
-                lam_t = f" λ {zahl(lam, 2)}" if lam_mode else f" AFR {zahl(lam * 14.7, 1)}"
-            teile.append(f"<span style='color:{color}; font-weight:900'>■</span> {kurz_name} "
-                         f"<b>{zahl(v['ps'], 1)}</b> PS <b>{zahl(v['nm'], 1)}</b> Nm{lam_t}")
-        if self._cursor_inside and teile:
-            self.cursor_zeile.set_werte(f"<b>n {zahl(n_rpm)}</b> &nbsp;·&nbsp; " + " &nbsp;·&nbsp; ".join(teile))
-        elif not self._cursor_inside:
-            self.cursor_zeile.set_werte("")
-        t = self.cursor_table
-        if t.columnCount() != 5 + len(cols):
-            t.setColumnCount(5 + len(cols))
-        for i, text in enumerate(["", "Lauf", "n [1/min]", "PS", "Nm"] + [title(k) for k in cols]):
-            t.setHorizontalHeaderItem(i, QtWidgets.QTableWidgetItem(text))
-        t.setRowCount(len(rows))
-        self._fit_cursor_table()
-        for r, vals in enumerate(rows):
-            it = QtWidgets.QTableWidgetItem()
-            it.setBackground(QtGui.QColor(vals[0]))
-            t.setItem(r, 0, it)
-            for c, text in enumerate(vals[1:], start=1):
-                cell = QtWidgets.QTableWidgetItem(text)
-                if c >= 2:
-                    cell.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-                t.setItem(r, c, cell)
+            v = werte.get(kanal)
+            text = zahl(werte.get("afr"), 2) if kanal == "lam" and not lam_mode and v is not None else None
+            k.set_wert(v, text)
+            k.set_quelle("" if k is self.k_drehzahl else "Lauf")
+            if v is not None:
+                b = k.balken
+                b.set_wert(min(max(float(v), b.lo), b.hi))
+        self.k_drehzahl.set_unter("Rolle " + (f"{zahl(werte['v'], 1)} km/h" if werte.get("v") is not None else "–"),
+                                  "Zündung " + (zahl(werte["ign"]) if werte.get("ign") else "–"))
 
     # ------------------------------------------------------------------ Liste: Kontextmenue, Knoepfe
     def _run_context_menu(self, pos):

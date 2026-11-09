@@ -178,6 +178,54 @@ class Bausteine(unittest.TestCase):
         self.assertNotIn("1", p.bands)
         self.assertNotIn("1", p.items)
 
+    def test_fahnen_verteilen(self):
+        from pyst.plots import fahnen_verteilen
+        self.assertEqual(fahnen_verteilen([], 10, 0, 100), [])
+        self.assertEqual(fahnen_verteilen([50.0], 10, 0, 100), [50.0])
+        ys = fahnen_verteilen([40.0, 42.0, 41.0], 10, 0, 100)
+        s = sorted(ys)
+        self.assertTrue(all(b - a >= 12 - 1e-9 for a, b in zip(s, s[1:])))
+        self.assertEqual(ys[0], min(ys))                         # Reihenfolge bleibt (oberer bleibt oben)
+        unten = fahnen_verteilen([95.0, 96.0], 10, 0, 100)        # am unteren Rand: nach oben geschoben
+        self.assertLessEqual(max(unten) + 10, 100)
+        self.assertGreaterEqual(min(unten), 0)
+
+    def test_faehnchen_im_diagramm(self):
+        """Fähnchen je Kurve in der Laufarbe, gleiche Farbe zusammengefasst, Werte deutsch, weg beim Verlassen."""
+        p = DynoPlot()
+        p.resize(900, 600)
+        p.show()
+        n = np.linspace(3000, 11000, 81)
+        p.set_curves("1", n, n / 400, n / 500, lam=np.full(81, 0.9), egt1=np.full(81, 820.0), color="#1f77b4")
+        p.set_curves("2", n, n / 400 + 1, n / 500 + 1, color="#1f77b4")     # gleiche Farbe
+        p.set_curves("3", n, n / 400 + 3, n / 500 + 2, color="#d62728")
+        pump(0.05)
+        verlassen = []
+        p.cursor_left.connect(lambda: verlassen.append(1))
+        p.zeige_cursor(8000.0)
+        t = p.fahnen.texte()
+        self.assertIn("20,0 / 21,0 PS", t)                       # Laeufe 1 und 2 (gleiche Farbe) zusammen
+        self.assertIn("23,0 PS", t)
+        self.assertIn("16,0 / 17,0 Nm", t)
+        self.assertIn("λ 0,90", t)
+        self.assertIn("820 °C", t)
+        voll = {f["text"]: f["voll"] for f in p.fahnen.fahnen}
+        self.assertTrue(voll["23,0 PS"])                          # Leistung gefuellt, Drehmoment umrandet
+        self.assertFalse(voll["18,0 Nm"])
+        farben = {f["text"]: f["farbe"] for f in p.fahnen.fahnen}
+        self.assertEqual(farben["23,0 PS"], theme.laufarbe("#d62728"))
+        p.set_lambda_mode(False)
+        p.zeige_cursor(8000.0)
+        self.assertIn("AFR 13,2", p.fahnen.texte())
+        p.zeige_cursor(2000.0)                                    # ausserhalb der Laeufe: keine Fähnchen
+        self.assertEqual(p.fahnen.texte(), [])
+        p.zeige_cursor(8000.0)
+        p._leave()
+        self.assertEqual(p.fahnen.texte(), [])
+        self.assertFalse(p.fahnen.isVisible())
+        self.assertEqual(verlassen, [1])
+        p.close()
+
     def test_band_art_aus_json(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
@@ -204,6 +252,8 @@ class Messen(unittest.TestCase):
 
     def tearDown(self):
         from conftest import close_window
+        for key, (std, _t, _tip) in mp.ANZEIGE_OPTIONEN.items():     # Einstellungen gelten fuer alle Tests
+            self.w.anzeige_setzen(key, std)
         close_window(self.w, APP)
         theme.manager().setze(theme.TAG, speichern=False)
         gc.collect()
@@ -428,7 +478,7 @@ class Messen(unittest.TestCase):
         fm = w.lauf_btn._fm(11)
         self.assertLessEqual(fm.horizontalAdvance(w.lauf_btn.stand()), w.lauf_btn.width())
 
-    def test_laufliste_als_seitenleiste_und_cursorzeile(self):
+    def test_laufliste_als_seitenleiste(self):
         w = self.w
         self._laeufe(2)
         L = w.laeufe_leiste
@@ -437,11 +487,203 @@ class Messen(unittest.TestCase):
         w._leiste_gemerkt()
         self.assertTrue(w.settings["laeufe_leiste"]["angepinnt"])
         L.set_angepinnt(False)
-        self.assertFalse(w.cursor_table.isVisible())
-        w.cursor_toggle.setChecked(True)
+        self.assertFalse(hasattr(w, "cursor_table"))           # Zeile „Werte am Cursor“ gibt es nicht mehr
+
+    def test_cursor_faehnchen_und_rechte_spalte(self):
+        """Maus im Diagramm: Fähnchen je Kurve, die Live-Kacheln zeigen den neuesten Lauf an der Cursor-Drehzahl;
+        Maus raus: wieder live."""
+        w = self.w
+        ids = self._laeufe(3)
+        pump(0.2)
+        neu = max((w.db.run(i) for i in ids), key=lambda r: r.datum)
+        self.assertEqual(w._neuester_lauf(), str(neu.id))
+        n = w.plot.data[str(neu.id)]["n"]
+        x = float(np.nanmin(n) + 0.6 * (np.nanmax(n) - np.nanmin(n)))
+        w.plot.zeige_cursor(x)
         pump(0.05)
-        self.assertTrue(w.cursor_table.isVisible())
-        w.cursor_toggle.setChecked(False)
+        texte = w.plot.fahnen.texte()
+        self.assertTrue(any(t.endswith(" PS") for t in texte), texte)
+        self.assertTrue(any(t.endswith(" Nm") for t in texte), texte)
+        self.assertTrue(w.plot.fahnen.isVisible())
+        # Fähnchen eines Diagramms ueberlappen sich nicht
+        for bereich in ({"x": f["x"], "y": f["y"], "w": f["w"], "h": f["h"]} for f in w.plot.fahnen.fahnen):
+            andere = [f for f in w.plot.fahnen.fahnen if (f["x"], f["y"]) != (bereich["x"], bereich["y"])]
+            for f in andere:
+                ueber = not (f["x"] >= bereich["x"] + bereich["w"] or bereich["x"] >= f["x"] + f["w"]
+                             or f["y"] >= bereich["y"] + bereich["h"] or bereich["y"] >= f["y"] + f["h"])
+                self.assertFalse(ueber, (bereich, f))
+        # rechte Spalte: Werte des neuesten Laufs, Titel mit Zeit und Drehzahl
+        self.assertEqual(w._cursor_lauf, str(neu.id))
+        titel = w.live_titel.text()
+        self.assertIn("LAUF", titel)
+        self.assertIn("1/min", titel)
+        werte = w.lauf_werte_bei(str(neu.id), x)
+        self.assertAlmostEqual(w.k_drehzahl.wert, werte["n"], places=3)
+        lam = next(k for k in w.live_kacheln if k.kanal == "lam")
+        self.assertEqual(lam.quelle.text(), "Lauf")
+        self.assertIsNotNone(werte.get("v"))                    # Kanaele des gespeicherten Laufs (Rolle km/h)
+        # Live-Takt ueberschreibt die Laufwerte nicht
+        w._kacheln_takt()
+        self.assertEqual(w._cursor_lauf, str(neu.id))
+        # Maus raus: wieder live
+        w.plot._leave()
+        self.assertIsNone(w._cursor_lauf)
+        self.assertIn("LIVE", w.live_titel.text())
+        self.assertEqual(w.plot.fahnen.texte(), [])
+        self.assertNotEqual(lam.quelle.text(), "Lauf")
+
+    def test_anweisung_gross(self):
+        """Laufzustaende gross ueber dem Diagramm; GAS WEG haelt seine Zeit; Option aus: nur GAS WEG."""
+        from types import SimpleNamespace
+        from pyst.runner import COAST, RUN, WAIT
+        w = self.w
+        gas = {"weg": False}
+        ctrl = SimpleNamespace(state=WAIT, gas_off=lambda: gas["weg"], ausrollen=False,
+                               params=SimpleNamespace(n_stop=10800))
+        lv = SimpleNamespace(n_calc=9500.0)
+        alt = w.ctrl
+        w.ctrl = ctrl
+        try:
+            self.assertTrue(w.anzeige_an(mp.ANWEISUNG_GROSS))       # Standard an
+            w._laufzustand_zeigen(WAIT, lv)
+            self.assertTrue(w.anweisung.isVisible())
+            self.assertEqual(w.anweisung.text(), "GO – Vollgas!")
+            self.assertEqual(w.anweisung.stufe, theme.GUT)
+            ctrl.state = RUN
+            w._laufzustand_zeigen(RUN, lv)
+            self.assertEqual(w.anweisung.text(), "Messung … 9.500 1/min")
+            gas["weg"] = True
+            w._laufzustand_zeigen(RUN, lv)
+            self.assertEqual(w.anweisung.text(), "GAS WEG!")
+            self.assertIn("n Stop 10.800", w.anweisung.unter.text())
+            self.assertEqual(w.anweisung.stufe, theme.FEHLER)
+            gas["weg"] = False
+            w._laufzustand_zeigen(RUN, lv)                          # GAS WEG bleibt seine Zeit stehen
+            self.assertEqual(w.anweisung.text(), "GAS WEG!")
+            ctrl.ausrollen, gas["weg"] = True, True
+            w._laufzustand_zeigen(RUN, lv)
+            self.assertEqual(w.anweisung.text(), "GAS WEG – KUPPLUNG ZIEHEN!")
+            ctrl.state = COAST
+            w._laufzustand_zeigen(COAST, lv)
+            self.assertEqual(w.anweisung.text(), "KUPPLUNG ZIEHEN")
+            self.assertIn("ausrollen lassen", w.anweisung.unter.text())
+            # passt in die Breite des Diagramms
+            self.assertLessEqual(w.anweisung.geometry().right(), w.plot.width())
+            # Option aus: nur noch GAS WEG wie frueher
+            w.anzeige_setzen(mp.ANWEISUNG_GROSS, False)
+            self.assertFalse(w.anweisung.isVisible())
+            ctrl.state = WAIT
+            w._laufzustand_zeigen(WAIT, lv)
+            self.assertFalse(w.anweisung.isVisible())
+            ctrl.state = RUN
+            w._laufzustand_zeigen(RUN, lv)
+            self.assertEqual(w.anweisung.text(), "GAS WEG")
+            w._gross_verbergen()                                    # START: weg
+            self.assertFalse(w.anweisung.isVisible())
+        finally:
+            w.ctrl = alt
+
+    def test_ergebnis_gross(self):
+        from types import SimpleNamespace
+        w = self.w
+        ids = self._laeufe(1)
+        r = SimpleNamespace(p_max=31.6, n_pmax=9850.0, m_max=22.7, n_mmax=8900.0)
+        self.assertTrue(w.anzeige_an(mp.ERGEBNIS_GROSS))
+        w._ergebnis_gross_zeigen(r, ids[0])
+        e = w.ergebnis_gross
+        self.assertTrue(e.isVisible())
+        self.assertIn("31,6 PS bei 9.850 1/min", e.werte_text())
+        self.assertIn("22,7 Nm bei 8.900 1/min", e.werte_text())
+        self.assertIn("Lauf", e.kopf.text())
+        self.assertIn("Serie, HD 135", e.kopf.text())
+        self.assertEqual(e.farbe, w._run_color(w.db.run(ids[0])))
+        w._esc()                                                    # Esc blendet aus (kein Abbruch)
+        self.assertFalse(e.isVisible())
+        w._ergebnis_gross_zeigen(r, None)                           # nicht gespeichert: Farbe der Live-Kurve
+        self.assertIn("nicht gespeichert", e.kopf.text())
+        from PySide6 import QtCore, QtTest
+        QtTest.QTest.mouseClick(e, QtCore.Qt.LeftButton)            # Klick blendet aus
+        self.assertFalse(e.isVisible())
+        w._ergebnis_gross_zeigen(r, ids[0])
+        w._gross_verbergen()                                        # START blendet aus
+        self.assertFalse(e.isVisible())
+        w.anzeige_setzen(mp.ERGEBNIS_GROSS, False)
+        w._ergebnis_gross_zeigen(r, ids[0])
+        self.assertFalse(e.isVisible())
+
+    def test_anzeige_optionen_schalter_und_menue(self):
+        """Schalter unter Einstellungen › Rolle/Lauf und im Menue Ansicht bleiben gleich, gespeichert in settings."""
+        w = self.w
+        boxen = w.page_settings.anzeige_boxen
+        akt = w.anzeige_aktionen
+        self.assertEqual(set(boxen), set(mp.ANZEIGE_OPTIONEN))
+        for key, (std, _t, _tip) in mp.ANZEIGE_OPTIONEN.items():
+            self.assertEqual(boxen[key].isChecked(), std)
+            self.assertEqual(akt[key].isChecked(), std)
+        self.assertFalse(w.anzeige_an(mp.ANZEIGE_LEGENDE))
+        boxen[mp.ANZEIGE_LEGENDE].setChecked(True)
+        self.assertTrue(akt[mp.ANZEIGE_LEGENDE].isChecked())
+        self.assertTrue(w.settings[mp.ANZEIGE_LEGENDE])
+        akt[mp.ERGEBNIS_GROSS].setChecked(False)
+        self.assertFalse(boxen[mp.ERGEBNIS_GROSS].isChecked())
+        self.assertFalse(w.settings[mp.ERGEBNIS_GROSS])
+        from pyst import gui
+        gespeichert = gui.load_settings()
+        self.assertTrue(gespeichert[mp.ANZEIGE_LEGENDE])
+        self.assertFalse(gespeichert[mp.ERGEBNIS_GROSS])
+        texte = [a.text() for a in w.menuBar().actions()[0].menu().actions()]
+        self.assertIn("Legende im Diagramm", texte)
+
+    def test_legende_aller_laeufe(self):
+        w = self.w
+        ids = self._laeufe(2)
+        w.db.update_run(ids[0], notiz="HD 140 statt 135")
+        w._reload_runs()
+        self.assertEqual(w.plot.legende_text(), "")                 # Standard aus
+        w.anzeige_setzen(mp.ANZEIGE_LEGENDE, True)
+        text = w.plot.legende_text()
+        self.assertTrue(w.plot.legende.isVisible())
+        self.assertIn("Serie, HD 135", text)
+        self.assertIn("HD 140 statt 135", text)
+        label = w._run_label(w.db.run(ids[0])).split("  ")[0]
+        self.assertIn(label, text)
+        w.anzeige_setzen(mp.ANZEIGE_LEGENDE, False)
+        self.assertEqual(w.plot.legende_text(), "")
+
+    def test_live_plaetze_hinzufuegen_entfernen(self):
+        """„＋“ fuegt Live-Plaetze an (hoechstens LIVE_MAX), „Platz entfernen“ im Titel-Menue, je Fahrzeug."""
+        from pyst.db import LIVE_MAX
+        w = self.w
+        self.assertEqual(len(w.live_kacheln), 5)
+        self.assertTrue(w.live_platz_hinzufuegen("egt2"))
+        self.assertEqual(len(w.live_kacheln), 6)
+        self.assertEqual(w.live_kacheln[5].kanal, "egt2")
+        self.assertEqual(w.live_kacheln[5].nr.text(), "6")
+        self.assertEqual(w.db.live_plaetze(self.vid)[5]["kanal"], "egt2")
+        # Menue des Knopfs ＋ und Titel-Menue mit „Platz entfernen“
+        m = w.live_plus.menu()
+        w._live_plus_menue(m)
+        self.assertTrue(any(a.text().startswith("EGT 2") for a in m.actions()))
+        k = w.live_kacheln[0]
+        k._menue_fuellen()
+        weg = next(a for a in k.menue.actions() if a.text() == "Platz entfernen")
+        weg.trigger()
+        pump(0.05)
+        self.assertEqual(len(w.live_kacheln), 5)
+        self.assertEqual(w.live_kacheln[0].kanal, "ecu:coolant")    # der Rest rueckt auf
+        while w.live_platz_hinzufuegen("rate"):
+            pass
+        self.assertEqual(len(w.live_kacheln), LIVE_MAX)
+        self.assertFalse(w.live_plus.isVisibleTo(w.live_flaeche.widget()))
+        # rollt, Drehzahl und UMGEBUNG bleiben ausserhalb des Rollbereichs
+        self.assertFalse(w.live_flaeche.widget().isAncestorOf(w.k_drehzahl))
+        self.assertTrue(w.live_flaeche.widget().isAncestorOf(w.live_kacheln[-1]))
+        while w.live_platz_entfernen(0):
+            pass
+        self.assertEqual(w.live_kacheln, [])
+        self.assertEqual(w.db.live_plaetze(self.vid), [])
+        self.assertTrue(w.live_plus.isVisibleTo(w.live_flaeche.widget()))
+        pump(0.05)
 
 
 if __name__ == "__main__":

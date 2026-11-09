@@ -17,6 +17,12 @@ Kanal; die Legende oben links nennt Strichart und Bereich.
 Band (set_band): halbtransparente Flaeche zwischen zwei Kurven je Lauf, z.B. min–max der Quelllaeufe eines
 Mittelwert-Laufs (Leistung links, Drehmoment rechts), in der Laufarbe. set_legende: Hinweis oben im Diagramm
 (z.B. „━━ Ø 3 Läufe · Serie HD 135  gesperrt, Referenz · Band = min–max der Quellläufe“).
+
+Fähnchen am Cursor (CursorFahnen): steht die Maus im Diagramm, zeigt jede sichtbare Kurve an der Cursor-Drehzahl ein
+kleines Fähnchen mit ihrem Wert („31,6 PS“, „22,7 Nm“, „λ 0,92“) in der Laufarbe – gefuellt fuer durchgezogene,
+umrandet fuer gestrichelte Kurven. Gleiche Farbe und gleicher Kanal werden zusammengefasst („31,6 / 30,9 PS“);
+die Fähnchen werden senkrecht auseinandergeschoben (fahnen_verteilen), bei Platzmangel auf beide Seiten des Cursors
+verteilt und kleiner geschrieben. zeige_cursor(n) setzt den Cursor ohne Maus (Tests, Bilder).
 """
 import math
 from typing import Dict, List, Optional, Tuple
@@ -158,6 +164,95 @@ def _even_intervals(span: float, prefer=(4, 3, 5, 6, 2)) -> int:
 
 
 FIELD_H = 17
+
+
+def fahnen_verteilen(ys: List[float], h: float, oben: float, unten: float, abstand: float = 2.0) -> List[float]:
+    """Senkrechte Lage (Oberkante) von Fähnchen der Hoehe h: moeglichst nah an ys (gewuenschte Oberkanten), ohne
+    Ueberlappung, innerhalb oben … unten. Reihenfolge der Eingabe bleibt; passen nicht alle, stehen sie dicht ab
+    oben (der Aufrufer verkleinert dann oder verteilt auf zwei Spalten)."""
+    if not ys:
+        return []
+    order = sorted(range(len(ys)), key=lambda i: ys[i])
+    schritt = h + abstand
+    pos = [min(max(float(ys[i]), oben), unten - h) for i in order]
+    for k in range(1, len(pos)):                     # nach unten schieben
+        pos[k] = max(pos[k], pos[k - 1] + schritt)
+    if pos[-1] > unten - h:                          # unten heraus: von unten wieder hochschieben
+        pos[-1] = unten - h
+        for k in range(len(pos) - 2, -1, -1):
+            pos[k] = min(pos[k], pos[k + 1] - schritt)
+        if pos[0] < oben:                            # passt nicht: dicht ab oben
+            pos = [oben + k * schritt for k in range(len(pos))]
+    out = [0.0] * len(ys)
+    for k, i in enumerate(order):
+        out[i] = pos[k]
+    return out
+
+
+def _kurz(v: float) -> str:
+    """Zahl fuer ein Fähnchen (deutsch): ab 100 ohne, ab 10 mit einer, sonst zwei Nachkommastellen."""
+    from .kacheln import zahl
+    a = abs(v)
+    return zahl(v, 0 if a >= 100 else (1 if a >= 10 else 2))
+
+
+class CursorFahnen(QtWidgets.QWidget):
+    """Ebene ueber dem Diagramm (Maus geht durch): zeichnet die Fähnchen, die DynoPlot._fahnen_setzen berechnet.
+    fahnen: [{"x", "y", "w", "h", "text", "farbe", "voll", "px", "schrift", "punkt": (x, y)}] in Widget-Koordinaten."""
+
+    def __init__(self, parent: QtWidgets.QWidget):
+        super().__init__(parent)
+        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+        self.fahnen: List[dict] = []
+        self.hide()
+
+    def setzen(self, fahnen: List[dict]):
+        self.fahnen = fahnen
+        self.setGeometry(self.parentWidget().rect())
+        self.setVisible(bool(fahnen))
+        self.raise_()
+        self.update()
+
+    def texte(self) -> List[str]:
+        """Texte der Fähnchen (fuer Tests)."""
+        return [f["text"] for f in self.fahnen]
+
+    def paintEvent(self, _ev):
+        if not self.fahnen:
+            return
+        T = theme.tokens()
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        panel = QtGui.QColor(T["panel"])
+        panel.setAlpha(235)
+        for f in self.fahnen:
+            farbe = QtGui.QColor(f["farbe"])
+            rect = QtCore.QRectF(f["x"], f["y"], f["w"], f["h"])
+            px, py = f["punkt"]
+            mitte_y = rect.center().y()
+            if abs(mitte_y - py) > 2:                    # verschoben: duenne Linie vom Kurvenpunkt zum Fähnchen
+                p.setPen(QtGui.QPen(farbe, 1.2))
+                kante = rect.left() if rect.left() > px else rect.right()
+                p.drawLine(QtCore.QPointF(px, py), QtCore.QPointF(kante, mitte_y))
+            p.setPen(QtGui.QPen(QtGui.QColor(T["plot"]), 1.2))
+            p.setBrush(farbe)
+            p.drawEllipse(QtCore.QPointF(px, py), 3.5, 3.5)
+            if f["voll"]:
+                p.setPen(QtGui.QPen(farbe, 1.0))
+                p.setBrush(farbe)
+                schrift = QtGui.QColor(f.get("schrift") or "#ffffff")
+            else:
+                p.setPen(QtGui.QPen(farbe, 2.0))
+                p.setBrush(panel)
+                schrift = QtGui.QColor(T["text"])
+            p.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 3, 3)
+            font = QtGui.QFont(self.font())
+            font.setPixelSize(f["px"])
+            font.setBold(True)
+            p.setFont(font)
+            p.setPen(schrift)
+            p.drawText(rect, QtCore.Qt.AlignCenter, f["text"])
+        p.end()
 
 
 class AxisField(QtWidgets.QLineEdit):
@@ -328,6 +423,10 @@ class DynoPlot(pg.GraphicsLayoutWidget):
         self.legende.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
         self.legende.hide()
         self._legende_html = ""
+        self.fahnen = CursorFahnen(self)            # Werte am Cursor als Fähnchen je Kurve
+        self.fahnen_an = True
+        self._cursor_inside = False
+        self._cursor_x = 0.0
         for plot in (self.top, self.bottom):
             plot.end_labels = False
         self.apply_scale(self.default_scale())
@@ -371,6 +470,7 @@ class DynoPlot(pg.GraphicsLayoutWidget):
         if self.overlays:
             self._scale_overlays()
         self._lower_axis_labels()
+        self._fahnen_nachziehen()                         # Laufarben im neuen Thema
 
     # ------------------------------------------------------------ Kurven
     def set_curves(self, key: str, n, ps, nm, lam=None, egt1=None, egt2=None, color="#000000",
@@ -414,6 +514,7 @@ class DynoPlot(pg.GraphicsLayoutWidget):
             self._scale_overlays()
         if rescale and not self.frozen:
             self.auto_scale()
+        self._fahnen_nachziehen()
 
     def _lower_want(self, store: Dict[str, np.ndarray], width: float) -> dict:
         """Linien des unteren Diagramms: Rolle "lo:<Seite>:<Kanal>" -> (Besitzer, Werte, Strichart, Breite)."""
@@ -691,6 +792,7 @@ class DynoPlot(pg.GraphicsLayoutWidget):
         """Lauf aus dem Diagramm: Kurven und Band."""
         self._remove_curves(key)
         self.remove_band(key)
+        self._fahnen_nachziehen()
 
     def clear_all(self):
         for key in list(self.items) + list(self.bands):
@@ -847,6 +949,7 @@ class DynoPlot(pg.GraphicsLayoutWidget):
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
         QtCore.QTimer.singleShot(0, self._place_fields)
+        QtCore.QTimer.singleShot(0, self, self._fahnen_nachziehen)
 
     def set_limits(self, limits: Dict[str, float]):
         """Feste Achsgrenzen (0 = automatisch), z.B. {"n_lo": 5000, "ps_lo": 5}. Wirkt sofort."""
@@ -860,6 +963,8 @@ class DynoPlot(pg.GraphicsLayoutWidget):
             self.apply_scale(self.last_scale or self.default_scale())
 
     def apply_scale(self, sc: dict):
+        if getattr(self, "_cursor_inside", False):
+            QtCore.QTimer.singleShot(0, self, self._fahnen_nachziehen)    # Achsen neu: Fähnchen an die Kurven
         self.last_scale = dict(sc)
         lim = self.limits
         x_lo = lim["n_lo"] or sc["x"][0]
@@ -951,25 +1056,147 @@ class DynoPlot(pg.GraphicsLayoutWidget):
     def _mouse_moved(self, pos):
         for plot in (self.top.pi, self.bottom.pi):
             if plot.isVisible() and plot.sceneBoundingRect().contains(pos):
-                x = plot.vb.mapSceneToView(pos).x()
-                for line in self.cursor_lines:
-                    line.setPos(x)
-                    line.setVisible(True)
-                self._cursor_inside = True
-                self.cursor_moved.emit(float(x))
+                self.zeige_cursor(float(plot.vb.mapSceneToView(pos).x()))
                 return
         self._leave()
+
+    def zeige_cursor(self, x: float):
+        """Cursor auf die Drehzahl x setzen (wie die Maus): Linien, Fähnchen, Signal cursor_moved."""
+        for line in self.cursor_lines:
+            line.setPos(x)
+            line.setVisible(True)
+        self._cursor_inside = True
+        self._cursor_x = float(x)
+        self._fahnen_setzen(self._cursor_x)
+        self.cursor_moved.emit(float(x))
 
     def _leave(self):
         if getattr(self, "_cursor_inside", False):
             self._cursor_inside = False
             for line in self.cursor_lines:
                 line.setVisible(False)
+            self.fahnen.setzen([])
             self.cursor_left.emit()
 
     def leaveEvent(self, ev):
         self._leave()
         super().leaveEvent(ev)
+
+    # ------------------------------------------------------------ Fähnchen
+    def _fahnen_nachziehen(self):
+        if getattr(self, "_cursor_inside", False) and hasattr(self, "fahnen"):
+            self._fahnen_setzen(self._cursor_x)
+
+    def _fahne_teile(self, role: str, v: float) -> Tuple[str, str, str]:
+        """(Vorsatz, Zahl, Einheit): ("", "31,6", " PS"), ("λ ", "0,92", ""), ("EGT 2 ", "845", " °C"). v ist der
+        gezeichnete Wert (im AFR-Modus ist die Lambda-Linie schon x 14,7)."""
+        if role == "ps":
+            return "", _kurz(v), " PS"
+        if role == "nm":
+            return "", _kurz(v), " Nm"
+        if role.startswith("lo:"):
+            _lo, side, key = role.split(":", 2)
+            if key == "lam":
+                from .kacheln import zahl
+                return ("λ ", zahl(v, 2), "") if self.lambda_mode else ("AFR ", zahl(v, 1), "")
+            label, unit = self.lower_title(key)
+            mehrere = len([k for k in self._mit_daten(side) if k != "lam"]) > 1 or key.startswith(EXTRA_PREFIX)
+            return (label + " " if mehrere else ""), _kurz(v), (f" {unit}" if unit else "")
+        if role.startswith(EXTRA_PREFIX):
+            name = role[len(EXTRA_PREFIX):]
+            label, unit = next(((lab, u) for n, lab, u in self.overlays if n == name), (name, ""))
+            return label + " ", _kurz(v), (f" {unit}" if unit else "")
+        return "", _kurz(v), ""
+
+    def _fahnen_setzen(self, x: float):
+        """Fähnchen aller sichtbaren Kurven an der Drehzahl x berechnen und zeigen."""
+        if not self.fahnen_an:
+            self.fahnen.setzen([])
+            return
+
+        def rect(item):
+            r = item.parentItem().mapRectToScene(item.geometry())
+            return QtCore.QRectF(self.mapFromScene(r).boundingRect())
+
+        bereiche = {"oben": rect(self.top.pi.vb)}
+        if self.lower_visible:
+            bereiche["unten"] = rect(self.bottom.pi.vb)
+        gruppen: Dict[tuple, dict] = {}                   # (Bereich, Rolle, Farbe) -> Fähnchen (zusammengefasst)
+        for key, cur in self.items.items():
+            color, _w = self._styles.get(key, ("#000000", 2.0))
+            farbe = theme.laufarbe(color)
+            for role, (item, owner) in cur.items():
+                bereich = "unten" if role.startswith("lo:") else "oben"
+                if bereich not in bereiche or not item.isVisible():
+                    continue
+                xs, ys = item.getData()
+                if xs is None or ys is None or not len(xs):
+                    continue
+                ok = np.isfinite(xs)
+                if not ok.any() or x < np.min(xs[ok]) or x > np.max(xs[ok]):
+                    continue
+                j = int(np.argmin(np.where(ok, np.abs(xs - x), np.inf)))
+                y = float(ys[j])
+                if not math.isfinite(y) or (role.endswith(EGT_KEYS) and y <= 0):
+                    continue
+                vb = owner.vb if isinstance(owner, pg.PlotItem) else owner
+                pt = self.mapFromScene(vb.mapViewToScene(QtCore.QPointF(float(xs[j]), y)))
+                r = bereiche[bereich]
+                py = min(max(float(pt.y()), r.top()), r.bottom())
+                vor, zahl_text, nach = self._fahne_teile(role, y)
+                voll = item.opts["pen"].style() == QtCore.Qt.SolidLine and not role.startswith(EXTRA_PREFIX)
+                g = gruppen.setdefault((bereich, role, farbe), {"bereich": bereich, "farbe": farbe, "voll": voll,
+                                                               "vor": vor, "nach": nach, "zahlen": [], "ys": []})
+                g["zahlen"].append(zahl_text)
+                g["ys"].append(py)
+        cx = float(self.mapFromScene(self.top.pi.vb.mapViewToScene(QtCore.QPointF(x, 0.0))).x())
+        fahnen = []
+        for name, r in bereiche.items():
+            fahnen += self._fahnen_legen([g for g in gruppen.values() if g["bereich"] == name], r, cx)
+        self.fahnen.setzen(fahnen)
+
+    def _fahnen_legen(self, liste: List[dict], r: QtCore.QRectF, cx: float) -> List[dict]:
+        """Fähnchen eines Diagramms anordnen: rechts vom Cursor (am rechten Rand links davon), nicht ueberlappend;
+        passen sie nicht in eine Spalte, abwechselnd rechts und links, notfalls kleinere Schrift."""
+        if not liste:
+            return []
+        for g in liste:
+            g["text"] = g["vor"] + " / ".join(dict.fromkeys(g["zahlen"])) + g["nach"]
+            g["y0"] = sum(g["ys"]) / len(g["ys"])
+        liste.sort(key=lambda g: g["y0"])
+        hoehe = r.height() - 2
+        px, spalten = 12, 1
+        for px in (12, 11, 10):
+            h = px + 7
+            if len(liste) * (h + 2) <= hoehe:
+                spalten = 1
+                break
+            spalten = 2
+            if (len(liste) + 1) // 2 * (h + 2) <= hoehe:
+                break
+        h = px + 7
+        font = QtGui.QFont(self.font())
+        font.setPixelSize(px)
+        font.setBold(True)
+        fm = QtGui.QFontMetrics(font)
+        for g in liste:
+            g["w"] = fm.horizontalAdvance(g["text"]) + 12
+        if spalten == 1:
+            rechts = cx + 10 + max(g["w"] for g in liste) <= r.right()
+            seiten = [("rechts" if rechts else "links", liste)]
+        else:
+            seiten = [("rechts", liste[0::2]), ("links", liste[1::2])]
+        out = []
+        for seite, teil in seiten:
+            ys = fahnen_verteilen([g["y0"] - h / 2 for g in teil], h, r.top() + 1, r.bottom() - 1)
+            for g, y in zip(teil, ys):
+                x = cx + 10 if seite == "rechts" else cx - 10 - g["w"]
+                x = min(max(x, r.left() + 1), r.right() - g["w"] - 1)
+                weiss = theme.kontrast(g["farbe"], "#ffffff") >= theme.kontrast(g["farbe"], "#000000")
+                out.append({"x": x, "y": y, "w": g["w"], "h": h, "text": g["text"], "farbe": g["farbe"],
+                            "voll": g["voll"], "px": px, "schrift": "#ffffff" if weiss else "#000000",
+                            "punkt": (cx, g["y0"])})
+        return out
 
     def values_at(self, key: str, n_rpm: float) -> Optional[Dict[str, float]]:
         d = self.data.get(key)

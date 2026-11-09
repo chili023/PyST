@@ -32,9 +32,17 @@ Der Reiter **Messen** ist der Arbeitsplatz am Prüfstand: Lauf starten, Kurve li
 | KUPPLUNG ZIEHEN – ausrollen lassen … | Ausrollversuch läuft |
 | „32.0 PS bei 10000 1/min“ | Ergebnis. Mit Verlusten: „Motor … PS bei … 1/min · Rad … PS“ |
 
-Bei *n Stop* erscheint zusätzlich 2 s lang ein großes **GAS WEG**-Band über dem Diagramm mit dem Grund
-(„n Stop … 1/min erreicht – Lauf wird ausgewertet“). Findet PyST nach 120 s kein Laufende, bricht es ab
+**Anweisungen groß** (Standard an): Die Texte des Statusfelds stehen im Lauf zusätzlich sehr groß über dem Diagramm,
+in derselben Farbe (GO grün, Messung gelb, GAS WEG rot, KUPPLUNG ZIEHEN gelb), darunter der Grund
+(„n Stop … 1/min erreicht – Lauf wird ausgewertet“). GAS WEG bleibt mindestens 2 s stehen. Ist die Option aus,
+erscheint wie bisher nur das große **GAS WEG**. Findet PyST nach 120 s kein Laufende, bricht es ab
 („Kein Laufende nach 120 s – abgebrochen“).
+
+**Ergebnis groß** (Standard an): Nach dem Lauf stehen **Pmax** und **Mmax** mit Drehzahl groß über dem Diagramm,
+mit Farbe, Uhrzeit und Setup des Laufs. Weg mit START, Klick darauf oder Esc.
+
+Beide Optionen und **Legende im Diagramm** (Standard aus) schaltet man unter Einstellungen › Rolle/Lauf ›
+**Anzeige beim Messen** oder im Menü **Ansicht**.
 
 Vor dem Start prüft PyST die Werte: *n Stop* muss größer als *n vom Gas* sein, Übersetzung, Rollengeber,
 Zündimpulse, Trägheit und Filter müssen größer als 0 sein. Sonst kommt eine Meldung und der Lauf startet nicht.
@@ -94,10 +102,14 @@ solange der Reiter Messen offen ist.
 | Teil | Inhalt |
 |---|---|
 | große Drehzahlkachel | Quelle wählbar: **Drehzahl Motor (Rolle × i)**, **Drehzahl Motor (Zündung)**, **Drehzahl Motor (ECU)**. Darunter Rolle km/h und Zündung. Balken 0–13000, gelb ab 10500, rot ab 11500 |
-| 5 kleine Kacheln | Standard: EGT 1, CLT (ECU), Lambda, Rolle km/h, leer |
+| 0 bis 12 kleine Kacheln | Standard: EGT 1, CLT (ECU), Lambda, Rolle km/h, leer. **＋** am Ende fügt einen Platz an |
 
-- **Titel anklicken:** Kanal wählen. Kanäle der PST: Motor (Rolle × i), Motor (Zündung), Rolle km/h, EGT 1/2,
-  Lambda/AFR, Übersetzung Zündung/Rolle, Übersetzung ECU/Rolle, Messfrequenz. Dazu die Kanäle der ECU.
+- **Titel anklicken:** Kanal wählen oder **Platz entfernen**. Kanäle der PST: Motor (Rolle × i), Motor (Zündung),
+  Rolle km/h, EGT 1/2, Lambda/AFR, Übersetzung Zündung/Rolle, Übersetzung ECU/Rolle, Messfrequenz. Dazu die Kanäle
+  der ECU.
+- UMGEBUNG und die Drehzahl bleiben oben stehen, die kleinen Kacheln rollen, wenn sie nicht alle passen.
+- **Maus im Diagramm** (kein Lauf aktiv): Die Kacheln zeigen die Werte des neuesten Laufs an der Cursor-Drehzahl,
+  oben steht dann „LAUF 16:29 bei 9.500 1/min“ statt LIVE. Maus aus dem Diagramm: wieder live.
 - **Rechtsklick:** **Balkengrenzen …** (von/bis und bis zu 4 Bereiche gut, Warnung, Fehler, kalt) oder
   **Standardgrenzen**.
 - Alles gilt je Fahrzeug. Ohne ECU steht „ECU fehlt“.
@@ -112,7 +124,12 @@ solange der Reiter Messen offen ist.
 - **Kurven ▾** oben: **Unteres Diagramm anzeigen** und ECU-Kurven über der Leistung (jeweils Maximum).
 - **Kurven ▾** unten: Belegung links/rechts mit Lambda / AFR (Board), EGT 1/2 (Board) oder ECU-Kanälen.
 - **Achsgrenzen:** Zahl eintragen + Enter = fest, Feld leer = automatisch. Knopf **auto** setzt alle Achsen zurück.
-- **▸ Werte am Cursor:** klappt eine Tabelle mit den Werten an der Mausposition auf. **Spalten …** wählt die Spalten.
+- **Werte am Cursor:** Steht die Maus im Diagramm, zeigt jede Kurve an der Cursor-Drehzahl ein kleines Fähnchen mit
+  ihrem Wert („31,6 PS“, „22,7 Nm“, „λ 0,92“) in der Farbe des Laufs, gefüllt für Leistung, umrandet für Drehmoment.
+  Läufe gleicher Farbe teilen sich ein Fähnchen; bei vielen Läufen werden die Fähnchen kleiner und stehen links und
+  rechts vom Cursor.
+- **Legende im Diagramm** (Option, Standard aus): Farbe, Datum/Zeit und Setup bzw. Notiz jedes Laufs oben links.
+  Referenzen (Mittelwert) stehen immer in der Legende.
 - Im Lauf bleibt die Skalierung fest, damit die Kurve nicht springt.
 
 ## Läufe (Seitenleiste)

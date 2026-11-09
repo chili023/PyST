@@ -181,6 +181,7 @@ class WertKachel(QtWidgets.QFrame):
         k.set_laeufe([(farbe, "16:24", 29.7), …])   # mehrere Laeufe: Zeilen + Marken; [] = wieder Einzelwert
     """
     kanal_gewaehlt = QtCore.Signal(str)
+    entfernen = QtCore.Signal()               # „Platz entfernen“ im Titel-Menue (nur mit entfernbar = True)
 
     def __init__(self, platz: int = 0, groesse: str = GROSS, kanaele: Sequence[Kanal] = (),
                  parent: Optional[QtWidgets.QWidget] = None):
@@ -192,6 +193,7 @@ class WertKachel(QtWidgets.QFrame):
         self.dez = 0
         self.hervorgehoben = False
         self.menue_hinweis = ""
+        self.entfernbar = False                  # True: Eintrag „Platz entfernen“ im Titel-Menue
         self._fehlt_text = ""
         self._quelle_text = ""
         self.wert: Optional[float] = None
@@ -320,6 +322,8 @@ class WertKachel(QtWidgets.QFrame):
         a.setCheckable(True)
         a.setChecked(not self.kanal)
         a.triggered.connect(lambda _c=False: self.waehle(LEER))
+        if self.entfernbar:
+            m.addAction("Platz entfernen").triggered.connect(lambda _c=False: self.entfernen.emit())
         if self.menue_hinweis:
             h = m.addAction(self.menue_hinweis)
             h.setEnabled(False)

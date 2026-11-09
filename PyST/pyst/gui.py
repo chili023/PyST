@@ -202,6 +202,11 @@ class SettingsPage(QtWidgets.QScrollArea):
                 unten.addWidget(box, 1, QtCore.Qt.AlignTop)
                 unten.addLayout(self.verluste_lay, 3)
                 self.verluste_box = box
+            elif group == "Prüfstand":                 # darunter die Gruppe „Anzeige beim Messen“
+                spalte = QtWidgets.QVBoxLayout()
+                spalte.addWidget(box, 1)
+                spalte.addWidget(self._anzeige_gruppe(settings))
+                oben.add(spalte, 1, gruppe=paare[group])
             else:
                 oben.add(box, 1, gruppe=paare[group])
         self.filter_form = boxes["Filter"]
@@ -302,6 +307,21 @@ class SettingsPage(QtWidgets.QScrollArea):
         self.filter_mode.currentIndexChanged.connect(lambda i: self.set_filter_seconds(i == 0))
         self.set_filter_seconds(self.filter_seconds)
         self._rate = 60.0
+
+    def _anzeige_gruppe(self, settings: dict) -> QtWidgets.QGroupBox:
+        """Gruppe „Anzeige beim Messen“: je Option (messen_page.ANZEIGE_OPTIONEN) ein Kaestchen in anzeige_boxen;
+        das Hauptfenster verbindet sie mit dem Menue Ansicht (MessenMixin._anzeige_verbinden)."""
+        from .messen_page import ANZEIGE_OPTIONEN
+        box = QtWidgets.QGroupBox("Anzeige beim Messen")
+        lay = QtWidgets.QVBoxLayout(box)
+        self.anzeige_boxen: Dict[str, QtWidgets.QCheckBox] = {}
+        for key, (std, text, tip) in ANZEIGE_OPTIONEN.items():
+            cb = QtWidgets.QCheckBox(text)
+            cb.setToolTip(tip + f". Auch im Menü Ansicht. Einstellung „{key}“.")
+            cb.setChecked(bool(settings.get(key, std)))
+            lay.addWidget(cb)
+            self.anzeige_boxen[key] = cb
+        return box
 
     def _build_verbindung(self, settings: dict):
         """Unterreiter Verbindung: Messboard (links), Prüfen (rechts, setzt das Hauptfenster ein), Datenbank unten."""
@@ -636,7 +656,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self._shown_rate = 0.0
         self._cursor_n = 0.0
         self._cursor_inside = False
-        self._cursor_names: Optional[Dict[str, tuple]] = None   # Laufnamen der Cursor-Tabelle, _reload_runs leert sie
+        self._cursor_names: Optional[Dict[str, tuple]] = None   # Laufnamen am Cursor, _reload_runs leert sie
         self._live_vals: Dict[str, str] = {}
 
         self.tabs = QtWidgets.QTabWidget()
@@ -692,7 +712,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         QtCore.QTimer.singleShot(800, self._auto_connect)          # beim Start gleich versuchen
         self._update_buttons()
         QtGui.QShortcut(QtGui.QKeySequence("F1"), self, activated=self.on_start)
-        QtGui.QShortcut(QtGui.QKeySequence("Escape"), self, activated=self.on_abort)
+        QtGui.QShortcut(QtGui.QKeySequence("Escape"), self, activated=self._esc)   # Ergebnis gross weg, sonst Abbruch
         # am Hauptfenster: Ein Shortcut wirkt nur, solange sein Widget sichtbar ist
         QtGui.QShortcut(QtGui.QKeySequence("F3"), self, activated=self.page_hw.mark,
                         context=QtCore.Qt.ApplicationShortcut)
@@ -748,6 +768,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             grp.addAction(a)
             a.triggered.connect(lambda _c=False, w=wahl: theme.manager().setze(w))
             self.thema_aktionen[wahl] = a
+        self._anzeige_verbinden(v)                 # Anzeige beim Messen: Ergebnis/Anweisungen groß, Legende
         m = self.menuBar().addMenu("Datei")
         for text, slot, key in (("Öffnen / importieren (.pyst, Läufe, Mitschnitte) …", self.on_import, "Ctrl+O"),
                                 ("Läufe importieren …", self.on_import, "Ctrl+I"),
@@ -930,25 +951,10 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             boxes["right"].append(pair[1])
         update()
 
-    def _fill_cursor_menu(self):
-        """Spalten der Cursor-Tabelle."""
-        m = self.cursor_menu
-        m.clear()
-        m.addSection("Spalten der Cursor-Tabelle")
-        cols = self._cursor_cols()
-        for key, label, unit in self._lower_candidates():
-            self._check_row(m, f"{label} [{unit}]" if unit else label,
-                            [("", key in cols, lambda on, k=key: self._set_cursor_col(k, on))])
-
     def _cursor_cols(self):
+        """Kanaele der frueheren Cursor-Tabelle (Einstellung „cursor_cols“): ECU-Kanaele darin kommen weiter mit ins
+        Datenlager des Diagramms."""
         return self.settings.get("cursor_cols", ["lam", "egt1", "egt2"])
-
-    def _set_cursor_col(self, key: str, on: bool):
-        order = [k for k, _l, _u in self._lower_candidates()]
-        cur = set(self._cursor_cols()) - {key} | ({key} if on else set())
-        self.settings["cursor_cols"] = [k for k in order if k in cur]
-        save_settings(self.settings)
-        self._ecu_changed()
 
     # ---- unteres Diagramm: Belegung links/rechts
     def _lower_candidates(self, avail=None):
@@ -1383,7 +1389,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             return
         self._persist()
         self.tabs.setCurrentIndex(0)
-        self.gas_weg.verbergen()
+        self._gross_verbergen()
         self.ctrl.params = p
         self.ctrl.auto_climate = s.climate_auto.isChecked()
         self.ctrl.ausrollen = self.page_kalib.enabled()
@@ -1436,6 +1442,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         else:
             self._draw_live(final=True)
             self.plot.auto_scale()
+            self._legende_zeigen()
+        self._ergebnis_gross_zeigen(r, rid)                # Option „Ergebnis groß nach dem Lauf“
         if coast is not None:
             self.page_kalib.show_result(coast, self._coast_label(rid), rid)
             self.statusBar().showMessage(self.ctrl.coast_text(), 10000)

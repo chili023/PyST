@@ -187,7 +187,8 @@ SCHNELLWERT_ANZAHL = 3          # Standard-Anzahl (frueher fest)
 SCHNELLWERT_MAX = 8             # hoechstens so viele Plaetze je Fahrzeug
 SCHNELLWERT_STANDARD = ["hauptduese", "clip", "zzp"]
 
-LIVE_ANZAHL = 5
+LIVE_ANZAHL = 5                 # Standard-Anzahl der Live-Plaetze (frueher fest)
+LIVE_MAX = 12                   # hoechstens so viele Live-Plaetze je Fahrzeug
 LIVE_STUFEN = ("ok", "warn", "err", "cold")
 ECU_PREFIX = "ecu:"          # Live-Kanal einer ECU: "ecu:" + rusEFI-Kanalname (z.B. "ecu:coolant", "ecu:MAPValue")
 # Live-Kanaele des Messboards (Schluessel wie gui.gauges) -> (Name, Einheit); "" = Platz leer lassen
@@ -212,6 +213,12 @@ LIVE_STANDARD = [
     {"kanal": "v", "min": 0.0, "max": 200.0, "zonen": []},
     {"kanal": "", "min": 0.0, "max": 100.0, "zonen": []},
 ]
+LIVE_LEER = {"kanal": "", "min": 0.0, "max": 100.0, "zonen": []}     # Standard weiterer Plaetze (ab Platz 6)
+
+
+def live_standard(i: int) -> Dict[str, Any]:
+    """Standard des Live-Platzes i (0-basiert): die 5 Standardplaetze, danach leer."""
+    return LIVE_STANDARD[i] if i < len(LIVE_STANDARD) else LIVE_LEER
 
 MESSPLAETZE = 5              # Laeufe im Messfenster (gesperrte + rollierende)
 
@@ -756,17 +763,18 @@ class Database:
         return self.set_vehicle_pref(vid, "schnellwerte", keys)
 
     def live_plaetze(self, vid: Optional[int]) -> List[Dict[str, Any]]:
-        """Die 5 Live-Plaetze (Messen): [{"kanal", "min", "max", "zonen": [[von, bis, stufe], ...]}],
-        kanal: Schluessel aus LIVE_KANAELE, ECU_PREFIX + rusEFI-Kanal oder "" (leer); stufe aus LIVE_STUFEN."""
+        """Die Live-Plaetze (Messen), 0 … LIVE_MAX je Fahrzeug: [{"kanal", "min", "max", "zonen": [[von, bis, stufe],
+        ...]}], kanal: Schluessel aus LIVE_KANAELE, ECU_PREFIX + rusEFI-Kanal oder "" (leer); stufe aus LIVE_STUFEN.
+        Ohne Eintrag die 5 Standardplaetze; gespeicherte Listen aelterer Versionen (immer 5 Plaetze) gelten weiter."""
         raw = self.vehicle_pref(vid, "live", None)
-        raw = raw if isinstance(raw, list) else []
-        return [_live_platz(raw[i] if i < len(raw) else LIVE_STANDARD[i], LIVE_STANDARD[i])
-                for i in range(LIVE_ANZAHL)]
+        if not isinstance(raw, list):
+            raw = LIVE_STANDARD
+        return [_live_platz(x, live_standard(i)) for i, x in enumerate(raw[:LIVE_MAX])]
 
     def set_live_plaetze(self, vid: Optional[int], plaetze: List[Dict[str, Any]]) -> bool:
-        p = list(plaetze)[:LIVE_ANZAHL]
-        p += LIVE_STANDARD[len(p):]
-        return self.set_vehicle_pref(vid, "live", [_live_platz(x, LIVE_STANDARD[i]) for i, x in enumerate(p)])
+        """Plaetze speichern (so viele wie angegeben, hoechstens LIVE_MAX)."""
+        p = list(plaetze)[:LIVE_MAX]
+        return self.set_vehicle_pref(vid, "live", [_live_platz(x, live_standard(i)) for i, x in enumerate(p)])
 
     def gesperrte_plaetze(self, vid: Optional[int]) -> List[int]:
         """Lauf-IDs mit Schloss im Messfenster (auch Mittelwerte), hoechstens MESSPLAETZE, Reihenfolge wie
