@@ -40,7 +40,7 @@ Das ist Absicht (galvanische Verbindung zum PC). Port der Zange unter Einstellun
 PyST hat keinen gültigen Schlüssel der Basis, oder die Basis hat einen **Neuen Schlüssel** vergeben. Einmal per USB
 verbinden, dann wieder **PC per WLAN verbinden**. Eine abgelehnte Anmeldung wiederholt PyST nicht von selbst.
 
-**Statusleiste: „im Bootloader – Firmware unter Einstellungen › Firmware aufspielen“.**
+**Statusleiste: „im Bootloader – Firmware unter Einstellungen › Software & Firmware aufspielen“.**
 Die Basis hat keine gültige Firmware (z. B. abgebrochenes Update). Unter [Firmware und Updates](Firmware-und-Updates.md)
 neu aufspielen.
 
@@ -82,9 +82,20 @@ Bei Filtern in Messpunkten wirken sie bei 60 Hz nur ein Drittel so lang. Filter 
 Das Zündsignal war nicht brauchbar. Dann nimmt PyST den eingestellten Wert. ⚠️ Funkenmessung ist noch nicht am
 Prüfstand bestätigt.
 
-**Vor START kommt „Setup geändert“.**
-Die SETUP-WERTE wurden geändert, aber nicht gespeichert. Speichern, nur für diesen Lauf nehmen oder abbrechen.
-Abschaltbar mit **Bei geändertem Setup vor START nachfragen**.
+**Vor START kommt „Setup unverändert – Änderungen eintragen?“.**
+PyST fragt, ob am Motorrad etwas geändert wurde, das noch nicht in den SETUP-WERTEN steht. Nichts geändert:
+**Unverändert starten** (Enter oder F1). Sonst die neuen Werte in die Felder tippen und **Übernehmen und starten**;
+sie gelten für diesen Lauf. Sind die SETUP-WERTE schon geändert, kommt die Frage nicht. Die Zangentaste „Neuer Lauf“
+fragt nie. Abschaltbar mit **Vor START nachfragen, ob sich das Setup geändert hat** (Einstellungen › Rolle/Lauf).
+Siehe [Messen](Messen.md#start-nachfrage).
+
+**START geht nicht: „Ausrollversuch-Assistent offen – erst schließen, dann START“.**
+Solange das Fenster des Ausrollversuch-Assistenten offen ist, startet kein Lauf. Assistent schließen.
+
+**Ein alter Lauf oder ein Mittelwert soll ins Messdiagramm.**
+In Messen die Seitenleiste **Läufe** öffnen und oben **＋** drücken („Läufe hinzufügen“, Art z. B. „nur
+Mittelwerte“). Sind alle 5 Plätze gesperrt, zuerst ein Schloss lösen. Den Knopf „Referenz laden …“ gibt es seit 1.4.2
+nicht mehr. Siehe [Messen](Messen.md#läufe-hinzufügen).
 
 **Klima zeigt „noch nicht gelesen“.**
 PyST liest nur zwischen den Läufen (beim START, von Hand, im Leerlauf alle 5 min bei offenem Reiter Messen). Unter
@@ -131,7 +142,7 @@ Auch dann kann der Bootloader des Geräts die Datei ablehnen. Siehe
 In `~/PyST` (Windows `C:\Users\<Name>\PyST`). Den Pfad der Datenbank zeigt Einstellungen › Verbindung unten.
 
 **Ein Mittelwert fehlt in der .pyst-Datei bzw. im PDF.**
-Das ist in 1.4.1 so: Mittelwerte kommen nicht in `.pyst`-Dateien und nicht in die PDF-Tabelle.
+Das ist in 1.4.2 noch so: Mittelwerte kommen nicht in `.pyst`-Dateien und nicht in die PDF-Tabelle.
 
 **Ich habe einen Lauf gelöscht.**
 **Löschen** in der Laufliste fragt nach („Messdateien im PyST-Datenordner werden mitgelöscht.“) und entfernt dann auch

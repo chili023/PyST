@@ -67,7 +67,7 @@ cd PyST
 
 ## 2. Messelektronik flashen
 
-Seit PyST 1.4.1 geht das auch direkt aus PyST: **Einstellungen › Firmware**, Karten **Arduino Mega** und
+Seit PyST 1.4.1 geht das auch direkt aus PyST: **Einstellungen › Software & Firmware**, Karten **Arduino Mega** und
 **STM32 (F446)**, Knopf **Flashen** (Firmware aus dem öffentlichen Branch `firmware`). Das ist noch nicht am
 Prüfstand bestätigt. Die Wege von Hand stehen unten.
 

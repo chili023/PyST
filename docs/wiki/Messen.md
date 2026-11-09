@@ -2,7 +2,7 @@
 
 Der Reiter **Messen** ist der Arbeitsplatz am Prüfstand: Lauf starten, Kurve live sehen, Ergebnis ablesen.
 
-![Messen, bereit](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_messen_bereit.png)
+![Messen, bereit](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_bereit.png)
 
 > ⚠️ PyST steuert den Motor nicht. **GAS WEG** ist nur ein Hinweis. Gas wegnehmen muss der Fahrer.
 
@@ -17,7 +17,7 @@ Der Reiter **Messen** ist der Arbeitsplatz am Prüfstand: Lauf starten, Kurve li
 | Statusfeld | Zustand und Anweisung an den Fahrer (Tabelle unten) |
 | **Verbinden / Trennen** | Messboard verbinden oder trennen |
 | **Lauf-Einstellungen …** | kleines Fenster mit Übersetzung, Filter und Laufgrenzen. Darunter steht kurz, was gilt, z. B. „i 6,850 (Hand) · Filter 35 / 15 Pkt.“ |
-| **START  (F1)** | Lauf starten. Im Lauf wird der Knopf rot: **Abbrechen  (Esc)**, beim Ausrollen **Ausrollen beenden (Esc)** |
+| **START  (F1)** | Lauf starten, bei unverändertem Setup erst mit kurzer [Nachfrage](#start-nachfrage). Im Lauf wird der Knopf rot: **Abbrechen  (Esc)**, beim Ausrollen **Ausrollen beenden (Esc)** |
 
 ### Statusfeld
 
@@ -32,11 +32,15 @@ Der Reiter **Messen** ist der Arbeitsplatz am Prüfstand: Lauf starten, Kurve li
 | KUPPLUNG ZIEHEN – ausrollen lassen … | Ausrollversuch läuft |
 | „32.0 PS bei 10000 1/min“ | Ergebnis. Mit Verlusten: „Motor … PS bei … 1/min · Rad … PS“ |
 
+![Große Anweisung GAS WEG](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_gas_weg.png)
+
 **Anweisungen groß** (Standard an): Die Texte des Statusfelds stehen im Lauf zusätzlich sehr groß über dem Diagramm,
 in derselben Farbe (GO grün, Messung gelb, GAS WEG rot, KUPPLUNG ZIEHEN gelb), darunter der Grund
 („n Stop … 1/min erreicht – Lauf wird ausgewertet“). GAS WEG bleibt mindestens 2 s stehen. Ist die Option aus,
 erscheint wie bisher nur das große **GAS WEG**. Findet PyST nach 120 s kein Laufende, bricht es ab
 („Kein Laufende nach 120 s – abgebrochen“).
+
+![Großes Ergebnis nach dem Lauf](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_ergebnis_gross.png)
 
 **Ergebnis groß** (Standard an): Nach dem Lauf stehen **Pmax** und **Mmax** mit Drehzahl groß über dem Diagramm,
 mit Farbe, Uhrzeit und Setup des Laufs. Weg mit START, Klick darauf oder Esc.
@@ -74,8 +78,6 @@ Zündzeitpunkt.
 
 Die Auswahl der Plätze speichert PyST je Fahrzeug.
 
-![Setup geändert](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_messen_setup_geaendert.png)
-
 Nach einer Änderung wird die Zeile gelb. Am Wert steht „vorher X“, daneben „✎ … (ungespeichert)“. Knöpfe:
 
 | Knopf | Wirkung |
@@ -84,10 +86,29 @@ Nach einer Änderung wird die Zeile gelb. Am Wert steht „vorher X“, daneben 
 | **nur für diesen Lauf** | Werte nur im nächsten Lauf speichern, kein neues Setup |
 | **Verwerfen** | alte Werte zurück |
 
-Drückt man START mit ungespeicherten Werten, fragt PyST („Setup geändert“): **Neues Setup speichern …**,
-**Nur für diesen Lauf** oder **Abbrechen**. Abschaltbar mit **Bei geändertem Setup vor START nachfragen**
-(Einstellungen › Rolle/Lauf). Startet man mit der Zangentaste, fragt PyST nicht. Die Werte gelten dann nur für diesen
-Lauf. Wählt man ein anderes Setup, sind ungespeicherte Werte verworfen.
+Drückt man START mit geänderten Werten, startet der Lauf ohne Rückfrage. Die Werte gelten dann nur für diesen Lauf
+(wie **nur für diesen Lauf**). Ein neues Setup legt man mit **Als neues Setup speichern …** an. Wählt man ein anderes
+Setup, sind ungespeicherte Werte verworfen.
+
+### START-Nachfrage
+
+![Setup unverändert – Änderungen eintragen?](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_start_nachfrage.png)
+
+Ist in SETUP-WERTE **nichts** geändert, fragt PyST beim START kurz: **„Setup unverändert – Änderungen eintragen?“**.
+Das Fenster zeigt den Namen des Setups und die belegten SETUP-WERTE als Felder. Hat man am Motorrad etwas umgebaut
+und es noch nicht eingetragen, ändert man es gleich hier.
+
+| Knopf | Wirkung |
+|---|---|
+| **Unverändert starten** | Standard (Enter oder F1): der Lauf startet mit dem Setup, wie es ist |
+| **Übernehmen und starten** | erst aktiv, wenn ein Feld geändert ist; dann ist es der Standard (Enter). Die neuen Werte stehen danach gelb in SETUP-WERTE und gelten für diesen Lauf |
+| **Abbrechen** (Esc) | kein Lauf |
+
+![Nachfrage mit geänderter Hauptdüse](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_start_nachfrage_geaendert.png)
+
+- Die Zangentaste **Neuer Lauf** startet immer ohne Nachfrage.
+- Ohne Fahrzeug oder ohne belegte SETUP-WERTE fragt PyST nicht.
+- Abschaltbar mit **Vor START nachfragen, ob sich das Setup geändert hat** (Einstellungen › Rolle/Lauf, Standard an).
 
 ## Rechte Spalte
 
@@ -110,6 +131,8 @@ solange der Reiter Messen offen ist.
 - Bis 4 Plätze stehen die Kacheln untereinander, ab 5 Plätzen zweispaltig und kompakt (kurzer Titel, Zahl groß,
   dünner Balken ohne Skala). Bei 1280×800 passen so 8 Plätze ohne Rollen.
 - UMGEBUNG und die Drehzahl bleiben oben stehen, die kleinen Kacheln rollen, wenn sie nicht alle passen.
+![Fähnchen am Cursor, rechts die Werte des letzten Laufs](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_cursor.png)
+
 - **Maus im Diagramm** (kein Lauf aktiv): Die Kacheln zeigen die Werte des neuesten Laufs an der Cursor-Drehzahl,
   oben steht dann „LAUF 16:29 bei 9.500 1/min“ statt LIVE. Maus aus dem Diagramm: wieder live.
 - **Rechtsklick:** **Balkengrenzen …** (von/bis und bis zu 4 Bereiche gut, Warnung, Fehler, kalt) oder
@@ -130,22 +153,28 @@ solange der Reiter Messen offen ist.
   ihrem Wert („31,6 PS“, „22,7 Nm“, „λ 0,92“) in der Farbe des Laufs, gefüllt für Leistung, umrandet für Drehmoment.
   Läufe gleicher Farbe teilen sich ein Fähnchen; bei vielen Läufen werden die Fähnchen kleiner und stehen links und
   rechts vom Cursor.
+  Die frühere Zeile „▸ Werte am Cursor“ unter dem Diagramm gibt es nicht mehr; die Werte aller Kanäle des letzten
+  Laufs stehen beim Zeigen in den Live-Kacheln rechts (siehe oben).
 - **Legende im Diagramm** (Option, Standard aus): Farbe, Datum/Zeit und Setup bzw. Notiz jedes Laufs oben links.
-  Referenzen (Mittelwert) stehen immer in der Legende.
+  Referenzen (Mittelwert) stehen immer in der Legende, mit dem Hinweis auf das Band („Band = min–max der Quellläufe“).
+- Unter dem Diagramm steht eine schmale Ergebniszeile (Pmax, Mmax, vmax, DIN-Faktor, Strecke, Grund für das
+  Laufende). Ist sie zu lang, zeigt der Tooltip den ganzen Text.
 - Im Lauf bleibt die Skalierung fest, damit die Kurve nicht springt.
 
 ## Läufe (Seitenleiste)
 
-Am rechten Rand des Diagramms steht eine schmale Leiste „Läufe · 5 Plätze: x gesperrt, y rollierend“. Mit der Maus
+Am linken Rand des Diagramms steht eine schmale Leiste „Läufe · 5 Plätze: x gesperrt, y rollierend“. Mit der Maus
 darauf (300 ms) klappt die Liste auf. **Anpinnen** hält sie offen.
+
+![Seitenleiste Läufe mit „＋“, ein Mittelwert und ein älterer Lauf gesperrt](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_laeufe.png)
 
 **Die 5 Plätze:** Im Diagramm stehen höchstens 5 Läufe je Fahrzeug. Gesperrte Plätze (Schloss) bleiben. Die übrigen
 Plätze rollieren: der neueste Lauf verdrängt den ältesten nicht gesperrten.
 
 | Element | Funktion |
 |---|---|
+| **＋** (oben neben „Läufe“) | **Läufe hinzufügen …**: alte Läufe oder Mittelwerte gesperrt ins Diagramm legen (siehe [unten](#läufe-hinzufügen)) |
 | Filter | **alle**, **aktuelles Fahrzeug**, **aktuelles Setup** |
-| **Referenz laden …** | Mittelwert als Referenz auf einen gesperrten Platz legen (siehe unten) |
 | Gruppen | **GESPERRT**, **ROLLIEREND** (die letzten n), **ÄLTERE LÄUFE** |
 | Spalten | Schloss, Lauf, PS, bei, Nm, Fehler |
 | Schloss anklicken | Platz sperren bzw. lösen. Ältere Läufe holt man mit dem Schloss ins Diagramm |
@@ -159,19 +188,37 @@ Plätze rollieren: der neueste Lauf verdrängt den ältesten nicht gesperrten.
 **Notiz bearbeiten …**, **Farbe ändern …**, **Aktuellem Fahrzeug/Setup zuordnen**, **Mit aktuellen Einstellungen neu
 rechnen** (Klima des Laufs bleibt), **CSV-Export …**, **Löschen …**.
 
-### Referenz laden …
+### Läufe hinzufügen
 
-Zeigt die Mittelwerte, bei denen „im Messfenster als Referenz anbieten“ angehakt ist (siehe
-[Auswertung](Auswertung.md#mittelwert-bilden)). Mit **weitere … (n nicht angebotene Mittelwerte zeigen)** erscheinen
-auch die anderen. **Als Referenz laden** legt den Mittelwert auf einen gesperrten Platz. Er erscheint als dicke Linie
-mit Streuband.
+![Fenster „Läufe hinzufügen“](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_laeufe_hinzufuegen.png)
+
+Der Knopf **＋** oben in der Seitenleiste öffnet das Fenster **Läufe hinzufügen**. Darin stehen alle gespeicherten
+Läufe und Mittelwerte, neueste zuerst.
+
+| Element | Funktion |
+|---|---|
+| **Fahrzeug** | Standard: das aktuelle Fahrzeug. **alle Fahrzeuge** zeigt auch Läufe anderer Fahrzeuge (Spalte Setup mit Fahrzeugname) |
+| **Art** | **alle**, **nur Messungen**, **nur Mittelwerte** |
+| Suche | „Suchen: Datum, Setup, Notiz …“ |
+| Liste | Datum/Zeit, Setup, Notiz, Pmax, Mmax. Mittelwerte stehen fett mit **Ø**. Läufe, die schon gesperrt im Diagramm liegen, sind grau mit Schloss und nicht wählbar |
+| Statuszeile | z. B. „2 gewählt · 3 von 5 Plätzen frei“ |
+| **Hinzufügen (n)** / **Abbrechen** | gewählte Läufe übernehmen bzw. schließen |
+
+Mehrere Läufe wählt man mit Strg oder Umschalt, ein Doppelklick nimmt einen Lauf direkt. Die gewählten Läufe liegen
+danach **gesperrt** (Schloss) auf freien Plätzen und bleiben dort, bis man das Schloss löst. Ein Lauf, der gerade
+rollierend im Diagramm steht, wird dabei gesperrt. Wählt man mehr Läufe, als Plätze frei sind, sagt PyST das, und
+**Hinzufügen** bleibt gesperrt: zuerst in der Liste „Läufe“ ein Schloss lösen.
+
+**Mittelwerte als Referenz:** Ein Mittelwert (siehe [Auswertung](Auswertung.md#mittelwert-bilden)) erscheint als dicke
+Linie mit Streuband und steht immer in der Legende („gesperrt, Referenz · Band = min–max der Quellläufe“). In der Liste
+„Läufe“ steht in der Spalte Fehler „Ref.“. Den früheren Knopf **Referenz laden …** gibt es nicht mehr.
 
 ## Tasten
 
 | Taste | Wirkung |
 |---|---|
-| F1 | START |
-| Esc | Lauf abbrechen bzw. Ausrollen beenden |
+| F1 | START (in der START-Nachfrage: **Unverändert starten**) |
+| Esc | großes Ergebnis ausblenden, sonst Lauf abbrechen bzw. Ausrollen beenden |
 | F3 | Marker (Zange), im ganzen Programm |
 
 ## Gespeichert je Lauf

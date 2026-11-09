@@ -17,7 +17,7 @@ Umschalten:
 
 Der Wechsel wirkt sofort, auch auf Diagramme und Kacheln.
 
-![Messen bei Nacht](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_messen_lauf_nacht.png)
+![Messen bei Nacht](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_lauf_nacht.png)
 
 ![Auswertung bei Nacht](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_auswertung_nacht.png)
 

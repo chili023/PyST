@@ -15,7 +15,7 @@ Weitere Simulator-Ports wählt man unter **Einstellungen › Verbindung › Port
 
 ## 2. Mit dem Prüfstand verbinden
 
-![Messen, nicht verbunden](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_messen_getrennt.png)
+![Messen, nicht verbunden](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_getrennt.png)
 
 1. Messelektronik per USB anstecken (PyST-Basis, Arduino Mega mit PST 3.x oder STM32 F446).
 2. **STM32 (F446, Nucleo) und Arduino Mega** sucht PyST alle 5 s und verbindet sich selbst
@@ -29,7 +29,7 @@ Weitere Simulator-Ports wählt man unter **Einstellungen › Verbindung › Port
 Hat man von Hand **Trennen** gedrückt, verbindet PyST nicht von selbst wieder. Nach dem Flashen sucht PyST wieder.
 Die Basis per WLAN verbindet man unter **Einstellungen › WiFi** mit **PC per WLAN verbinden**.
 
-![Messen, verbunden und bereit](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_messen_bereit.png)
+![Messen, verbunden und bereit](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_bereit.png)
 
 ## 3. Prüfstand einstellen (einmal)
 
@@ -57,15 +57,19 @@ Siehe [Fahrzeuge und Setups](Fahrzeuge-und-Setups.md).
 ## 5. Der erste Lauf
 
 1. Motor im Messgang **unter** *n vom Gas* halten.
-2. **START (F1)** drücken. PyST liest das Klima (wenn eingeschaltet) und zeigt **„GO – Vollgas!“** (grün).
-3. Vollgas. Über *n vom Gas* steht **„Messung … 1/min“** (gelb), die Live-Kurve wächst schwarz bzw. weiß mit.
-4. Bei *n Stop* erscheint **GAS WEG** (rot), zusätzlich groß über dem Diagramm. Gas weg.
-5. PyST wertet aus. Das Ergebnis steht im Feld oben (z. B. „32.0 PS bei 10000 1/min“), unter dem Diagramm und rechts unten
-   unter **ERGEBNIS**. Mit **Auto-Speichern** landet der Lauf sofort in der Datenbank.
+2. **START (F1)** drücken. Ist das Setup unverändert, fragt PyST kurz „Setup unverändert – Änderungen eintragen?“:
+   nichts umgebaut → **Unverändert starten** (Enter oder F1), sonst die neuen Werte eintragen und **Übernehmen und
+   starten**. Abschaltbar, siehe [Messen](Messen.md#start-nachfrage).
+3. PyST liest das Klima (wenn eingeschaltet) und zeigt **„GO – Vollgas!“** (grün), auch groß über dem Diagramm.
+4. Vollgas. Über *n vom Gas* steht **„Messung … 1/min“** (gelb), die Live-Kurve wächst schwarz bzw. weiß mit.
+5. Bei *n Stop* erscheint **GAS WEG** (rot), groß über dem Diagramm. Gas weg.
+6. PyST wertet aus. Pmax und Mmax stehen groß über dem Diagramm (weg mit Klick oder Esc), außerdem im Feld oben
+   (z. B. „32.0 PS bei 10000 1/min“), unter dem Diagramm und rechts unten unter **ERGEBNIS**. Mit **Auto-Speichern**
+   landet der Lauf sofort in der Datenbank.
 
 **Abbrechen (Esc)** geht jederzeit (derselbe Knopf wie START, im Lauf rot).
 
-![Messen während eines Laufs](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_messen_lauf.png)
+![Messen während eines Laufs](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_lauf.png)
 
 Weiter: [Messen](Messen.md) · [Auswertung](Auswertung.md)
 

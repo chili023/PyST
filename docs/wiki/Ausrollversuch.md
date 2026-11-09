@@ -5,7 +5,7 @@ Der Ausrollversuch bestimmt die **Verluste** von Rolle, Rad, Kette und Getriebea
 
 Er steht unter **Einstellungen › Rolle/Lauf**, Gruppe **Verluste – Ausrollversuch** (früher Reiter „Kalibrierung“).
 
-![Rolle/Lauf mit Ausrollversuch](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_einst_rolle.png)
+![Rolle/Lauf mit Ausrollversuch](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_einst_verluste.png)
 
 ## Ablauf am Prüfstand
 
@@ -92,11 +92,16 @@ Zum Ausprobieren: Simulator-Port `SIM:ausrollen` ([Erste Schritte](Erste-Schritt
 
 ## Ohne Lauf: Assistent mit abgehobenem Rad
 
+![Assistent, Schritt 2: Beschleunigen](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_ausroll_2_beschleunigen.png)
+
 Knopf **Ausrollversuch (Assistent) …** in der Gruppe „Verluste – Ausrollversuch“. Fünf Schritte in einem eigenen
 Fenster: Vorbereitung (Messboard verbunden?), Beschleunigen (Rolle groß in 1/min und km/h, Balken bis zum Ziel), Rad
 von der Rolle (Gas weg, Rad anheben, Sicherheitshinweis, **Messung starten** nur über der Mindestdrehzahl), Messung
 (Kurve Drehzahl über Zeit, Ende bei n_ende, Stillstand oder Höchstdauer) und Ergebnis (Übernehmen, Nochmal,
-Schließen). Ausgewertet wird ohne Kupplungserkennung ab „Messung starten“.
+Schließen). Ausgewertet wird ohne Kupplungserkennung ab „Messung starten“. Das Ziel der Rolle (**Ziel Rolle**) ist
+einstellbar. Solange das Fenster offen ist, startet kein Lauf; während eines Laufs lässt es sich nicht öffnen.
+
+![Assistent, Schritt 5: Ergebnis](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_ausroll_5_ergebnis.png)
 
 Gemessen sind dann nur die **Verluste der Rolle allein** (Lager, Luft), nicht Rad, Kette und Getriebeausgang.
 Übernommen zeigt „Motor“ die Leistung, die der Reifen an die Rolle abgibt – noch nicht die Motorleistung. Die

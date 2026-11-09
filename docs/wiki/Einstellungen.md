@@ -3,7 +3,7 @@
 Der Reiter **Einstellungen** hat sieben Unterreiter:
 
 **[Rolle/Lauf](#rollelauf)** · **[Verbindung](#verbindung)** · **[Zange](#zange)** · **[Lambda](#lambda)** ·
-**[ECU](#ecu)** · **[Firmware](#firmware)** · **[WiFi](#wifi)**
+**[ECU](#ecu)** · **[Software & Firmware](#software--firmware)** · **[WiFi](#wifi)**
 
 Alle Einstellungen speichert PyST sofort in `~/PyST/einstellungen.json`.
 
@@ -11,7 +11,7 @@ Alle Einstellungen speichert PyST sofort in `~/PyST/einstellungen.json`.
 
 ## Rolle/Lauf
 
-![Einstellungen Rolle/Lauf](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_einst_rolle.png)
+![Einstellungen Rolle/Lauf](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_einst_rolle.png)
 
 ### Prüfstand
 
@@ -30,7 +30,19 @@ Alle Einstellungen speichert PyST sofort in `~/PyST/einstellungen.json`.
 | **Übersetzung nKW/nRolle** | Wert bzw. Startwert (Standard 6,85). Knöpfe **Übersetzung einmessen …** und **Live abgleichen …** |
 | **n vom Gas [1/min]** | Standard 4000. Ab hier prüft PyST auf fallende Drehzahl (= Laufende). Muss über der Haltedrehzahl liegen |
 | **n Stop [1/min] (0 = aus)** | Standard 8000. Ab hier GAS WEG |
-| **Bei geändertem Setup vor START nachfragen** | Rückfrage beim Start, wenn die SETUP-WERTE geändert und nicht gespeichert sind (Standard: an) |
+| **Vor START nachfragen, ob sich das Setup geändert hat** | Ist in SETUP-WERTE nichts geändert, zeigt START kurz das Fenster „Setup unverändert – Änderungen eintragen?“ (Standard: an). Die Zangentaste „Neuer Lauf“ fragt nie. Siehe [Messen](Messen.md#start-nachfrage) |
+
+### Anzeige beim Messen
+
+Unter der Gruppe Prüfstand. Dieselben Schalter stehen im Menü **Ansicht**.
+
+| Schalter | Standard | Wirkung |
+|---|---|---|
+| **Ergebnis groß nach dem Lauf** | an | nach dem Lauf Pmax und Mmax groß über dem Diagramm (weg mit START, Klick oder Esc) |
+| **Anweisungen groß (GO, GAS WEG …)** | an | Laufzustand für den Fahrer groß über dem Diagramm: GO – Vollgas!, GAS WEG, KUPPLUNG ZIEHEN … Aus: nur das große „GAS WEG“ |
+| **Legende im Diagramm** | aus | Legende aller Läufe (Farbe, Datum/Zeit, Setup bzw. Notiz). Mittelwerte stehen immer in der Legende |
+
+Bilder und Einzelheiten: [Messen](Messen.md#statusfeld).
 
 ### Filter
 
@@ -58,8 +70,10 @@ Geräte-Einstellungen.
 ### Verluste (Werte für die Rechnung)
 
 Verlustmoment **M0 [Nm]**, **M1 [Nm]**, **bei Rollendrehzahl n1 [1/min]** und **quadratisch m2 [Nm/(1000/min)²]**.
-Darunter steht, woher die Werte kommen (Ausrollversuch oder von Hand). Rechts daneben die Gruppe **Verluste –
-Ausrollversuch**, beschrieben unter [Ausrollversuch](Ausrollversuch.md).
+Darunter steht, woher die Werte kommen (Ausrollversuch, Ausrollversuch Rolle allein oder von Hand). Rechts daneben
+die Gruppe **Verluste – Ausrollversuch** mit dem Haken **Ausrollversuch nach jedem Lauf** und dem Knopf
+**Ausrollversuch (Assistent) …** (ohne Lauf: Rad abheben, nur die Rolle auslaufen lassen). Beides ist unter
+[Ausrollversuch](Ausrollversuch.md) beschrieben.
 
 ---
 
@@ -150,8 +164,8 @@ Knöpfe **Lesen** und **Übernehmen**.
 
 ### Firmware
 
-Der Wideband-Controller (F042) wird über die Basis geflasht: Einstellungen › Firmware, Expertenmodus, Zeile Lambda
-(F042). Knopf **Zur Firmware …**.
+Der Wideband-Controller (F042) wird über die Basis geflasht: Einstellungen › Software & Firmware, Expertenmodus,
+Zeile Lambda (F042). Knopf **Zur Firmware …**.
 
 ---
 
@@ -197,14 +211,20 @@ Firmware“.
 
 ---
 
-## Firmware
+## Software & Firmware
 
-![Einstellungen Firmware](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_einst_firmware.png)
+![Software & Firmware, Kundenansicht](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_einst_firmware.png)
 
-Firmware der Basis, der Zange, des Arduino Mega und des STM32 (F446) aktualisieren. Ausführlich unter
-[Firmware und Updates](Firmware-und-Updates.md).
+Früher hieß der Unterreiter „Firmware“. Ganz oben steht die Kachel **PyST (Software)** mit der installierten und der
+verfügbaren Version von PyST (aus GitHub, Branch `main`), dazu der Datenordner und der Knopf **Release-Seite …**
+(bei einer neuen Version **Update laden …**). Installiert wird nichts, das Update macht man mit `git pull` oder dem
+ZIP von der Release-Seite.
 
-![Firmware Expertenmodus](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_einst_firmware_experte.png)
+Darunter die Firmware der Basis, der Zange, des Arduino Mega und des STM32 (F446). Geräte, die nicht angeschlossen
+sind, stehen ausgegraut mit gestricheltem Rand und „– nicht angeschlossen“; ihr Knopf ist aus und sagt im Tooltip,
+was zu tun ist. Ausführlich unter [Firmware und Updates](Firmware-und-Updates.md).
+
+![Software & Firmware, Expertenmodus](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_einst_firmware_experte.png)
 
 ---
 

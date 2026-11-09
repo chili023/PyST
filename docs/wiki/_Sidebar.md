@@ -1,4 +1,4 @@
-**[PyST 1.4.1](Home.md)**
+**[PyST 1.4.2](Home.md)**
 
 **Start**
 - [Installation](Installation.md)

@@ -1,12 +1,12 @@
-> Diese Seiten sind eine Kopie des [GitHub-Wikis](https://github.com/chili023/PyST/wiki) (Stand PyST 1.4.1).
+> Diese Seiten sind eine Kopie des [GitHub-Wikis](https://github.com/chili023/PyST/wiki) (Stand PyST 1.4.2).
 
-# PyST 1.4.1 – Wiki
+# PyST 1.4.2 – Wiki
 
 PyST ist die PC-Software zum Rollenprüfstand. Sie läuft auf **Mac**, **Linux** (auch Raspberry Pi) und **Windows**.
 PyST liest die Messelektronik, rechnet Leistung und Drehmoment wie LabVIEW 3.2.1, speichert jeden Lauf in einer
 Datenbank und hilft beim Vergleichen von Setups.
 
-![PyST 1.4.1 – Messen während eines Laufs](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_messen_lauf.png)
+![PyST 1.4.2 – Messen während eines Laufs](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_lauf.png)
 
 > ⚠️ **PyST steuert den Motor nicht.** Erreicht der Motor *n Stop*, zeigt PyST nur **GAS WEG** – Gas wegnehmen
 > muss der Fahrer. Die Funk-Zange **nie per USB anschließen, während der Motor läuft** (galvanische Verbindung zum PC).
@@ -15,15 +15,15 @@ Datenbank und hilft beim Vergleichen von Setups.
 
 | Bereich | Kurz |
 |---|---|
-| **Messen** | Lauf starten (F1), Live-Kurve, Live-Kacheln, „GAS WEG“-Hinweis, Ergebnis Pmax/Mmax, 5 Plätze im Diagramm mit Schloss, Referenzkurve |
+| **Messen** | Lauf starten (F1) mit Nachfrage zum Setup, Live-Kurve, bis 12 Live-Kacheln, große Anweisungen (GO, GAS WEG), großes Ergebnis Pmax/Mmax, Fähnchen am Cursor, 5 Plätze im Diagramm mit Schloss, alte Läufe und Mittelwerte über „＋“ |
 | **Übersetzung** | von Hand eintragen, einmessen, live mit dem Drehzahlmesser abgleichen, Funkenmessung nach jedem Lauf |
 | **Fahrzeuge & Setups** | Datenbank mit Fahrzeugen und Setups (Motor, Vergaser/ECU, Zündung, Antrieb …), Setup-Werte direkt im Messbildschirm ändern |
 | **Auswertung** | Läufe überlagern wie in MegaLogViewer, bis zu 4 Felder, Werte am Cursor, Setup-Vergleich, Mittelwert aus mehreren Läufen, PDF- und CSV-Export |
 | **Weitergeben** | `.pyst`-Datei (öffnet in PyST) oder HTML-Datei (öffnet in jedem Browser, offline) |
 | **Oszi / Dauermessung** | Fehlersuche an Zündung und Rolle: Linienschreiber, Software-Trigger, Ereignisliste, Flanken-Ansicht |
-| **Ausrollversuch** | Verluste von Rolle, Rad, Kette bestimmen, dann Motorleistung neben der Radleistung |
+| **Ausrollversuch** | Verluste von Rolle, Rad, Kette bestimmen, dann Motorleistung neben der Radleistung. Assistent für die Verluste der Rolle allein (Rad abgehoben) |
 | **PyST-Basis & Zange** | Funk-Zündzange mit Tasten, Lambda-Heizung, WLAN, WLAN-Steckdosen |
-| **Firmware** | Basis, Zange, Arduino Mega und STM32 (F446) aus PyST heraus aktualisieren |
+| **Software & Firmware** | installierte und neueste PyST-Version; Basis, Zange, Arduino Mega und STM32 (F446) aus PyST heraus aktualisieren |
 | **Darstellung** | Tag, Nacht oder Auto, Fenstergröße einstellbar |
 
 ## Hauptreiter
@@ -34,11 +34,32 @@ Datenbank und hilft beim Vergleichen von Setups.
 | Fahrzeuge & Setups | [Fahrzeuge und Setups](Fahrzeuge-und-Setups.md) |
 | Auswertung | [Auswertung](Auswertung.md), [Läufe weitergeben](Läufe-weitergeben.md) |
 | Oszi / Dauermessung | [Oszi und Dauermessung](Oszi-und-Dauermessung.md) |
-| Einstellungen | [Einstellungen](Einstellungen.md) mit den Unterreitern Rolle/Lauf, Verbindung, Zange, Lambda, ECU, Firmware, WiFi |
+| Einstellungen | [Einstellungen](Einstellungen.md) mit den Unterreitern Rolle/Lauf, Verbindung, Zange, Lambda, ECU, Software & Firmware, WiFi |
 
 Weitere Seiten: [Installation](Installation.md) · [Erste Schritte](Erste-Schritte.md) · [Ausrollversuch](Ausrollversuch.md) ·
 [Firmware und Updates](Firmware-und-Updates.md) · [PyST-Basis und Zange](PyST-Basis-und-Zange.md) ·
 [Darstellung](Darstellung.md) · [Kommandozeile](Kommandozeile.md) · [Rechenweg](Rechenweg.md) · [Fehlersuche](Fehlersuche.md)
+
+## Neu in 1.4.2
+
+- **Messen, Läufe hinzufügen:** Der Knopf **＋** oben in der Seitenleiste Läufe öffnet ein Auswahlfenster für alte
+  Läufe und Mittelwerte (auch anderer Fahrzeuge). Sie liegen danach gesperrt auf Plätzen im Diagramm. Der Knopf
+  „Referenz laden …“ ist weg. Siehe [Messen](Messen.md#läufe-hinzufügen).
+- **START-Nachfrage:** Ist das Setup unverändert, fragt START kurz „Setup unverändert – Änderungen eintragen?“ – mit den
+  SETUP-WERTEN als Felder und den Knöpfen **Abbrechen**, **Übernehmen und starten**, **Unverändert starten**. Die
+  Zangentaste „Neuer Lauf“ startet ohne Nachfrage. Siehe [Messen](Messen.md#start-nachfrage).
+- **Groß über dem Diagramm:** Anweisungen für den Fahrer (GO, GAS WEG, KUPPLUNG ZIEHEN) und nach dem Lauf Pmax/Mmax.
+  Schalter unter Einstellungen › Rolle/Lauf › **Anzeige beim Messen** und im Menü Ansicht, dazu **Legende im
+  Diagramm** (Standard aus).
+- **Fähnchen am Cursor:** Jede Kurve zeigt ihren Wert in der Farbe des Laufs. Die Live-Kacheln rechts zeigen dabei die
+  Werte des letzten Laufs an der Cursor-Drehzahl. Die Zeile „Werte am Cursor“ unter dem Diagramm ist weg.
+- **Rechte Spalte:** bis 12 Live-Felder, ab 5 zweispaltig und kompakt; UMGEBUNG in einer Zeile, ERGEBNIS kompakt.
+- **Ausrollversuch-Assistent** (Einstellungen › Rolle/Lauf): Rad von der Rolle nehmen und die Verluste der Rolle
+  allein messen. Siehe [Ausrollversuch](Ausrollversuch.md#ohne-lauf-assistent-mit-abgehobenem-rad).
+- **Software & Firmware:** neuer Name des Unterreiters, Kachel **PyST (Software)** mit installierter und verfügbarer
+  Version. Nicht angeschlossene Geräte sind ausgegraut.
+
+Alle Änderungen: [Release Notes 1.4.2](https://github.com/chili023/PyST/blob/main/docs/RELEASE_NOTES_1.4.2.md).
 
 ## Neu in 1.4.1
 
@@ -61,6 +82,7 @@ Weitere Seiten: [Installation](Installation.md) · [Erste Schritte](Erste-Schrit
 - Mega und F446 aus PyST flashen.
 - Übersetzungsart **Funkenmessung**.
 - **Zangentasten** im Fenster „Übersetzung live abgleichen“.
+- **Ausrollversuch-Assistent** mit abgehobenem Rad (1.4.2).
 
 Diese Funktionen sind nur im Simulator bzw. mit Tests geprüft. Rückmeldungen bitte über die
 [Issues](https://github.com/chili023/PyST/issues).

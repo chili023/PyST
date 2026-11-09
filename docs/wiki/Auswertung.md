@@ -89,7 +89,7 @@ warnt PyST, denn eine Änderung gilt dann für alle diese Läufe.
 
 ## Mittelwert bilden
 
-![Mittelwert bilden](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_mittelwert.png)
+![Mittelwert bilden](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_mittelwert.png)
 
 Mehrere Läufe mit demselben Setup mitteln. Das glättet Streuung von Lauf zu Lauf.
 
@@ -105,13 +105,14 @@ Mehrere Läufe mit demselben Setup mitteln. Das glättet Streuung von Lauf zu La
 | **Streuband** | **min – max**, **± σ** oder **kein Band** |
 | Vorschau | Mittelwert mit Band |
 | **Speichern als Lauf** | **Name** (Vorschlag z. B. „Ø 3 Läufe · Serie HD 135“), **Fahrzeug**, **Setup**, **Notiz** |
-| **im Messfenster als Referenz anbieten („Referenz laden …“)** | der Mittelwert erscheint in Messen unter **Referenz laden …** |
+| **im Messfenster als Referenz anbieten (Messen › Läufe „＋“)** | wirkt in 1.4.2 nicht: jeder gespeicherte Mittelwert steht in Messen im Fenster „Läufe hinzufügen“, mit oder ohne Haken |
 | **Mittelwert speichern** / **Abbrechen** | |
 
-Der Mittelwert ist danach ein eigener Lauf. In [Messen](Messen.md#referenz-laden-) kann man ihn als Referenz laden und
-gegen jeden neuen Lauf vergleichen.
+Der Mittelwert ist danach ein eigener Lauf. In [Messen](Messen.md#läufe-hinzufügen) holt man ihn über **＋** in der
+Seitenleiste Läufe (Art „nur Mittelwerte“) gesperrt ins Diagramm. Dort steht er als dicke Linie mit Streuband und dient
+als Referenz für jeden neuen Lauf.
 
-**Grenzen (Stand 1.4.1):**
+**Grenzen (Stand 1.4.2):**
 
 - Mittelwerte kommen nicht in `.pyst`-Dateien und nicht in die Tabelle des PDF-Berichts.
 - Für Mittelwerte gibt es keine Rohdaten-CSV (nur die gemittelten Kurven).

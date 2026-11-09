@@ -1,9 +1,10 @@
 # Firmware und Updates
 
-Unter **Einstellungen › Firmware** spielt PyST die Firmware der Messelektronik auf. Quelle ist das öffentliche
-Firmware-Repo: **GitHub chili023/PyST › firmware** (Branch `firmware`). Alternativ geht eine eigene Datei.
+Unter **Einstellungen › Software & Firmware** (bis 1.4.1: „Firmware“) zeigt PyST die eigene Version und spielt die
+Firmware der Messelektronik auf. Quelle der Firmware ist das öffentliche Firmware-Repo: **GitHub chili023/PyST ›
+firmware** (Branch `firmware`). Alternativ geht eine eigene Datei.
 
-![Firmware, Kundenansicht](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_einst_firmware.png)
+![Software & Firmware, Kundenansicht](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_einst_firmware.png)
 
 > ⚠️ **Die Zange nie am laufenden Motor per USB anschließen.** Die Zange ist dann galvanisch mit dem PC verbunden,
 > Zündspannung kann PC und Zange zerstören. Vorher vom Zündkabel nehmen.
@@ -12,9 +13,23 @@ Firmware-Repo: **GitHub chili023/PyST › firmware** (Branch `firmware`). Altern
 
 | Element | Funktion |
 |---|---|
-| **Firmware der Geräte** | Überschrift, darunter die Quelle („Quelle: GitHub chili023/PyST › firmware · …“) |
-| **Jetzt nach Updates suchen** | Firmware-Repo neu lesen |
+| **Software und Firmware** | Überschrift, daneben die Quelle („Quelle: GitHub chili023/PyST › firmware · Stand …“) |
+| **Jetzt nach Updates suchen** | neueste PyST-Version und Firmware-Repo neu lesen |
 | **Expertenmodus** | Schalter zwischen Kundenansicht und Expertenansicht. PyST merkt sich die Wahl |
+
+## PyST (Software)
+
+Die Kachel ganz oben, in der Kundenansicht wie im Expertenmodus:
+
+| Teil | Inhalt |
+|---|---|
+| Kopf | „✔ aktuell“, „Update verfügbar: …“ oder „✔ installiert“ (neueste Version nicht abrufbar, z. B. ohne Netz) |
+| Unterzeile | „Programm am PC · Datenordner ~/PyST“ |
+| **installiert** / **verfügbar** | Version dieses PyST und die neueste Version auf GitHub (Branch `main`) |
+| Knopf | **Release-Seite …**, bei einer neuen Version **Update laden …**. Beide öffnen nur die Release-Seite im Browser |
+
+PyST installiert sich nicht selbst. Update: im PyST-Ordner `git pull` oder das ZIP von der Release-Seite laden und
+entpacken. Datenbank und Einstellungen in `~/PyST` bleiben erhalten. Siehe [Installation](Installation.md#update).
 
 ## Kundenansicht
 
@@ -28,8 +43,11 @@ aktuell, steht auf dem Knopf „Aktuell ✔“.
 | **Arduino Mega** | ältere Messplatine PST 3.x | **Flashen** ⚠️ *noch nicht am Prüfstand bestätigt* |
 | **STM32 (F446)** | ältere Messplatine PST-STM32 | **Flashen** ⚠️ *noch nicht am Prüfstand bestätigt* |
 
-Oben auf jeder Karte steht, ob das Gerät erkannt ist (z. B. „– nicht angeschlossen“). Ein Hinweis „neu“ zeigt eine
-neuere Version.
+Oben auf jeder Karte steht, ob das Gerät erkannt ist („✔ erkannt · …“ oder „– nicht angeschlossen“). Ein Hinweis „neu“
+zeigt eine neuere Version. **Nicht angeschlossene Geräte** sind ausgegraut: gestrichelter Rand, nur die verfügbare
+Version, der Knopf ist aus. Sein Tooltip und die Zeile darunter sagen, was zu tun ist, z. B. „Basis per USB
+anschließen“. PyST sieht alle 2 s nach, solange der Unterreiter offen ist; die Ports werden dabei nur aufgelistet,
+nicht geöffnet.
 
 ### Ablauf
 
@@ -38,22 +56,24 @@ auf. **Abbrechen** bricht ab.
 
 ## Welches Gerät, welcher Weg?
 
-![Firmware, Expertenmodus](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_einst_firmware_experte.png)
+![Software & Firmware, Expertenmodus](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_einst_firmware_experte.png)
 
 Der **Expertenmodus** zeigt alle Bausteine einzeln:
 
-| Baustein | Weg | Datei | Erstflash |
+| Baustein | Weg | Datei | Erstflash … (Weg im Tooltip) |
 |---|---|---|---|
-| **Basis STM32** | USB (Update-Datei) | `.pystfw` | Erstflash ST-Link … |
-| **Basis-ESP** | USB über die Basis | `.pystfw` | Erstflash ESP-Brücke … |
+| **Basis STM32** | USB (Update-Datei) | `.pystfw` | ST-Link (SWD) |
+| **Basis-ESP** | USB über die Basis | `.pystfw` | ESP-Brücke über die Basis |
 | **Lambda (F042)** | CAN über die Basis | `.bin` | – |
-| **Zange** | USB an der Zange | `.pystfw` | Erstflash esptool … |
-| **Arduino Mega** | USB · avrdude, Arduino-Bootloader | `.hex` | – |
-| **STM32 (F446)** | USB-Laufwerk, st-flash oder DFU | `.bin` | Erstflash ST-Link … |
+| **Zange** | USB an der Zange | `.pystfw` | esptool |
+| **Arduino Mega** | USB · avrdude (Arduino-Bootloader) | `.hex` | – |
+| **STM32 (F446)** | Laufwerk, st-flash, DFU | `.bin` | ST-Link oder DFU |
 
-Je Zeile: Port (nur für Mega und F446, die anderen sucht PyST selbst), Weg, Format, Version im Gerät, verfügbare
-Version, Zustand, Knopf **Aktualisieren** bzw. **Flashen**, **Datei wählen …**, ggf. der Erstflash-Knopf und ein Haken
-**erzwingen** (auch gleiche oder ältere Version bzw. Datei mit ungeprüfter Signatur flashen).
+Je Zeile: Port (nur für Mega und F446, die anderen sucht PyST selbst), Weg, Format, Version im Gerät („auf dem
+Gerät“), verfügbare Version, Zustand, Knopf **Aktualisieren** bzw. **Flashen** (nur, wenn es geht), **Datei wählen …**,
+ggf. **Erstflash …** (der Weg steht im Tooltip) und ein Haken **erzwingen** (auch gleiche oder ältere Version bzw.
+Datei mit ungeprüfter Signatur flashen). Nicht angeschlossene Geräte sind nur abgeblendet; Erstflash und eigene Datei
+gehen trotzdem.
 
 ### Eigene Datei (statt Firmware-Repo)
 
@@ -110,12 +130,13 @@ PyST prüft jede Firmware, bevor sie aufgespielt wird:
 
 ## Statusleiste
 
-Hängt die Basis im Bootloader, zeigt die Statusleiste „im Bootloader – Firmware unter Einstellungen › Firmware
-aufspielen“.
+Hängt die Basis im Bootloader, zeigt die Statusleiste „im Bootloader – Firmware unter Einstellungen › Software &
+Firmware aufspielen“.
 
 ## PyST selbst aktualisieren
 
-Beim Start prüft PyST, ob es eine neue PyST-Version gibt, und meldet das. Installiert wird nichts. Update siehe
+Beim Start prüft PyST, ob es eine neue PyST-Version gibt, und meldet das („Neue PyST-Version … verfügbar“). Die
+Kachel **PyST (Software)** zeigt installierte und verfügbare Version (siehe oben). Installiert wird nichts. Update siehe
 [Installation](Installation.md#update).
 
 ## Experten

@@ -2,13 +2,17 @@
 
 Open-Source-Leistungsprüfstand (Rollenprüfstand):
 
-- **PyST 1.4.1** – PC-Software in Python/Qt für **Mac, Linux (Raspberry Pi) und Windows**.
+- **PyST 1.4.2** – PC-Software in Python/Qt für **Mac, Linux (Raspberry Pi) und Windows**.
   Rechnet wie LabVIEW 3.2.1 (an echten Läufen geprüft: gleiche Pmax und n(Pmax)), mit Datenbank für
   Fahrzeuge/Setups/Läufe, Auswerter im Stil von MegaLogViewer, PDF/CSV-Export, Import von LabVIEW-Läufen.
 - **Neue Oberfläche (1.4.1):** Tag-, Nacht- und Auto-Thema mit geprüftem Kontrast, Statusleiste mit farbigen Feldern
   für Basis, Zange und ECU, Setup-Werte direkt im Messbildschirm, Läufe auf Plätzen mit Schloss, **Mittelwerte aus
   mehreren Läufen** als Referenz, Fenster **„Übersetzung live abgleichen“** mit Drehzahlmesser, Übersetzung auch per
-  **Funkenmessung**. Passt ab 855 × 651 Punkten, also auch auf ein MacBook.
+  **Funkenmessung**. Passt auch auf ein MacBook mit 1280 Punkten Breite.
+- **Neu in 1.4.2:** alte Läufe und Mittelwerte über **＋** ins Messdiagramm holen, Nachfrage vor START bei
+  unverändertem Setup, große Anweisungen (GO, GAS WEG) und großes Ergebnis über dem Diagramm, Fähnchen am Cursor, bis
+  12 Live-Felder, **Ausrollversuch-Assistent** (Verluste der Rolle allein, Rad abgehoben) und Unterreiter
+  **Software & Firmware** mit der PyST-Version. Siehe [Release Notes 1.4.2](docs/RELEASE_NOTES_1.4.2.md).
 - **PyST-Basis mit Funk-Zündzange:** Klima, Lambda, EGT, Funk-Zange mit frei belegbaren Tasten, WLAN, WLAN-Steckdosen
   (Gebläse/Absaugung automatisch), signierte Firmware-Updates direkt aus PyST.
 - **PST-STM32-Firmware** – neue Firmware für die Messelektronik auf **STM32F446RE (Nucleo-64)**.
@@ -21,13 +25,13 @@ Open-Source-Leistungsprüfstand (Rollenprüfstand):
 - **Arduino-Mega-Sketch 3.1.0** – der bisherige Mega-Aufbau läuft ebenfalls mit PyST; 3.1.0 misst jede
   Periode, meldet 0 Hz nach Signalausfall und hat den Oszi-/Diagnosemodus [PST-Diag 1](docs/04_PST_Diag_1.md).
 
-![PyST 1.4.1 – Messen während eines Laufs](docs/bilder/v141_messen_lauf.png)
+![PyST 1.4.2 – Messen während eines Laufs](docs/bilder/v142_messen_lauf.png)
 
 | Auswertung mit Mittelwert und Setup-Vergleich | Übersetzung live abgleichen |
 |---|---|
 | ![Auswertung](docs/bilder/v141_auswertung.png) | ![Übersetzung live abgleichen](docs/bilder/v141_abgleich.png) |
-| **Nacht-Thema** | **Oszi / Dauermessung** |
-| ![Messen im Nacht-Thema](docs/bilder/v141_messen_lauf_nacht.png) | ![Oszi](docs/bilder/v141_oszi.png) |
+| **Nacht-Thema, Fähnchen am Cursor** | **Oszi / Dauermessung** |
+| ![Messen im Nacht-Thema](docs/bilder/v142_messen_cursor_nacht.png) | ![Oszi](docs/bilder/v141_oszi.png) |
 
 **Alle Funktionen mit Bildern: [Wiki](https://github.com/chili023/PyST/wiki)** (Kopie im Repo: [docs/wiki](docs/wiki/Home.md)).
 
@@ -51,8 +55,8 @@ Open-Source-Leistungsprüfstand (Rollenprüfstand):
 
 ## Download
 
-Aktuelle Version: **PyST 1.4.1** im Branch `main`. Unter
-[Releases](https://github.com/chili023/PyST/releases/tag/v1.4.1) gibt es das ZIP und die Release Notes, oder:
+Aktuelle Version: **PyST 1.4.2** im Branch `main`. Unter
+[Releases](https://github.com/chili023/PyST/releases/tag/v1.4.2) gibt es das ZIP und die Release Notes, oder:
 
 ```bash
 git clone https://github.com/chili023/PyST.git
@@ -60,7 +64,7 @@ git clone https://github.com/chili023/PyST.git
 
 Update einer vorhandenen Kopie: `git pull` im Ordner, dann wie gewohnt starten. Datenbank und Einstellungen bleiben erhalten.
 Firmware der PyST-Basis, der Zange und des Basis-ESP sowie die Mega- und F446-Firmware holt PyST unter
-**Einstellungen › Firmware** aus dem Branch [`firmware`](https://github.com/chili023/PyST/tree/firmware).
+**Einstellungen › Software & Firmware** aus dem Branch [`firmware`](https://github.com/chili023/PyST/tree/firmware).
 
 ## Schnellstart
 
@@ -74,7 +78,7 @@ cd PyST
 ```
 
 STM32 flashen: `firmware/stm32/bin/PST-STM32_v1.1.0.bin` (bisher `PST-STM32_v1.0.0.bin`) auf das Laufwerk **NODE_F446RE** ziehen,
-oder ab PyST 1.4.1 unter **Einstellungen › Firmware** (auch den Arduino Mega per avrdude).
+oder ab PyST 1.4.1 aus PyST heraus unter **Einstellungen › Software & Firmware** (auch den Arduino Mega per avrdude).
 
 ## Inhalt
 
@@ -88,7 +92,7 @@ docs/                  Roadmap, Zündsignal-Diagnose, Firmware-Messung, Protokol
 ## Dokumentation
 
 - **[Wiki](https://github.com/chili023/PyST/wiki)** – alle Funktionen der Oberfläche mit Bildern (Kopie: [docs/wiki](docs/wiki/Home.md))
-- [Release Notes 1.4.1](docs/RELEASE_NOTES_1.4.1.md)
+- [Release Notes 1.4.2](docs/RELEASE_NOTES_1.4.2.md) · [1.4.1](docs/RELEASE_NOTES_1.4.1.md)
 - [INSTALL.md](INSTALL.md) – Installation Mac / Linux / Windows, Flashen STM32 und Mega
 - [PyST/README.md](PyST/README.md) – Bedienung, Rechenweg, Kommandozeile
 - [firmware/stm32/README.md](firmware/stm32/README.md) – Firmware, Protokoll, Anschlussbelegung, Einstellungen

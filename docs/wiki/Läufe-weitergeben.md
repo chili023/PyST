@@ -31,7 +31,7 @@ Direkt als HTML: **Datei › Als HTML-Ansicht exportieren (ohne PyST ansehbar) �
 - Enthält alle Messdaten, Parameter, Fahrzeug und Setup der Läufe.
 - Beim Öffnen legt PyST Fahrzeug und Setup an oder nimmt ein gleichnamiges, das es schon gibt.
 - Läufe, die schon in der Datenbank sind (gleicher Name, Datum und Quelle), übernimmt PyST nicht noch einmal.
-- Mittelwerte kommen nicht in die `.pyst`-Datei (Stand 1.4.1).
+- Mittelwerte kommen nicht in die `.pyst`-Datei (Stand 1.4.2).
 
 ### HTML-Ansicht
 
