@@ -79,6 +79,7 @@ Weiter: [Messen](Messen.md) · [Auswertung](Auswertung.md)
 | `SIM` | synthetischer Motor, F446 1.1.0 mit PST-Diag 1 |
 | `SIM:stoerung` | dasselbe mit Störungen an Zündung und Rolle |
 | `SIM:ausrollen` | nach dem Lauf Kupplung gezogen (für den [Ausrollversuch](Ausrollversuch.md)) |
+| `SIM:rolle` | Rad wird abgehoben, Rolle läuft frei aus (für den Assistenten im [Ausrollversuch](Ausrollversuch.md)) |
 | `SIM:mega` | Arduino-Mega-Sketch 3.1.0 mit PST-Diag 1 |
 | `SIM:mega300`, `SIM:mega300:stoerung` | alter Mega 3.0.0 ohne Diagnose, optional mit Störungen |
 | `SIM:basis` | PyST-Basis mit gekoppelter Funk-Zange und Steckdosen |

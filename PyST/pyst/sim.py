@@ -8,6 +8,9 @@ und die Rolle rollt aus. Motor ~ 32 PS bei 10000 1/min (wie die Referenzlaeufe v
 Ausrollversuch (SimEngine(ausrollen=True), Port 'SIM:ausrollen'): nach dem Gas-Wegnehmen bremst der Motor noch
 t_kupplung Sekunden mit, dann ist die Kupplung gezogen: Zuendung auf Leerlauf, die Rolle rollt mit Rad und Kette
 (Verlust loss_ab0 + loss_ab1 * w, auch beim Beschleunigen) bis n_bremse aus, erst dann bremst der Fahrer.
+Ausrollversuch-Assistent (RadAbEngine, Port 'SIM:rolle'): Halten, Vollgas bis n_lift, dort t_oben Sekunden halten,
+dann Rad von der Rolle: die Rolle laeuft frei aus, nur mit ihrem eigenen, bekannten Verlust (rolle_m0/m1/n1/m2 wie
+physics.loss_torque); unter n_wieder kommt das Rad wieder auf die Rolle und alles beginnt von vorn.
 
 PST-Diag 1: '#?', '#MODE', '#RUN', '#RATE', '#BURST' (mit Trigger), '#GET/#SET/#SAVE/#DEFAULTS'.
 Dafuer erzeugt der Simulator die einzelnen Flanken von Zuendung und Rolle (mit uint32-Zeitstempeln,
@@ -2424,9 +2427,74 @@ def ausroll_engine(**kw) -> SimEngine:
     return SimEngine(**args)
 
 
+class RadAbEngine(SimEngine):
+    """Simulator fuer den Ausrollversuch-Assistenten (Port 'SIM:rolle'), Ablauf in Schleife:
+    hold (Haltedrehzahl, 3 s) -> wot (Vollgas bis n_lift) -> oben (n_lift t_oben Sekunden halten) -> frei (Rad
+    abgehoben, Motor im Leerlauf, Rolle laeuft allein aus) -> unter n_wieder (Motordrehzahl Rolle x i) Rad wieder
+    auf die Rolle -> hold …
+    Verlust der Rolle allein (Lager, Luft) = loss_rolle(w) mit rolle_m0/m1/n1/m2 wie physics.loss_torque (n1 und
+    Drehzahlen an der Rolle in 1/min) – das Ergebnis des Assistenten muss das treffen. Mit Rad auf der Rolle kommen
+    Rad und Kette dazu (loss_ab0 + loss_ab1 * w wie ausroll_engine)."""
+
+    def __init__(self, rolle_m0: float = 8.0, rolle_m1: float = 30.0, rolle_n1: float = 1600.0,
+                 rolle_m2: float = 5.0, t_oben: float = 4.0, n_wieder: float = 2000.0, **kw):
+        kw.setdefault("loss_ab0", 2.0)
+        kw.setdefault("loss_ab1", 0.04)
+        self.rolle_m0, self.rolle_m1, self.rolle_n1, self.rolle_m2 = rolle_m0, rolle_m1, rolle_n1, rolle_m2
+        self.t_oben, self.n_wieder = t_oben, n_wieder
+        self.rad_ab = False
+        super().__init__(**kw)
+
+    def reset(self):
+        super().reset()
+        self.rad_ab = False
+
+    def loss_rolle(self, w_roll: float) -> float:
+        """Verlustmoment der Rolle allein [Nm] bei w_roll [rad/s] (Modell wie physics.loss_torque)."""
+        n = w_roll * 60.0 / (2 * math.pi)
+        n1 = max(self.rolle_n1, 1.0)
+        mv = self.rolle_m0 + n * (self.rolle_m1 - self.rolle_m0) / n1
+        mv += self.rolle_m2 * (n / 1000.0) * ((n - n1) / 1000.0)
+        return mv if w_roll > 0 else 0.0
+
+    def loss_total(self, w_roll: float) -> float:
+        rad = 0.0 if self.rad_ab or w_roll <= 0 else self.loss_ab0 + self.loss_ab1 * w_roll
+        return self.loss_rolle(w_roll) + rad
+
+    def step(self, dt: float):
+        if self.phase in ("hold", "wot"):
+            self.kupplung_offen = False
+            super().step(dt)                                   # wie SimEngine, mit Rad auf der Rolle
+            if self.phase == "coast":
+                self.phase, self.t_phase = "oben", 0.0
+            self.n_motor = self.w_roll * self.ratio * 60.0 / (2 * math.pi)
+            return
+        n_e = self.w_roll * self.ratio * 60.0 / (2 * math.pi)
+        loss = self.loss_total(self.w_roll)
+        if self.phase == "oben":
+            t_eng = min(self.torque_wot(n_e), max(0.0, 0.05 * (self.n_lift - n_e) + loss / self.ratio))
+            self.n_motor = n_e
+            if self.t_phase >= self.t_oben:
+                self.phase, self.t_phase, self.rad_ab = "frei", 0.0, True
+        else:                                                  # frei: Rad abgehoben, Gas weg
+            t_eng = 0.0
+            self.n_motor += (1500.0 - self.n_motor) * min(1.0, dt / 0.3)
+            if n_e < self.n_wieder:
+                self.phase, self.t_phase, self.rad_ab = "hold", 0.0, False
+        self.kupplung_offen = self.rad_ab                       # frame(): Zuendung = Motor im Leerlauf
+        self.w_roll = max(0.0, self.w_roll + (t_eng * self.ratio - loss) / self.inertia * dt)
+        self.t += dt
+        self.t_phase += dt
+
+
+def rad_ab_engine(**kw) -> RadAbEngine:
+    """Simulator fuer den Ausrollversuch-Assistenten (Rad abheben, Rolle laeuft frei aus)."""
+    return RadAbEngine(**kw)
+
+
 def open_sim(port: str, replay_file: str = ""):
     """Portname -> (Ersatz fuer den seriellen Port, abgespielter Lauf oder None).
-    SIM[:mega|:mega300|:ausrollen][:stoerung], SIM:basis[:ohne|:wlan|:stoerung], SIM:zange; replay_file spielt einen Lauf ab."""
+    SIM[:mega|:mega300|:ausrollen|:rolle][:stoerung], SIM:basis[:ohne|:wlan|:stoerung], SIM:zange; replay_file spielt einen Lauf ab."""
     if replay_file:
         source = ReplaySource(replay_file)
         return SimSerial(source=source), source
@@ -2439,5 +2507,7 @@ def open_sim(port: str, replay_file: str = ""):
     mega = "mega" in parts or "mega300" in parts
     if "ausrollen" in parts:
         return SimSerial(engine=ausroll_engine(), faults=FAULT_PRESET if "stoerung" in parts else None), None
+    if "rolle" in parts:
+        return SimSerial(engine=rad_ab_engine(), faults=FAULT_PRESET if "stoerung" in parts else None), None
     return SimSerial(engine=SimEngine(rate=61.0) if mega else None, mega=mega, diag="mega300" not in parts,
                      faults=FAULT_PRESET if "stoerung" in parts else None), None

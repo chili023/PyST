@@ -34,6 +34,7 @@ from .basis import ZANGE_USB_WARNUNG
 from .flash_page import FlashPage
 from .pruef_page import PruefPage
 from .hw_page import HardwarePage
+from .ausroll_assistent import AusrollAssistent
 from .kalib_page import KalibPage
 from .link import (DEFAULT_SIM_PORT, SIM_PORT, DynoLink, guess_port, is_pst_firmware, list_serial_ports,
                    pst_board_ports, zange_usb_ports)
@@ -427,8 +428,10 @@ class SettingsPage(QtWidgets.QScrollArea):
         if not (v["m0"] or v["m1"] or v["m2"]):
             text = "Keine Verluste: Ergebnis = Radleistung. Verluste aus dem Ausrollversuch (rechts daneben)."
         else:
+            rolle = "Rolle allein" in (self.verlust_quelle or "")      # Ausrollversuch-Assistent, Rad abgehoben
             text = ("Verluste: " + (self.verlust_quelle or "von Hand eingetragen")
-                    + ". Ergebnis = Motorleistung (Rad + Verluste).")
+                    + (". Ergebnis „Motor“ = Rad + Verluste der Rolle (ohne Rad, Kette, Getriebe)." if rolle else
+                       ". Ergebnis = Motorleistung (Rad + Verluste)."))
         self.loss_label.setText(text)
 
     def update_ka(self):
@@ -628,6 +631,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.db = db or Database()
         self.link: Optional[DynoLink] = None
         self.ctrl: Optional[RunController] = None
+        self.ausroll_dlg: Optional[AusrollAssistent] = None      # Ausrollversuch-Assistent (offen: kein Lauf)
         self.firmware = ""
         self.cache = RunCache()                    # run_id -> (run, result, channels, params)
         self.last_keepalive = 0.0
@@ -789,6 +793,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.b_del.clicked.connect(self.on_delete)
         self.page_kalib.uebernehmen.connect(self._apply_coast)
         self.page_kalib.lauf_auswerten.connect(self._coast_from_run)
+        self.page_kalib.assistent.connect(self.on_ausroll_assistent)
         s.losses_changed.connect(lambda: self.page_kalib.set_current(s.params()))
         self.page_kalib.set_current(s.params())
         self._verbinde_lauf_einstellungen()       # START/Abbrechen, Lauf-Einstellungen … (messen_page)
@@ -1018,12 +1023,14 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
     def _update_buttons(self):
         busy = self.ctrl is not None and self.ctrl.state in ACTIVE
         connected = self.link is not None
-        self.start_btn.setEnabled(connected or busy)       # im Lauf: Abbrechen bzw. Ausrollen beenden
+        # im Lauf: Abbrechen bzw. Ausrollen beenden; Ausrollversuch-Assistent offen: kein Lauf
+        self.start_btn.setEnabled((connected and self.ausroll_dlg is None) or busy)
         self._start_knopf_stil()
         self.lauf_btn.setEnabled(not busy)
         if busy and self.lauf_popup is not None:
             self.lauf_popup.hide()
         self.page_kalib.lauf_btn.setEnabled(not busy)
+        self.page_kalib.assist_btn.setEnabled(not busy)
         self.page_kalib.apply_btn.setEnabled(not busy and self.page_kalib.result is not None
                                              and self.page_kalib.result.ok)
         s = self.page_settings
@@ -1373,6 +1380,9 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         dann nur fuer diesen Lauf."""
         if not self.ctrl or self.ctrl.state in ACTIVE:
             return
+        if self.ausroll_dlg is not None:
+            self._set_status("Ausrollversuch-Assistent offen – erst schließen, dann START", farben.BALKEN_FEHLER)
+            return
         s = self.page_settings
         p = s.params()
         msg = physics.check_params(p)
@@ -1489,6 +1499,42 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         c = wait_in_thread(lambda: ausrollen.analyse(run["n_roll"], run["dt"], p, start=start, n_meas=run["n_meas"],
                                                      n_ende=n_ende, quadratisch=quad))
         self.page_kalib.show_result(c, self._coast_label(rid), rid)
+
+    def on_ausroll_assistent(self):
+        """Ausrollversuch-Assistent (Rad abgehoben, Rolle allein; nicht modal, schon offen: nach vorn). Nicht
+        waehrend eines Laufs; solange er offen ist, startet kein Lauf."""
+        if self._lauf_aktiv():
+            self.statusBar().showMessage("Ausrollversuch-Assistent: erst nach dem Lauf", 5000)
+            return
+        d = self.ausroll_dlg
+        if d is not None:
+            d.raise_()
+            d.activateWindow()
+            return
+        d = self.ausroll_dlg = AusrollAssistent(
+            self, lambda: self.ctrl, self.page_settings.params, self.settings.setdefault("ausrollen", {}),
+            lambda: save_settings(self.settings), self.db.runs_dir, self._assistent_verbinden, self._lauf_aktiv)
+        d.uebernehmen.connect(self._apply_coast)
+        d.ausgewertet.connect(lambda c, text: self.page_kalib.show_result(c, text))
+
+        def fertig(_r, d=d):
+            if self.ausroll_dlg is d:
+                self.ausroll_dlg = None
+                self._update_buttons()
+            d.deleteLater()
+
+        d.finished.connect(fertig)
+        self._update_buttons()
+        d.show()
+        d.raise_()
+
+    def _assistent_verbinden(self) -> bool:
+        """„Verbinden“ im Assistenten: Messboard wie mit dem Knopf verbinden, Daten anstossen."""
+        if self.link is None:
+            self.on_connect()
+        if self.link is not None and not self.link.streaming():
+            self.link.start()
+        return self.link is not None
 
     def _apply_coast(self, c, rid):
         """„Übernehmen“: Verluste eintragen, speichern und den Lauf des Ausrollversuchs damit neu rechnen."""
@@ -1847,6 +1893,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             return
         new = self.ctrl.poll()
         lv = self.ctrl.live
+        if new and self.ausroll_dlg is not None and self.ctrl.state not in ACTIVE:
+            self.ausroll_dlg.telegramme(new)               # Ausrollversuch-Assistent: Rolle ohne Lauf
         if new:
             f = new[-1]
             ecu_rpm = self.page_rusefi.live("RPMValue")
@@ -1913,6 +1961,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
     def _taste_lauf(self):
         """Wie der Start-Knopf, nur wenn ein Lauf möglich ist. Abbrechen geht nur am PC."""
         grund = self._taste_sperre() or ("Übersetzung wird gerade gemessen" if self.ratio_mess.aktiv else "") \
+            or ("Ausrollversuch-Assistent offen" if self.ausroll_dlg is not None else "") \
             or physics.check_params(self.page_settings.params())
         if grund:
             self._taste_abgelehnt("Neuer Lauf", grund)
