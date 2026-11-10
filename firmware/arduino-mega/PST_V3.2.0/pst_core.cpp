@@ -1,4 +1,4 @@
-// pst_core.cpp - Hardwareunabhaengiger Kern des PST-Mega-Sketches 3.1.0
+// pst_core.cpp - Hardwareunabhaengiger Kern des PST-Mega-Sketches 3.2.0
 // (siehe pst_core.h). Keine AVR-Header, keine dynamischen Objekte.
 #include "pst_core.h"
 #include <string.h>
@@ -716,7 +716,24 @@ size_t pst_cmd_line(struct PstCmd *c, const char *line, char *out, size_t outsz)
   if (upcase_eq(cmd, "?")) {
     pst_out_str(&o, "#CAP;proto=1;fw=" PST_FW_NAME ";tick_ns=62.5;ch=I,R;burst_max=");
     pst_out_u32(&o, PST_BURST_MAX);
-    pst_out_str(&o, ";modes=N,D;set=1\r\n");
+    pst_out_str(&o, ";modes=N,D;set=1;ai=");
+    for (uint8_t i = 0; i < PST_AI_N; i++) {      // ab 3.2.0: A0,A1,...,A15
+      if (i) pst_out_char(&o, ',');
+      pst_out_char(&o, 'A');
+      pst_out_u32(&o, i);
+    }
+    pst_out_str(&o, "\r\n");
+  } else if (upcase_eq(cmd, "AI")) {
+    uint32_t hz;
+    if (nt != 2 || parse_u32(tok[1], &hz, 0) || hz > PST_AI_HZ_MAX) {
+      err(&o, "AI", "bereich 0-50");
+      return o.len;
+    }
+    c->ai_hz = (uint8_t)hz;
+    c->req_ai = 1;
+    pst_out_str(&o, "#OK;AI;");
+    pst_out_u32(&o, hz);
+    pst_out_str(&o, "\r\n");
   } else if (upcase_eq(cmd, "MODE")) {
     uint8_t m = 0;
     if (nt == 2 && upcase_eq(tok[1], "N")) m = 'N';
@@ -799,6 +816,102 @@ size_t pst_fmt_env(char *out, size_t cap, float temp, float press, float hum)
   pst_out_float(&o, press, 0);
   pst_out_char(&o, ';');
   pst_out_float(&o, hum, 1);
+  pst_out_str(&o, "\r\n");
+  return o.len;
+}
+
+// ==========================================================================
+// Analogeingaenge (ab 3.2.0)
+// ==========================================================================
+
+void pst_adc_reset(struct PstAdc *a)
+{
+  memset(a, 0, sizeof(*a));
+}
+
+uint8_t pst_adc_result(struct PstAdc *a, uint16_t raw)
+{
+  if (a->step == 0) {                  // erste Wandlung nach dem Kanalwechsel verwerfen
+    a->acc = 0;
+    a->step = 1;
+    return a->ch;
+  }
+  a->acc = (uint16_t)(a->acc + (raw & 0x3FFu));
+  if (++a->step <= PST_AI_AVG) return a->ch;
+  a->sum[a->ch] = a->acc;
+  a->valid |= (uint16_t)(1u << a->ch);
+  a->step = 0;
+  a->ch = (uint8_t)((a->ch + 1u) & (PST_AI_N - 1u));
+  return a->ch;
+}
+
+uint16_t pst_adc_mv(uint16_t sum)
+{
+  // U = sum / AVG * 5000 mV / 1024
+  return (uint16_t)(((uint32_t)sum * 5000u + 512u * PST_AI_AVG) / (1024u * PST_AI_AVG));
+}
+
+void pst_ai_start(struct PstAiClock *k, uint32_t now_ms)
+{
+  k->t0 = now_ms;
+  k->n = 0;
+}
+
+uint8_t pst_ai_due(struct PstAiClock *k, uint8_t hz, uint32_t now_ms)
+{
+  if (!hz) return 0;
+  uint32_t el = now_ms - k->t0;
+  if (el >= 2000u) {                   // lange nicht nachgesehen: neu beginnen, nicht nachholen
+    pst_ai_start(k, now_ms);
+    return 0;
+  }
+  // Zeile n+1 der laufenden Sekunde ist faellig bei el >= (n+1) * 1000 / hz
+  if (el * hz < (uint32_t)(k->n + 1u) * 1000u) return 0;
+  if (++k->n >= hz) { k->t0 += 1000u; k->n = 0; }
+  return 1;
+}
+
+// Schnelle Ausgabe ohne Division (AVR: eine 32-bit-Division kostet ca. 600 Takte): Stellen durch Abziehen
+static void out_u32_sub(struct PstOut *o, uint32_t v)
+{
+  static const uint32_t pw[9] = { 1000000000UL, 100000000UL, 10000000UL, 1000000UL, 100000UL,
+                                  10000UL, 1000UL, 100UL, 10UL };
+  uint8_t lead = 1;
+  for (uint8_t i = 0; i < 9; i++) {
+    char d = '0';
+    while (v >= pw[i]) { v -= pw[i]; d++; }
+    if (d != '0') lead = 0;
+    if (!lead) pst_out_char(o, d);
+  }
+  pst_out_char(o, (char)('0' + v));
+}
+
+// mV als "d.ddd"
+static void out_mv(struct PstOut *o, uint16_t mv)
+{
+  static const uint16_t pw[3] = { 1000u, 100u, 10u };
+  for (uint8_t i = 0; i < 3; i++) {
+    char d = '0';
+    while (mv >= pw[i]) { mv = (uint16_t)(mv - pw[i]); d++; }
+    pst_out_char(o, d);
+    if (i == 0) pst_out_char(o, '.');
+  }
+  pst_out_char(o, (char)('0' + mv));
+}
+
+size_t pst_fmt_analog(char *out, size_t cap, uint32_t t_ms, const struct PstAdc *a)
+{
+  struct PstOut o = { out, 0, cap };
+  pst_out_str(&o, "A;");
+  out_u32_sub(&o, t_ms);
+  for (uint8_t i = 0; i < PST_AI_N; i++) {
+    pst_out_str(&o, ";A");
+    if (i >= 10) pst_out_char(&o, '1');
+    pst_out_char(&o, (char)('0' + (i >= 10 ? i - 10 : i)));
+    pst_out_char(&o, '=');
+    if (a->valid & (1u << i)) out_mv(&o, pst_adc_mv(a->sum[i]));
+    else pst_out_str(&o, "nan");
+  }
   pst_out_str(&o, "\r\n");
   return o.len;
 }

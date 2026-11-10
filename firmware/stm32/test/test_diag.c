@@ -180,7 +180,8 @@ static void test_parser(void)
     send_cmd("#?\r\n");
     take(o, sizeof o);
     check_str("#? -> #CAP", o,
-              "#CAP;proto=1;fw=PST-STM32 1.1.0;tick_ns=11.111;ch=I,R;burst_max=8192;modes=N,D;set=1\r\n");
+              "#CAP;proto=1;fw=PST-STM32 1.2.0;tick_ns=11.111;ch=I,R;burst_max=8192;modes=N,D;set=1;"
+              "ai=ADC1,ADC2\r\n");
 
     /* Einzelzeichen-Befehle wie bisher */
     send_cmd("e\n");
@@ -224,7 +225,7 @@ static void test_parser(void)
     /* 'v' und '?' (Einzelzeichen) bleiben, '#?' ist etwas anderes */
     send_cmd("?");
     take(o, sizeof o);
-    check("'?' = Versionsinfo wie bisher", strncmp(o, "PST-STM32 Version 1.1.0 vom ", 28) == 0);
+    check("'?' = Versionsinfo wie bisher", strncmp(o, "PST-STM32 Version 1.2.0 vom ", 28) == 0);
     send_cmd("v#?\n");
     take(o, sizeof o);
     check("'v' dann '#?' im selben Block", strncmp(o, "PST-STM32 Version", 17) == 0 && strstr(o, "\r\n#CAP;") != NULL);
@@ -663,6 +664,177 @@ static void test_burst_output(void)
     take(o, sizeof o);
 }
 
+/* Zeilen ab Tick t bis t_end abfragen (1 ms Schritte), Ausgabe sammeln */
+static void poll_until(uint32_t t_end)
+{
+    while (tick < t_end) {
+        tick++;
+        protocol_poll();
+    }
+}
+
+static void test_analog(void)
+{
+    static char o[65536];
+    puts("--- #AI, A-Zeilen (ab 1.2.0)");
+    burst_stop(&bu);
+    take(o, sizeof o);
+
+    /* nach dem Start aus: 5 s lang nichts */
+    poll_until(tick + 5000);
+    take(o, sizeof o);
+    check_str("ohne #AI keine A-Zeile", o, "");
+    check("diag_ai_hz() nach dem Start 0", diag_ai_hz() == 0);
+
+    static const char *bad[] = {"#AI 51\n", "#AI\n", "#AI x\n", "#AI -1\n", "#AI 1.5\n", "#AI 100\n",
+                                "#AI 0010\n", "#AI 5 5\n"};
+    for (unsigned i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+        char name[16];
+        snprintf(name, sizeof name, "%.*s", (int)strlen(bad[i]) - 1, bad[i]);
+        send_cmd(bad[i]);
+        take(o, sizeof o);
+        check_str(name, o, "#ERR;AI;bereich 0-50\r\n");
+    }
+    check("Fehler schalten nichts ein", diag_ai_hz() == 0);
+    send_cmd("#AIX 1\n");
+    take(o, sizeof o);
+    check_str("#AIX unbekannt", o, "#ERR;?;unbekannt\r\n");
+
+    /* 10 Hz: erste Zeile 100 ms nach dem Befehl, dann alle 100 ms */
+    tick = 1000000;
+    rx = "#AI 10\n"; rx_pos = 0; rx_len = 7; rx_tick = tick;
+    protocol_poll();
+    take(o, sizeof o);
+    check_str("#AI 10 -> #OK;AI;10", o, "#OK;AI;10\r\n");
+    poll_until(1000000 + 1000);
+    take(o, sizeof o);
+    check("10 Zeilen in 1 s", count_lines_prefix(o, "A;") == 10);
+    check_str("erste Zeile: t_ms, ADC1 (PB0) und ADC2 (PA1) in V", strtok(o, "\n"), "A;1000100;ADC1=1.650;ADC2=0.825\r");
+
+    /* Takt ohne Drift: 3 Hz ueber 10 s = 30 Zeilen; 50 Hz = 500 Zeilen */
+    send_cmd("#AI 3\n");
+    uint32_t t0 = tick - 10;
+    take(o, sizeof o);
+    poll_until(t0 + 10000);
+    take(o, sizeof o);
+    check("3 Hz: 30 Zeilen in 10 s", count_lines_prefix(o, "A;") == 30);
+    send_cmd("#ai 50\n");
+    t0 = tick - 10;
+    take(o, sizeof o);
+    poll_until(t0 + 10000);
+    take(o, sizeof o);
+    check("50 Hz: 500 Zeilen in 10 s", count_lines_prefix(o, "A;") == 500);
+
+    /* zwischen den Telegrammen, Telegramme unveraendert (Modus N und D) */
+    send_cmd("#AI 10\n");
+    send_cmd("m");
+    take(o, sizeof o);
+    capture_frame_t f = mkframe();
+    uint32_t te = tick + 1000;
+    int fr = 0;
+    while (tick < te) {
+        tick++;
+        protocol_poll();
+        if (tick % 17 == 0) {
+            protocol_on_frame(&f);
+            fr++;
+        }
+    }
+    take(o, sizeof o);
+    check("Modus N: alle Telegramme da", count_lines_prefix(o, "") - count_lines_prefix(o, "A;") == fr);
+    check("Modus N: A-Zeilen dazwischen", count_lines_prefix(o, "A;") == 10);
+    check("Modus N: Telegramm unveraendert", strstr(o, "\n1;60.00;50.00;725.50;656;0.00;612\n") != NULL ||
+                                             strncmp(o, "1;60.00;50.00;725.50;656;0.00;612\n", 34) == 0);
+    send_cmd("s");
+    send_cmd("#MODE D\n");
+    send_cmd("#RUN 1\n");
+    take(o, sizeof o);
+    tick = 2000000;
+    send_cmd("#AI 10\n");
+    take(o, sizeof o);
+    te = tick + 500;
+    fr = 0;
+    while (tick < te) {
+        tick++;
+        protocol_poll();
+        if (tick % 17 == 0) {
+            protocol_on_frame(&f);
+            fr++;
+        }
+    }
+    take(o, sizeof o);
+    check("Modus D: A-Zeilen dazwischen", count_lines_prefix(o, "A;") == 5 && count_lines_prefix(o, "D;") == fr);
+    check("Modus D: Flags 0 (A-Zeilen zaehlen nicht als Verlust)", strstr(o, ";1;12;1377.8;1380.0;0;0\r\n") != NULL &&
+          strstr(o, ";0;4\r\n") == NULL);
+
+    /* Sendepuffer knapp: A-Zeile entfaellt, Telegramm kommt, kein Verlust-Flag */
+    tx_free = 1024u + 20u;
+    poll_until(tick + 200);
+    protocol_on_frame(&f);
+    take(o, sizeof o);
+    check("knapper Sendepuffer: keine A-Zeile", count_lines_prefix(o, "A;") == 0);
+    check("knapper Sendepuffer: D-Telegramm mit Flags 0", count_lines_prefix(o, "D;") == 1 &&
+          strcmp(o + strlen(o) - 4, ";0\r\n") == 0);
+    tx_free = 4096;
+
+    /* waehrend einer Flanken-Ausgabe keine A-Zeilen */
+    send_cmd("#BURST R 2 F\n");
+    burst_edge(&bu, 1, 0, 1000, 0);
+    burst_edge(&bu, 1, 0, 2000, 0);
+    take(o, sizeof o);
+    tx_free = 0;
+    poll_until(tick + 300);
+    take(o, sizeof o);
+    check_str("Flanken-Ausgabe wartet: auch keine A-Zeile", o, "");
+    tx_free = 4096;
+    protocol_poll();
+    take(o, sizeof o);
+    check("Flanken-Ausgabe ohne A-Zeile dazwischen", count_lines_prefix(o, "A;") == 0 &&
+          count_lines_prefix(o, "B;") == 2);
+    poll_until(tick + 200);
+    take(o, sizeof o);
+    check("danach wieder A-Zeilen", count_lines_prefix(o, "A;") == 2);
+    send_cmd("#RUN 0\n");
+    send_cmd("#MODE N\n");
+    take(o, sizeof o);
+
+    /* #AI 0 schaltet aus */
+    send_cmd("#AI 0\n");
+    take(o, sizeof o);
+    check_str("#AI 0 -> #OK;AI;0", o, "#OK;AI;0\r\n");
+    poll_until(tick + 2000);
+    take(o, sizeof o);
+    check_str("#AI 0: keine A-Zeilen mehr", o, "");
+
+    /* STM-LabVIEW (8-Byte-Befehle, Binaertelegramm): A-Zeilen aus */
+    send_cmd("#AI 10\n");
+    send_cmd("tttttttt");
+    take(o, sizeof o);
+    check_str("8-Byte 't' nach #AI", o, "#OK;AI;10\r\nt_ok\r\n");
+    check("STM-LabVIEW schaltet #AI aus", diag_ai_hz() == 0);
+    send_cmd("m3101001");
+    for (int i = 0; i < 20; i++) {
+        poll_until(tick + 50);
+        protocol_on_frame(&f);
+    }
+    check("nur Binaertelegramme (20 x 20 Byte)", outn == 400);
+    take(o, sizeof o);
+    send_cmd("#AI 10\n");                            /* auch neu eingeschaltet: nie ins Binaerprotokoll */
+    take(o, sizeof o);
+    for (int i = 0; i < 20; i++) {
+        poll_until(tick + 50);
+        protocol_on_frame(&f);
+    }
+    check("#AI waehrend STM-LabVIEW: nur Binaertelegramme", outn == 400);
+    send_cmd("s");
+    take(o, sizeof o);
+    poll_until(tick + 200);
+    take(o, sizeof o);
+    check("nach dem Stopp wieder A-Zeilen", count_lines_prefix(o, "A;") == 2);
+    send_cmd("#AI 0\n");
+    take(o, sizeof o);
+}
+
 int main(void)
 {
     memset(flash, 0xFF, sizeof flash);             /* geloeschter Flash */
@@ -675,6 +847,7 @@ int main(void)
     test_burst_parse();
     test_burst_engine();
     test_burst_output();
+    test_analog();
     printf("\n%s (%d Pruefungen, %d Fehler)\n", failures ? "FEHLGESCHLAGEN" : "ALLE TESTS OK", checks, failures);
     return failures ? 1 : 0;
 }

@@ -9,6 +9,18 @@ Ab **1.1.0** zusätzlich der Oszi-/Diagnosemodus **PST-Diag 1** (Diagnose-Telegr
 mit Trigger, Einstellungen ohne Neu-Flashen) – Spezifikation: [docs/04_PST_Diag_1.md](../../docs/04_PST_Diag_1.md),
 Kurzfassung unten. Nach jedem Start gilt der Normalmodus, die Ausgabe ist byte-identisch zu 1.0.0.
 
+Ab **1.2.0** meldet die Firmware auf Wunsch die Spannungen an den Analogeingängen ADC1 (PB0) und ADC2 (PA1)
+(`#AI`, Zeilen `A;…`, siehe unten). Ohne `#AI` bleibt die Ausgabe byte-identisch zu 1.1.0.
+
+### Änderungen 1.2.0 (10.11.2026)
+
+- `#CAP` nennt zusätzlich `ai=ADC1,ADC2`. `#AI <hz>` (0…50) → `#OK;AI;<hz>` schaltet Zeilen
+  `A;<t_ms>;ADC1=<V>;ADC2=<V>` ein (Spannung am Pin, 3 Nachkommastellen), `#AI 0` aus. Nach dem Start aus.
+- ADC1 tastet beide Eingänge ununterbrochen per DMA ab (ohne Interrupt). AFR (`afr_src`), STM-LabVIEW
+  (ADC-Rohwerte) und A-Zeilen lesen dieselben Werte (Mittel der letzten 16 Wandlungen, ca. 0,7 ms). Bisher
+  stellte jede AFR-Abfrage den ADC um und wartete ca. 175 µs je Kanal; das entfällt.
+- Die STM-LabVIEW (8-Byte-Befehle) und ein Break schalten `#AI` aus; ins Binärtelegramm kommt nie eine A-Zeile.
+
 Das Lambda-Board (CJ125) ist in dieser Version bewusst nicht enthalten. Die Heizungsausgänge
 werden fest auf AUS gelegt, damit ein eventuell noch gestecktes Board sicher ist.
 
@@ -27,9 +39,9 @@ werden fest auf AUS gelegt, damit ein eventuell noch gestecktes Board sicher ist
 
 ## Fertige Firmware
 
-`bin/PST-STM32_v1.1.0.bin` (Standard) und `bin/PST-STM32_v1.1.0_dp70.bin` (Standardwert
+`bin/PST-STM32_v1.2.0.bin` (Standard) und `bin/PST-STM32_v1.2.0_dp70.bin` (Standardwert
 Doppelimpulsfilter 70 %, nur für Nutzer ohne PyST/Terminal – sonst `#SET ign_lockout_pct 70` + `#SAVE`),
-Prüfsummen in `bin/SHA256SUMS.txt`. Die Dateien von 1.0.0 bleiben zum Zurückgehen liegen.
+Prüfsummen in `bin/SHA256SUMS.txt`. Die Dateien von 1.0.0 und 1.1.0 bleiben zum Zurückgehen liegen.
 Flashen: Datei auf das Laufwerk **NODE_F446RE** ziehen (Mac, Linux, Windows) – siehe
 [../../INSTALL.md](../../INSTALL.md).
 
@@ -150,7 +162,7 @@ unbekannter Befehl `#ERR;?;unbekannt`. Befehlswörter dürfen klein geschrieben 
 
 | Befehl | Antwort |
 |---|---|
-| `#?` | `#CAP;proto=1;fw=PST-STM32 1.1.0;tick_ns=11.111;ch=I,R;burst_max=8192;modes=N,D;set=1` |
+| `#?` | `#CAP;proto=1;fw=PST-STM32 1.2.0;tick_ns=11.111;ch=I,R;burst_max=8192;modes=N,D;set=1;ai=ADC1,ADC2` |
 | `#MODE N` / `#MODE D` | `#OK;MODE;N` / `#OK;MODE;D` – Modus wird nie gespeichert, nach Reset immer N |
 | `#RUN 1` / `#RUN 0` | `#OK;RUN;1` / `#OK;RUN;0` – Telegramme starten/stoppen (wie `m`/`s`) |
 | `#RATE <hz>` | `#OK;RATE;<hz>`, 10…100 Hz, sonst `#ERR;RATE;bereich 10-100` (wie `#SET rate_hz`, flüchtig) |
@@ -160,6 +172,7 @@ unbekannter Befehl `#ERR;?;unbekannt`. Befehlswörter dürfen klein geschrieben 
 | `#DEFAULTS` | `#OK;DEFAULTS` – Standardwerte (= config.h), flüchtig bis `#SAVE` |
 | `#BURST <ch> <n> <edge> [T<pct>] [P<pre>]` | `#OK;BURST;ARMED;ch=…;n=…;edge=…;trig=…;pre=…` (ohne Trigger `trig=0;pre=0`) |
 | `#BURST STOP` | `#OK;BURST;STOP` |
+| `#AI <hz>` | `#OK;AI;<hz>`, 0…50 (ab 1.2.0), sonst `#ERR;AI;bereich 0-50`; 0 = aus, nach dem Start aus |
 
 **Diagnose-Telegramm** (Modus D, gleiche Rate wie normal, Zeilenende `\r\n`):
 
@@ -197,6 +210,21 @@ Flanke als der eingestellten) läuft der Capture-Kanal während der Aufnahme auf
 normale Messung wertet weiterhin nur die eingestellte Flanke aus. Die Ausgabe dauert bei 115200 Baud
 ca. 2 ms je Flanke (8192 Flanken ≈ 17 s); währenddessen werden Telegramme ausgesetzt (Zyklus zählt
 weiter, Flag 40 im nächsten D-Telegramm). Bursts gehen in Modus N und D.
+
+**Analogeingänge** `#AI <hz>` (ab 1.2.0): in Modus N und D, auch ohne laufende Messung, zwischen den Telegrammen
+
+```
+A;<t_ms>;ADC1=<V>;ADC2=<V>
+A;123456;ADC1=1.650;ADC2=0.825
+```
+
+- Spannung am Pin in V = Rohwert × 3,3 / 4096 (`ANALOG_VREF` in config.h), Mittel der letzten 16 Wandlungen.
+  Max. 3,3 V am Pin, ohne Teiler. Ein Eingang, der als AFR-Quelle dient (`afr_src`), bleibt in der Zeile.
+- Takt aus dem ms-Zähler, ohne Drift (`#AI 3` = genau 3 Zeilen je Sekunde). Eine Zeile entfällt, wenn der
+  Sendepuffer knapp ist (Telegramme haben Vorrang, kein Verlust-Flag) oder Flanken ausgegeben werden.
+- Keine A-Zeilen, solange die STM-LabVIEW Binärtelegramme bekommt; ihre 8-Byte-Befehle und ein Break schalten
+  `#AI` aus. Weil der Nucleo beim Öffnen des Ports nicht neu startet, sendet PyST beim Trennen `#AI 0`.
+- Last: eine Zeile hat ≤ 38 Byte, bei 10 Hz 0,4 KB/s von 11,5 KB/s.
 
 ## Einstellungen
 
@@ -249,14 +277,14 @@ src/main.c            Hauptschleife
 src/capture.c         TIM2: Impulserfassung + Telegrammtakt (Interrupt), Burst-Flanken
 src/freq_calc.c       Frequenzberechnung, Diagnose-Fenster, Filter (hardwareunabhängig, getestet)
 src/protocol.c        Befehle und Telegramme (Arduino + STM-LabVIEW), #-Zeilen-Erkennung
-src/diag.c            PST-Diag 1: #-Befehle, D-Telegramm, Burst-Ausgabe (getestet)
+src/diag.c            PST-Diag 1: #-Befehle, D-Telegramm, Burst-Ausgabe, A-Zeilen (getestet)
 src/burst.c           Flanken-Oszi mit Trigger (hardwareunabhängig, getestet)
 src/settings.c        Laufzeit-Einstellungen, Datensatz mit CRC (hardwareunabhängig, getestet)
 src/settings_store.c  Flash-Ablage der Einstellungen (Sektor 7)
 src/serial.c          USART2 mit Ringpuffern
 src/env_sensor.c      BME280/BMP280
 src/egt.c             MAX6675 ×2
-src/analog.c          ADC für externes AFR-Signal
+src/analog.c          ADC1 + DMA: PB0/PA1 dauernd abgetastet (AFR, STM-LabVIEW, #AI)
 src/board.c           Takt, sichere Pin-Zustände, Watchdog
 tools/pst_monitor.py  Testprogramm für den PC
 test/                 Host-Tests

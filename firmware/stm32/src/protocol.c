@@ -63,6 +63,7 @@ static void stop(void)
 }
 
 int protocol_streaming(void) { return streaming; }
+int protocol_binary(void) { return streaming && proto == PROTO_LEGACY; }
 
 static uint32_t ascii_rate_mhz(void) { return (uint32_t)SET(S_RATE_HZ) * 1000u; }
 
@@ -224,16 +225,19 @@ static bool legacy_command(const uint8_t *b, unsigned n)
 
     switch (b[0]) {
     case 't':
+        diag_ai_off();            /* STM-LabVIEW: keine A-Zeilen zwischen ihren Antworten */
         proto = PROTO_LEGACY;
         serial_write_str("t_ok\r\n");
         return true;
     case 'e':
+        diag_ai_off();
         proto = PROTO_LEGACY;
         stop();
         reply_env();
         return true;
     case 'l':
         /* Lambda-Heizung: Board noch nicht unterstuetzt -> immer "aus" */
+        diag_ai_off();
         proto = PROTO_LEGACY;
         serial_write_str("l1_0\r\n");
         return true;
@@ -248,6 +252,7 @@ static bool legacy_command(const uint8_t *b, unsigned n)
             /* b[4], b[5] = CJ125 Lambda 1/2: Board noch nicht unterstuetzt */
             legacy.afr_adc1 = b[6] == '1';
             legacy.afr_adc2 = b[7] == '1';
+            diag_ai_off();
             start(PROTO_LEGACY, legacy_rate_mhz[r < 6 ? r : 1]);
         }
         return true;
@@ -335,8 +340,10 @@ void protocol_poll(void)
     if (in_line && HAL_GetTick() - line_tick >= LINE_TIMEOUT_MS)
         in_line = false;                  /* angefangene Zeile ohne Ende verwerfen */
 
-    if (BREAK_STOPS_STREAM && serial_take_break() && proto == PROTO_ASCII)
+    if (BREAK_STOPS_STREAM && serial_take_break() && proto == PROTO_ASCII) {
         stop();
+        diag_ai_off();            /* wie ein Reset: auch die A-Zeilen aus */
+    }
 
     diag_poll();
 }

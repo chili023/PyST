@@ -36,12 +36,22 @@ typedef enum { OUT_IDLE, OUT_BEGIN, OUT_LINES, OUT_END } out_t;
 static out_t out;
 static uint32_t out_i;
 
+/* Analogeingaenge (#AI, ab 1.2.0): ai_hz Zeilen je Sekunde, Bezug ai_t0 alle 1000 ms neu (ohne Drift) */
+#define AI_HZ_MAX 50u
+static uint8_t ai_hz;
+static uint8_t ai_n;
+static uint32_t ai_t0;
+
 void diag_init(void)
 {
     mode_d = false;                        /* Modus wird nie gespeichert */
     displaced = false;
     out = OUT_IDLE;
+    ai_hz = 0;                             /* A-Zeilen nach dem Start aus */
 }
+
+void diag_ai_off(void) { ai_hz = 0; }
+uint8_t diag_ai_hz(void) { return ai_hz; }
 
 bool diag_mode_d(void) { return mode_d; }
 void diag_note_displaced(void) { displaced = true; }
@@ -137,7 +147,7 @@ static void cmd_cap(void)
     fmt_tick_ns(&f);
     fmt_str(&f, ";ch=I,R;burst_max=");
     fmt_u32(&f, BURST_MAX);
-    fmt_str(&f, ";modes=N,D;set=1");
+    fmt_str(&f, ";modes=N,D;set=1;ai=ADC1,ADC2");
     send(&f);
 }
 
@@ -233,6 +243,26 @@ static void cmd_rate(const char *a)
     send(&f);
 }
 
+static void cmd_ai(const char *a)
+{
+    uint32_t hz = 0;
+    size_t n = 0;
+    while (a[n] >= '0' && a[n] <= '9' && n < 3u)
+        hz = hz * 10u + (uint32_t)(a[n++] - '0');
+    if (!n || a[n] || hz > AI_HZ_MAX) {
+        err("AI", "bereich 0-50");
+        return;
+    }
+    ai_hz = (uint8_t)hz;
+    ai_n = 0;
+    ai_t0 = HAL_GetTick();
+    fmt_t f;
+    fmt_reset(&f);
+    fmt_str(&f, "#OK;AI;");
+    fmt_u32(&f, hz);
+    send(&f);
+}
+
 static void cmd_burst(const char *a)
 {
     if (match(a, "STOP")) {
@@ -298,6 +328,8 @@ void diag_line(const char *line)
         serial_write_str("#OK;DEFAULTS\r\n");
     } else if ((a = match(line, "BURST")))
         cmd_burst(a);
+    else if ((a = match(line, "AI")))
+        cmd_ai(a);
     else
         err("?", "unbekannt");
 }
@@ -376,10 +408,56 @@ void diag_send_frame(const capture_frame_t *fr, uint16_t cycle)
     }
 }
 
+/* ------------------------------------------------------------ A-Zeilen (#AI) */
+
+/* 1 = jetzt eine Zeile. Zeile n+1 der laufenden Sekunde ist faellig bei (n+1) * 1000 / hz ms;
+ * liegt der Takt mehr als 1 s zurueck, beginnt er neu (ohne Nachholen). */
+static bool ai_due(uint32_t now)
+{
+    if (!ai_hz)
+        return false;
+    uint32_t el = now - ai_t0;
+    if (el >= 2000u) {
+        ai_t0 = now;
+        ai_n = 0;
+        return false;
+    }
+    if (el * ai_hz < (uint32_t)(ai_n + 1u) * 1000u)
+        return false;
+    if (++ai_n >= ai_hz) {
+        ai_t0 += 1000u;
+        ai_n = 0;
+    }
+    return true;
+}
+
+/* "A;<t_ms>;ADC1=1.650;ADC2=0.825": Spannung am Pin in V (ohne Teiler). Auch ein Eingang, der als
+ * AFR-Quelle dient (afr_src), steht in der Zeile. Nie im Binaerprotokoll der STM-LabVIEW, nicht
+ * waehrend einer Flanken-Ausgabe, und nur, wenn danach die Reserve im Sendepuffer frei bleibt
+ * (Telegramme und Antworten haben Vorrang; eine ausgelassene Zeile zaehlt nicht als Verlust). */
+static void ai_poll(void)
+{
+    uint32_t now = HAL_GetTick();
+    if (!ai_due(now) || protocol_binary() || diag_output_busy())
+        return;
+    fmt_t f;
+    fmt_reset(&f);
+    fmt_str(&f, "A;");
+    fmt_u32(&f, now);
+    fmt_str(&f, ";ADC1=");
+    fmt_fixed(&f, (float)analog_read(1) * ANALOG_VREF / 4096.0f, 3);
+    fmt_str(&f, ";ADC2=");
+    fmt_fixed(&f, (float)analog_read(2) * ANALOG_VREF / 4096.0f, 3);
+    fmt_str(&f, "\r\n");
+    if (serial_tx_free() >= f.len + TX_RESERVE)
+        serial_write(f.buf, f.len);
+}
+
 /* ------------------------------------------------------------ Burst-Ausgabe */
 
 void diag_poll(void)
 {
+    ai_poll();
     const burst_t *b = capture_burst();
     if (out == OUT_IDLE) {
         if (b->state != BURST_DONE)

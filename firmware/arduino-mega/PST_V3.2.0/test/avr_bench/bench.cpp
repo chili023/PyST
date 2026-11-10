@@ -70,6 +70,31 @@ int main(void)
   g_burst.state = PST_B_IDLE;
   g_ch[0].toggle = 0;
   run("nach Burst (nur Messung)", 100, 20000, 0);
+
+  // Ab 3.2.0: Analogeingaenge laufen nur in loop() (kein Interrupt). Gemessen wird, wie lange loop()
+  // dafuer braucht: ein Ergebnis uebernehmen und die A-Zeile mit 16 Kanaelen formatieren.
+  {
+    static PstAdc a;
+    static char line[PST_AI_LINE_MAX];
+    pst_adc_reset(&a);
+    uint16_t wmax = 0;
+    for (uint16_t i = 0; i < PST_AI_N * (1 + PST_AI_AVG); i++) {
+      uint16_t t0 = TCNT1;
+      uint8_t ch = pst_adc_result(&a, (uint16_t)(1023 - (i & 511)));
+      uint16_t t1 = TCNT1;
+      ADMUX = ch & 7;                  // haelt das Ergebnis am Leben
+      uint16_t d = t1 - t0 - 4;
+      if (d > wmax) wmax = d;
+    }
+    uputs("ADC-Ergebnis uebernehmen (loop): max="); uputu(wmax); uputs(" Takte\n");
+    for (uint8_t k = 0; k < PST_AI_N; k++) a.sum[k] = 4 * 1023;
+    a.valid = 0xFFFF;
+    uint16_t t0 = TCNT1;
+    size_t n = pst_fmt_analog(line, sizeof(line), 4294967295UL, &a);
+    uint16_t t1 = TCNT1;
+    uputs("A-Zeile 16 Kanaele formatieren (loop): "); uputu((uint16_t)(t1 - t0 - 4)); uputs(" Takte, ");
+    uputu(n); uputs(" Byte\n");
+  }
   uputs("ENDE\n");
   cli();
   // simavr beendet sich bei sleep mit gesperrten Interrupts

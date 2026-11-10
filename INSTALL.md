@@ -77,8 +77,9 @@ Prüfstand bestätigt. Die Wege von Hand stehen unten.
 
 | Datei | Wann |
 |---|---|
-| `PST-STM32_v1.1.0.bin` | Standard (Doppelimpulsfilter Zündung 25 %) + Oszi-/Diagnosemodus [PST-Diag 1](docs/04_PST_Diag_1.md); Filter per `#SET` ohne Neu-Flashen änderbar (z.B. `#SET ign_lockout_pct 70`) |
-| `PST-STM32_v1.1.0_dp70.bin` | wie oben, Doppelimpulsfilter ab Werk 70 % |
+| `PST-STM32_v1.2.0.bin` | Standard (Doppelimpulsfilter Zündung 25 %) + Oszi-/Diagnosemodus [PST-Diag 1](docs/04_PST_Diag_1.md) + Analogeingänge ADC1/ADC2 für PyST (`#AI`); Filter per `#SET` ohne Neu-Flashen änderbar (z.B. `#SET ign_lockout_pct 70`) |
+| `PST-STM32_v1.2.0_dp70.bin` | wie oben, Doppelimpulsfilter ab Werk 70 % |
+| `PST-STM32_v1.1.0.bin`, `PST-STM32_v1.1.0_dp70.bin` | vorige Version (ohne Analogeingänge) |
 | `PST-STM32_v1.0.0.bin` | bisherige Version (zum Zurückwechseln) |
 | `PST-STM32_v1.0.0_dp70.bin` | bisherige Version, Zündsignal liefert Störimpulse (z.B. 2 Impulse pro Umdrehung) – nur Einzylinder/gleichmäßige Zündfolge |
 
@@ -87,7 +88,7 @@ Prüfstand bestätigt. Die Wege von Hand stehen unten.
 die neue Firmware. Fertig.
 
 Alternativen:
-- **Mac/Linux:** `st-flash --connect-under-reset write PST-STM32_v1.1.0.bin 0x08000000`
+- **Mac/Linux:** `st-flash --connect-under-reset write PST-STM32_v1.2.0.bin 0x08000000`
   (`brew install stlink` bzw. `sudo apt install stlink-tools`)
 - **Windows:** STM32CubeProgrammer, Verbindung „Under Reset“, Adresse 0x08000000
 - **Selbst bauen** (PlatformIO, alle Systeme): `cd firmware/stm32 && pio run -t upload`
@@ -99,16 +100,17 @@ Alternativen:
 
 Prüfen: `python3 firmware/stm32/tools/pst_monitor.py` (braucht `pip install pyserial`) oder in
 PyST verbinden → unter Einstellungen › Verbindung steht bei „Zustand“ die Firmware-Version (z. B. „PST-STM32
-Version 1.1.0“), ebenso in der Statusleiste.
+Version 1.2.0“), ebenso in der Statusleiste.
 
 Einstellungen (Messrate, Filter, EGT, AFR-Eingang …): `firmware/stm32/include/config.h`, dann neu bauen.
 Details und Anschlussbelegung: [firmware/stm32/README.md](firmware/stm32/README.md).
 
-### Variante B: Arduino Mega 2560 mit Sketch 3.1.0
+### Variante B: Arduino Mega 2560 mit Sketch 3.2.0
 
-Sketch 3.1.0 (`firmware/arduino-mega/PST_V3.1.0/`) verhält sich nach dem Start wie 3.0.0 (LabVIEW 3.2.1
+Sketch 3.2.0 (`firmware/arduino-mega/PST_V3.2.0/`) verhält sich nach dem Start wie 3.0.0 (LabVIEW 3.2.1
 läuft unverändert), misst aber jede Periode, meldet 0 Hz nach Signalausfall und kann zusätzlich den
-Oszi-/Diagnosemodus [PST-Diag 1](docs/04_PST_Diag_1.md). Einstellungen werden **nicht mehr im Quelltext**
+Oszi-/Diagnosemodus [PST-Diag 1](docs/04_PST_Diag_1.md). Ab 3.2.0 liefert er PyST auf Wunsch die Spannungen an
+A0 … A15 (Einstellungen › Analogeingänge). Einstellungen werden **nicht mehr im Quelltext**
 geändert, sondern über die serielle Schnittstelle gesetzt und im EEPROM gespeichert.
 
 **Mit der Arduino IDE 2** (Mac/Linux/Windows):
@@ -116,14 +118,14 @@ geändert, sondern über die serielle Schnittstelle gesetzt und im EEPROM gespei
 1. [Arduino IDE 2](https://www.arduino.cc/en/software) installieren.
 2. Bibliotheken: *Sketch → Bibliothek einbinden → .ZIP-Bibliothek hinzufügen* – alle drei aus
    `firmware/arduino-mega/libraries/` (SparkFun BME280, Adafruit MAX31855, Adafruit BusIO).
-3. `firmware/arduino-mega/PST_V3.1.0/PST_V3.1.0.ino` öffnen (die Dateien `pst_core.h/.cpp` und
+3. `firmware/arduino-mega/PST_V3.2.0/PST_V3.2.0.ino` öffnen (die Dateien `pst_core.h/.cpp` und
    `pst_isr.h` im selben Ordner gehören dazu).
 4. *Werkzeuge → Board: „Arduino Mega or Mega 2560“*, Port wählen, **Hochladen**.
 
 **Oder mit PlatformIO** (nimmt die Bibliotheken direkt aus den ZIPs):
 
 ```bash
-cd firmware/arduino-mega/PST_V3.1.0
+cd firmware/arduino-mega/PST_V3.2.0
 pio run -t upload            # nur bauen: pio run
 make -C test                 # Host-Tests (g++), ohne Hardware
 ```
@@ -131,7 +133,7 @@ make -C test                 # Host-Tests (g++), ohne Hardware
 **Einrichten** im seriellen Monitor (115200 Baud, Zeilenende „Neue Zeile“):
 
 ```
-v                      → Version 3.1.0 vom 26.10.26; …
+v                      → Version 3.2.0 vom 10.11.26; …
 #GET                   → alle Einstellungen
 #SET bme_addr 0x77     → BME280-Adresse (Platine 0x76 oder 0x77)
 #SET thermo 1          → MAX31855-Thermoelement vorhanden
