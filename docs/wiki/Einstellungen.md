@@ -34,7 +34,7 @@ Alle Einstellungen speichert PyST sofort in `~/PyST/einstellungen.json`.
 | **n vom Gas [1/min]** | Standard 4000. Ab hier prüft PyST auf fallende Drehzahl (= Laufende). Startet den Lauf **nicht** mehr (seit 1.4.2 startet er mit dem Drehzahlanstieg). Muss über der Haltedrehzahl liegen |
 | **n Stop [1/min] (0 = aus)** | Standard 8000. Ab hier GAS WEG |
 | **Vor START nachfragen, ob sich das Setup geändert hat** | Ist in SETUP-WERTE nichts geändert, zeigt START kurz das Fenster „Setup unverändert – Änderungen eintragen?“ (Standard: an). Die Zangentaste „Neuer Lauf“ fragt nie. Siehe [Messen](Messen.md#start-nachfrage) |
-| **Nach dem Lauf Notiz/Setup-Fenster zeigen** | Standard an: nach dem Lauf (mit dem Ergebnis) das Fenster „Lauf fertig“ mit Notiz und Setup-Werten des Laufs; ohne Auto-Speichern wird dort gespeichert. Nicht modal, START/F1/Zangentaste gehen weiter. Aus: speichern mit **Lauf speichern** unten rechts (Ctrl+S). Eintrag `"nach_lauf_fenster"`. Siehe [Messen](Messen.md#nach-dem-lauf-fenster-lauf-fertig) |
+| **Nach dem Lauf Notiz/Setup-Fenster zeigen** | Standard an: nach dem Lauf ein Fenster „Lauf fertig“ mit Pmax/Mmax groß, Notiz, Setup-Werten des Laufs und „Als neues Setup speichern“ (das große Ergebnis kommt dann nicht dazu); ohne Auto-Speichern wird dort gespeichert. Nicht modal, START/F1/Zangentaste gehen weiter. Aus: speichern mit **Lauf speichern** unten rechts (Ctrl+S). Eintrag `"nach_lauf_fenster"`. Siehe [Messen](Messen.md#nach-dem-lauf-fenster-lauf-fertig) |
 
 ### Anzeige beim Messen
 
@@ -42,7 +42,7 @@ Unter der Gruppe Prüfstand. Dieselben Schalter stehen im Menü **Ansicht**.
 
 | Schalter | Standard | Wirkung |
 |---|---|---|
-| **Ergebnis groß nach dem Lauf** | an | nach dem Lauf Pmax und Mmax groß über dem Diagramm (weg mit START, Klick oder Esc) |
+| **Ergebnis groß nach dem Lauf** | an | nach dem Lauf Pmax und Mmax groß über dem Diagramm (weg mit START, Klick oder Esc); nur wenn das Fenster „Lauf fertig“ aus ist, sonst steht die Leistung dort |
 | **Anweisungen groß (GO, GAS WEG …)** | an | Anweisung für den Fahrer groß über dem Diagramm: nach START „Klima wird gemessen …“, dann GO – Vollgas! bis die Drehzahl 1 s lang steigt (Laufbeginn), während der Messung nichts, am Laufende GAS WEG! bzw. GAS WEG – KUPPLUNG ZIEHEN! (Ausrollversuch), danach das Ergebnis. Aus: nur das große „GAS WEG“ |
 | **Legende im Diagramm** | aus | Legende aller Läufe (Farbe, Datum/Zeit, Setup bzw. Notiz). Mittelwerte stehen immer in der Legende |
 

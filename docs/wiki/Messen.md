@@ -68,7 +68,8 @@ PyST ab („Kein Drehzahlanstieg nach 60 s – abgebrochen“). Findet es 120 s 
    (**Start: steigt über [s]**, **Start: Anstieg mind. [1/min]**).
 5. **Messung:** GO verschwindet, über der Kurve steht nichts.
 6. **Laufende:** Ab *n vom Gas* prüft PyST auf fallende Drehzahl (Gas weg) bzw. endet bei *n Stop* – **GAS WEG!**,
-   danach das große Ergebnis und das Fenster [Lauf fertig](#nach-dem-lauf-fenster-lauf-fertig).
+   danach das Fenster [Lauf fertig](#nach-dem-lauf-fenster-lauf-fertig) mit der Leistung (ist es abgeschaltet: das
+   große Ergebnis).
 
 | GO – Vollgas! | Messung |
 |---|---|
@@ -81,6 +82,8 @@ prüft.
 
 **Ergebnis groß** (Standard an): Nach dem Lauf (nach GAS WEG bzw. nach dem Ausrollen) stehen **Pmax** und **Mmax**
 mit Drehzahl groß über dem Diagramm, mit Farbe, Uhrzeit und Setup des Laufs. Weg mit START, Klick darauf oder Esc.
+Ist das Fenster [Lauf fertig](#nach-dem-lauf-fenster-lauf-fertig) an (Standard), steht die Leistung dort und das
+große Ergebnis erscheint nach dem Lauf nicht zusätzlich – es gibt nur **ein** Fenster.
 
 Beide Optionen und **Legende im Diagramm** (Standard aus) schaltet man unter Einstellungen › Rolle/Lauf ›
 **Anzeige beim Messen** oder im Menü **Ansicht**.
@@ -89,15 +92,17 @@ Beide Optionen und **Legende im Diagramm** (Standard aus) schaltet man unter Ein
 
 ![Fenster „Lauf fertig“ ohne Auto-Speichern](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_lauf_fertig.png)
 
-Sobald das Ergebnis steht (nach GAS WEG bzw. nach dem Ausrollversuch), geht unter dem großen Ergebnis ein kleines
-Fenster auf. Hier trägt man nach, was beim Lauf anders war, oder macht eine Notiz.
+Sobald das Ergebnis steht (nach GAS WEG bzw. nach dem Ausrollversuch), geht **ein** Fenster mittig über dem Diagramm
+auf: oben die Leistung, darunter trägt man nach, was beim Lauf anders war, oder macht eine Notiz. Ein großes Ergebnis
+über dem Diagramm kommt dann nicht dazu. Bei 1280×800 darf das Fenster das Diagramm verdecken, bleibt aber ganz
+sichtbar.
 
-| Teil | Inhalt |
+| Teil (von oben) | Inhalt |
 |---|---|
-| Kopf | „Lauf fertig: 32,0 PS bei 9.972 1/min · 22,8 Nm bei 9.739 1/min“, darunter Uhrzeit, Fahrzeug, Setup und ob der Lauf schon gespeichert ist |
+| Leistung | wie **Ergebnis groß**: Kopf „Lauf 16:29 · Serie, HD 135“ in der Farbe des Laufs, **Pmax** rot mit „bei … 1/min“ und kW, **Mmax** blau mit Drehzahl; darunter Fahrzeug, Setup und ob der Lauf schon gespeichert ist |
 | **Notiz** | vorbelegt mit der Notiz aus der Kopfzeile. Der Cursor steht gleich im Feld |
 | SETUP-WERTE | die belegten Plätze mit den Werten, die für den Lauf galten. Eine Änderung (gelb) gilt **nur für diesen Lauf**, wie **nur für diesen Lauf** in SETUP-WERTE. Die Zeile SETUP-WERTE für die nächsten Läufe bleibt, wie sie ist |
-| **auch als neues Setup speichern** | nur mit Fahrzeug, aktiv sobald ein Wert vom Setup abweicht: legt ein neues Setup an (Name wie „Serie, HD 140“), wählt es und ordnet den Lauf ihm zu |
+| **Als neues Setup speichern:** | Haken und Namensfeld, nur mit Fahrzeug, aktiv sobald ein Wert vom Setup abweicht. Der Name ist vorgeschlagen aus Setup und geänderten Werten („Serie, HD 140“) und lässt sich ändern; wer einen Namen tippt, setzt den Haken mit. Beim Speichern/Übernehmen wird das Setup angelegt und gewählt, der Lauf gehört dann zu ihm |
 
 Knöpfe **ohne Auto-Speichern**:
 
@@ -120,7 +125,9 @@ der Fahrer braucht keine Maus. Kommt ein neuer START, schließt es sich:
   **„Letzter Lauf nicht gespeichert“** (Zangentaste: „Neuer Lauf – letzter Lauf nicht gespeichert“). Nach
   **Verwerfen** kommt dieser Hinweis nicht.
 
-Abschaltbar mit **Nach dem Lauf Notiz/Setup-Fenster zeigen** (Einstellungen › Rolle/Lauf, Standard an).
+Abschaltbar mit **Nach dem Lauf Notiz/Setup-Fenster zeigen** (Einstellungen › Rolle/Lauf, Standard an). Aus: nach
+dem Lauf wieder das große Ergebnis über dem Diagramm (wenn **Ergebnis groß** an ist), gespeichert wird mit **Lauf
+speichern**.
 
 ### Lauf speichern (unten rechts)
 

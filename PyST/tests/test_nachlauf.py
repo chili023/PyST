@@ -11,7 +11,7 @@ from types import SimpleNamespace
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6 import QtWidgets  # noqa: E402
+from PySide6 import QtCore, QtWidgets  # noqa: E402
 
 from pyst import messen_page as mp, theme  # noqa: E402
 from pyst.statusleiste import SpeichernKnopf  # noqa: E402
@@ -58,21 +58,46 @@ class Fenster(unittest.TestCase):
             d.deleteLater()
 
     def test_lauf_fertig_ohne_autosave(self):
-        """Ohne Auto-Speichern: Verwerfen | Später | Speichern (Standard); Esc = Später; Notiz vorbelegt."""
-        d = mp.LaufFertig([("hauptduese", "135"), ("clip", "3")], "Lauf fertig: 31,6 PS bei 9.850 1/min",
-                          "Lauf 16:29", notiz="kalt", basis={"hauptduese": "135", "clip": "3"}, neues_setup=True)
+        """Ohne Auto-Speichern: Verwerfen | Später | Speichern (Standard); Esc = Später; Notiz vorbelegt; die Leistung
+        steht gross im Fenster; Name des neuen Setups vorgeschlagen und aenderbar."""
+        d = mp.LaufFertig([("hauptduese", "135"), ("clip", "3")], "Lauf 16:29  ·  Serie, HD 135",
+                          "Aprilia RS 125  ·  noch nicht gespeichert", notiz="kalt",
+                          basis={"hauptduese": "135", "clip": "3"}, neues_setup=True, setup_name="Serie, HD 135",
+                          leistung=("#1f77b4", 31.6, 9850.0, 22.7, 8900.0))
         wahl = []
         d.gewaehlt.connect(wahl.append)
         self.assertEqual(d.windowTitle(), "Lauf fertig")
-        self.assertIn("31,6 PS", d.frage.text())
+        self.assertEqual(d.leistung.kopf.text(), "Lauf 16:29  ·  Serie, HD 135")
+        self.assertIn("31,6 PS bei 9.850 1/min", d.leistung.werte_text())
+        self.assertIn("kW", d.leistung.werte_text())
+        self.assertIn("22,7 Nm bei 8.900 1/min", d.leistung.werte_text())
+        self.assertFalse(d.frage.isVisibleTo(d))
         self.assertEqual(d.notiz.text(), "kalt")
         self.assertEqual([b.text() for b in (d.b_weg, d.b_spaeter, d.b_ok)], ["Verwerfen", "Später", "Speichern"])
         self.assertTrue(d.b_ok.isDefault())
         self.assertFalse(d.geaendert())
         self.assertFalse(d.neu_setup.isEnabled())              # Werte wie im Setup
+        self.assertFalse(d.neu_name.isEnabled())
+        d.edits["hauptduese"].setText("140")
+        d.edits["hauptduese"].textEdited.emit("140")
+        self.assertTrue(d.neu_setup.isEnabled())
+        self.assertEqual(d.neu_name.text(), "Serie, HD 140")    # Vorschlag folgt den Werten
+        d.edits["hauptduese"].setText("135")
+        d.edits["hauptduese"].textEdited.emit("135")
         d.edits["clip"].setText("4")
         d.edits["clip"].textEdited.emit("4")
         self.assertTrue(d.neu_setup.isEnabled())
+        self.assertEqual(d.neu_name.text(), "Serie, HD 135, Clip 4")
+        self.assertFalse(d.neues_setup())
+        d.neu_name.setText("Clip 4 Test")
+        d.neu_name.textEdited.emit("Clip 4 Test")              # Name getippt: Haken an, Vorschlag bleibt weg
+        self.assertTrue(d.neues_setup())
+        self.assertEqual(d.neuer_name(), "Clip 4 Test")
+        d.edits["clip"].setText("5")
+        d.edits["clip"].textEdited.emit("5")
+        self.assertEqual(d.neuer_name(), "Clip 4 Test")
+        d.edits["clip"].setText("4")
+        d.edits["clip"].textEdited.emit("4")
         self.assertEqual(d.aenderungen(), {"clip": "4"})
         self.assertIn(theme.tokens()["changed_bg"], d.edits["clip"].styleSheet())
         self.assertTrue(d.geaendert())
@@ -92,7 +117,7 @@ class Fenster(unittest.TestCase):
         self.assertEqual(d.b_zu.text(), "Schließen")
         self.assertTrue(d.b_ok.isDefault())
         self.assertFalse(hasattr(d, "b_weg"))
-        self.assertFalse(d.neu_setup.isVisibleTo(d))           # ohne Fahrzeug kein Haken
+        self.assertFalse(d.neu_zeile.isVisibleTo(d))           # ohne Fahrzeug kein neues Setup
         d.accept()
         d.reject()
         self.assertEqual(wahl, [mp.UEBERNEHMEN, mp.SCHLIESSEN])
@@ -227,8 +252,9 @@ class NachDemLauf(unittest.TestCase):
 
     # ------------------------------------------------------------ Tests
     def test_simulator_lauf_fertig_speichern(self):
-        """Simulator ohne Auto-Speichern von START bis Speichern: Ergebnis groß, Fenster „Lauf fertig“ (nicht modal,
-        Notiz aus der Kopfzeile, Werte des Laufs), Speichern -> Lauf mit Notiz und Setup-Werten in der Datenbank."""
+        """Simulator ohne Auto-Speichern von START bis Speichern: genau ein Fenster „Lauf fertig“ (nicht modal, Leistung
+        gross, Notiz aus der Kopfzeile, Werte des Laufs), kein grosses Ergebnis daneben; Speichern -> Lauf mit Notiz
+        und Setup-Werten in der Datenbank."""
         w = self.w
         w.autosave.setChecked(False)
         w.run_note.setText("kalt")
@@ -242,9 +268,16 @@ class NachDemLauf(unittest.TestCase):
         self.assertTrue(d.isVisible())
         self.assertFalse(d.isModal())
         self.assertIsNone(APP.activeModalWidget())
-        self.assertTrue(w.ergebnis_gross.isVisible())
-        self.assertIn("PS bei", d.frage.text())
-        self.assertIn("Nm bei", d.frage.text())
+        self.assertFalse(w.ergebnis_gross.isVisible())         # ein Fenster: kein Ergebnis-Overlay daneben
+        fenster = [x for x in APP.topLevelWidgets() if isinstance(x, QtWidgets.QDialog) and x.isVisible()]
+        self.assertEqual(fenster, [d])
+        r = w._lauf_ctrl.result
+        self.assertIn(f"{mp.zahl(r.p_max, 1)} PS bei {mp.zahl(r.n_pmax)} 1/min", d.leistung.werte_text())
+        self.assertIn("Nm bei", d.leistung.werte_text())
+        self.assertTrue(d.leistung.kopf.text().startswith("Lauf "))
+        self.assertIn("Serie, HD 135", d.leistung.kopf.text())
+        g, h = d.frameGeometry(), QtCore.QRect(w.mapToGlobal(QtCore.QPoint(0, 0)), w.size())
+        self.assertTrue(h.contains(g), (g, h))                   # ganz im Hauptfenster
         self.assertIn("noch nicht gespeichert", d.unter.text())
         self.assertEqual(d.notiz.text(), "kalt")
         self.assertEqual(d.werte(), {"hauptduese": "135", "clip": "3", "zzp": "18"})
@@ -326,12 +359,15 @@ class NachDemLauf(unittest.TestCase):
         d.edits["hauptduese"].setText("140")
         d.edits["hauptduese"].textEdited.emit("140")
         self.assertTrue(d.neu_setup.isEnabled())
-        d.neu_setup.setChecked(True)
+        self.assertEqual(d.neu_name.text(), "Serie, HD 140")    # Vorschlag
+        d.neu_name.setText("HD 140, Kerze neu")
+        d.neu_name.textEdited.emit("HD 140, Kerze neu")    # selbst benannt, setzt den Haken
+        self.assertTrue(d.neu_setup.isChecked())
         d.b_ok.click()
         row = w.db.run(rid2)
         self.assertNotEqual(row.setup_id, self.sid)
         neu = w.db.setup(row.setup_id)
-        self.assertEqual(neu["name"], "Serie, HD 140")
+        self.assertEqual(neu["name"], "HD 140, Kerze neu")
         self.assertEqual((neu["hauptduese"], neu["clip"]), ("140", "3"))
         self.assertFalse(row.nur_lauf)
         self.assertEqual(row.werte["hauptduese"], "140")
@@ -383,6 +419,8 @@ class NachDemLauf(unittest.TestCase):
         self.assertFalse(self.gui.load_settings()[mp.NACH_LAUF_FENSTER])
         vorher = len(self._laeufe())
         self.assertIsNone(self._fertig(autosave=False))
+        self.assertTrue(warte(w.ergebnis_gross.isVisible, 3))   # ohne Fenster wie bisher das grosse Ergebnis
+        self.assertIn("nicht gespeichert", w.ergebnis_gross.kopf.text())
         k = w.statusleiste.speichern_knopf
         self.assertTrue(k.isEnabled())
         self.assertTrue(w.speichern_aktion.isEnabled())

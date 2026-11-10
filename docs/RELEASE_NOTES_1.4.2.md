@@ -41,7 +41,8 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
   - Mit Ausrollversuch **GAS WEG – KUPPLUNG ZIEHEN!** (rot), bis das Ausrollen fertig ist, dann das große Ergebnis.
   - Aus: nur das große „GAS WEG“ wie bisher.
 - **Ergebnis groß** (Standard an): nach dem Lauf Pmax und Mmax groß in der Mitte, mit Farbe, Uhrzeit und Setup des
-  Laufs. Weg mit START, Klick oder Esc.
+  Laufs. Weg mit START, Klick oder Esc. Mit dem Fenster **Lauf fertig** (Punkt 15, Standard an) steht die Leistung
+  dort statt im großen Ergebnis.
 - **Legende im Diagramm** (Standard aus): Farbe, Datum/Zeit und Setup bzw. Notiz aller Läufe. Mittelwerte stehen
   immer in der Legende.
 - Alle drei unter Einstellungen › Rolle/Lauf › **Anzeige beim Messen** und im Menü **Ansicht**.
@@ -215,11 +216,15 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 ![Ordner importieren: Vorschau](bilder/v142_import_ordner.png)
 
 **15. Nach dem Lauf: Fenster „Lauf fertig“, Knopf „Lauf speichern“, SETUP-WERTE einklappbar**
-- Ohne **Auto-Speichern** ließ sich ein Lauf bisher gar nicht speichern. Jetzt geht nach dem Lauf (mit dem großen
-  Ergebnis, nach GAS WEG bzw. nach dem Ausrollversuch) das Fenster **Lauf fertig** auf: Kopf mit Pmax/Mmax, Feld
-  **Notiz** (vorbelegt aus der Kopfzeile) und die SETUP-WERTE mit den Werten, die für den Lauf galten. Änderungen
-  gelten für diesen Lauf; mit dem Haken **auch als neues Setup speichern** entsteht daraus ein neues Setup, dem der
-  Lauf zugeordnet wird.
+- Ohne **Auto-Speichern** ließ sich ein Lauf bisher gar nicht speichern. Jetzt geht nach dem Lauf (nach GAS WEG bzw.
+  nach dem Ausrollversuch) **ein** Fenster **Lauf fertig** mittig über dem Diagramm auf. Von oben: die Leistung groß
+  wie bei **Ergebnis groß** (Kopf „Lauf 16:29 · Setup“, **Pmax** rot mit Drehzahl und kW, **Mmax** blau mit
+  Drehzahl, darunter Fahrzeug und Speicherstand), Feld **Notiz** (vorbelegt aus der Kopfzeile, Cursor im Feld), die
+  SETUP-WERTE mit den Werten, die für den Lauf galten, und **Als neues Setup speichern:** mit Namensfeld. Änderungen
+  gelten für diesen Lauf; mit dem Haken entsteht daraus ein neues Setup, dem der Lauf zugeordnet wird. Der Name ist
+  vorgeschlagen („Serie, HD 140“) und änderbar.
+- Mit dem Fenster erscheint das große Ergebnis nach dem Lauf **nicht** zusätzlich (vorher zwei Kästen übereinander).
+  Ist das Fenster abgeschaltet, kommt das große Ergebnis wie bisher.
 - Ohne Auto-Speichern: **Speichern** (Enter, Ctrl+S), **Verwerfen** (ohne Rückfrage, die Kurve bleibt bis zum
   nächsten START), **Später** (Esc). Mit Auto-Speichern ist der Lauf schon gespeichert: **Übernehmen** schreibt Notiz
   und Setup-Werte in den Lauf, **Schließen** lässt ihn.
@@ -235,7 +240,9 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
   …“, bei Änderungen mit **✎ geändert, ungespeichert** bzw. **✎ nur dieser Lauf**. Das Diagramm bekommt den Platz,
   der Zustand gilt nach dem Neustart.
 
-![Fenster „Lauf fertig“](bilder/v142_lauf_fertig.png)
+| Ohne Auto-Speichern | Mit Auto-Speichern |
+|---|---|
+| ![Fenster „Lauf fertig“](bilder/v142_lauf_fertig.png) | ![Fenster „Lauf fertig“ mit Auto-Speichern](bilder/v142_lauf_fertig_autosave.png) |
 
 ![SETUP-WERTE eingeklappt](bilder/v142_setup_eingeklappt.png)
 
