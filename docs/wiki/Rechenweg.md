@@ -38,8 +38,16 @@ Blockdiagrammen rekonstruiert. Mit denselben Parametern und Filtern liefert PyST
 - **Ende:** *n vom Gas* ist nur die Schwelle für die Ende-Erkennung. Die Kurve endet an der ersten Stelle, an der die
   Drehzahl fällt (a ≤ 0) und n über *n vom Gas* liegt.
 - **n Stop** (Erweiterung von PyST): der Lauf endet auch, sobald n ≥ *n Stop*. 0 = aus, wie LabVIEW.
+- **Laufbeginn (PyST 1.4.2):** Aufgezeichnet wird erst ab dem Drehzahlanstieg nach GO. Steigt die Motordrehzahl
+  (Rolle × i, je Telegramm) über ein Fenster von *Start: steigt über* (Standard 1 s) robust und um mindestens *Start:
+  Anstieg mind.* (Standard 150 1/min), beginnen die Daten des Laufs am **Anfang** dieses Fensters. Robust heißt: die
+  Steigung nach Theil-Sen (Median aller Punktpaar-Steigungen) × Fensterlänge erreicht den Mindestanstieg, sie liegt
+  mindestens 5 Standardfehler über 0 (Rauschen robust aus dem Fenster geschätzt), und von den fünf Teilstrecken des
+  Fensters liegt jede um mindestens ein Viertel ihres Anteils am Anstieg über der vorigen (Median je Teilstrecke).
 - **Anfang:** Bei *n vom Gas* wird nichts abgeschnitten. Entfernt wird nur der Vorlauf: PyST sucht von hinten die letzte
-  Stelle mit a < 0 und n < *n vom Gas*. Danach beginnt die Kurve, also mit dem Beschleunigen nach dem Halten.
+  Stelle mit a < 0 und n < *n vom Gas*. Danach beginnt die Kurve, also mit dem Beschleunigen nach dem Halten. Seit dem
+  Laufbeginn am Drehzahlanstieg ist da meist nichts mehr abzuschneiden; für LabVIEW-Läufe und alte PyST-Läufe (mit
+  Halten) gilt die Regel unverändert.
 
 ## Filter in Sekunden oder Messpunkten
 

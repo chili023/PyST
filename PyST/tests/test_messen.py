@@ -766,7 +766,7 @@ class Messen(unittest.TestCase):
             self.assertEqual(a.text(), "GO – Vollgas!")
             self.assertEqual(a.stufe, theme.GUT)
             px_go = a.schrift_px()
-            ctrl.state = RUN                                        # n vom Gas: Messung beginnt -> GO sofort weg
+            ctrl.state = RUN                                        # Laufbeginn (Anstieg): GO sofort weg
             w._laufzustand_zeigen(RUN, lv)
             self.assertFalse(a.isVisible())
             self.assertEqual(w.zustand.text(), "Messung · 9.500 1/min")   # nur klein neben START
@@ -830,6 +830,110 @@ class Messen(unittest.TestCase):
             self.assertFalse(a.isVisible())
         finally:
             w.ctrl = alt
+
+    def test_anweisung_klima_go_messung(self):
+        """Nach START: „Klima wird gemessen …“ (neutral) gross und im Feld, dann GO – Vollgas! mit dem Hinweis auf den
+        Drehzahlanstieg, ab Laufbeginn nichts gross."""
+        from types import SimpleNamespace
+        from pyst.runner import KLIMA, RUN, WAIT
+        w = self.w
+        ctrl = SimpleNamespace(state=KLIMA, gas_off=lambda: False, ausrollen=False,
+                               params=SimpleNamespace(n_stop=10800, start_anstieg_s=1.0))
+        lv = SimpleNamespace(n_calc=3000.0)
+        alt = w.ctrl
+        w.ctrl = ctrl
+        a = w.anweisung
+        try:
+            w._laufzustand_zeigen(KLIMA, lv)
+            self.assertTrue(a.isVisible())
+            self.assertEqual(a.text(), "Klima wird gemessen …")
+            self.assertEqual(a.stufe, theme.AUS)
+            self.assertIn("gleich kommt GO", a.unter.text())
+            self.assertEqual(w.zustand.text(), "Klima wird gemessen …")
+            ctrl.state = WAIT
+            w._laufzustand_zeigen(WAIT, lv)
+            self.assertEqual(a.text(), "GO – Vollgas!")
+            self.assertEqual(a.stufe, theme.GUT)
+            self.assertIn("1,0 s lang steigt", a.unter.text())
+            self.assertEqual(w.zustand.text(), "GO – Vollgas!")
+            ctrl.state = RUN                                        # Laufbeginn: GO weg, nichts gross
+            w._laufzustand_zeigen(RUN, lv)
+            self.assertFalse(a.isVisible())
+            self.assertEqual(w.zustand.text(), "Messung · 3.000 1/min")
+            # Option aus: auch keine Klima-Anzeige gross
+            w.anzeige_setzen(mp.ANWEISUNG_GROSS, False)
+            ctrl.state = KLIMA
+            w._laufzustand_zeigen(KLIMA, lv)
+            self.assertFalse(a.isVisible())
+            self.assertEqual(w.zustand.text(), "Klima wird gemessen …")
+        finally:
+            w.ctrl = alt
+
+    def test_laufstart_einstellungen(self):
+        """Start: steigt über [s] / Anstieg mind. [1/min] unter Rolle/Lauf und im Popup (gespiegelt, mit Tooltip),
+        gespeichert in einstellungen.json (params); n vom Gas erklaert nur noch das Laufende."""
+        from pyst import gui
+        w = self.w
+        s = w.page_settings
+        for key, std in (("start_anstieg_s", 1.0), ("start_anstieg_min", 150.0)):
+            self.assertEqual(s.fields[key].value(), std)
+            self.assertTrue(s.fields[key].toolTip())
+        self.assertIn("Laufende", s.fields["n_min"].toolTip())
+        self.assertNotIn("Startschwelle", s.fields["n_min"].toolTip())
+        w._lauf_popup_zeigen()
+        p = w.lauf_popup
+        try:
+            p.spins["start_anstieg_s"].setValue(1.5)
+            p.spins["start_anstieg_min"].setValue(250)
+            self.assertEqual(p.spins["start_anstieg_s"].toolTip(), s.fields["start_anstieg_s"].toolTip())
+        finally:
+            p.hide()
+        self.assertEqual((s.params().start_anstieg_s, s.params().start_anstieg_min), (1.5, 250.0))
+        self.assertIn("steigt 1,5 s um mind. 250 1/min", w.lauf_btn.toolTip())
+        w._persist()
+        gespeichert = gui.load_settings()["params"]
+        self.assertEqual((gespeichert["start_anstieg_s"], gespeichert["start_anstieg_min"]), (1.5, 250.0))
+        w2 = gui.MainWindow()
+        try:
+            self.assertEqual(w2.page_settings.fields["start_anstieg_s"].value(), 1.5)
+            self.assertEqual(w2.page_settings.fields["start_anstieg_min"].value(), 250.0)
+        finally:
+            from conftest import close_window
+            close_window(w2, APP)
+        s.fields["start_anstieg_s"].setValue(1.0)
+        s.fields["start_anstieg_min"].setValue(150)
+        w._persist()
+
+    def test_simulator_lauf_ablauf(self):
+        """Simulator ganz durch: START -> Klima wird gemessen … -> GO -> Messung (nichts gross) -> GAS WEG ->
+        Ergebnis; Klima vom Sensor in den Feldern, Hinweis im Ergebnis."""
+        from pyst.runner import DONE, KLIMA, RUN, WAIT
+        w, gui = self.w, self.gui
+        w.page_settings.port_combo.setEditText(gui.DEFAULT_SIM_PORT)
+        w.page_settings.fields["temp_c"].setValue(30.0)
+        self.assertTrue(w.on_connect())
+        folge = []
+        try:
+            w.on_start(nachfrage=False)
+            end = time.time() + 60
+            while time.time() < end and not (w.ctrl.state == DONE and w._done_handled):
+                st = w.ctrl.state
+                eintrag = (st, w.anweisung.text() if w.anweisung.isVisible() else "")
+                if not folge or folge[-1] != eintrag:
+                    folge.append(eintrag)
+                pump(0.02)
+            self.assertEqual(w.ctrl.state, DONE)
+            zustaende = [st for st, _t in folge]
+            self.assertEqual(sorted(set(zustaende), key=zustaende.index), [KLIMA, WAIT, RUN])
+            self.assertIn((KLIMA, "Klima wird gemessen …"), folge)
+            self.assertIn((WAIT, "GO – Vollgas!"), folge)
+            self.assertNotIn("GO – Vollgas!", [t for st, t in folge if st == RUN][1:])
+            self.assertIn((RUN, ""), folge)                        # waehrend der Messung nichts gross
+            self.assertNotEqual(w.page_settings.fields["temp_c"].value(), 30.0)   # frisch vom Sensor
+            self.assertIn("vom Sensor", w.result_label.text())
+            self.assertIn(w.anweisung.text(), ("GAS WEG!", ""))
+        finally:
+            w.on_connect()
 
     def test_laufende_gas_weg_dann_ergebnis(self):
         """Ohne Ausrollversuch: am Laufende GAS WEG! (mind. die Haltezeit), danach das Ergebnis gross; mit

@@ -516,7 +516,7 @@ class Gui(unittest.TestCase):
         self.run_gui(0.3)
         self.assertEqual(ser.z_settings["blitz_phi_x10"], "-5")
         self.assertEqual(ser.z_led, [])                     # kein Neuer Lauf
-        self.assertNotIn(w.ctrl.state, (self.gui.WAIT, self.gui.RUN))
+        self.assertNotIn(w.ctrl.state, (self.gui.KLIMA, self.gui.WAIT, self.gui.RUN))
 
     # ------------------------------------------------------------------ Marker
     def test_marker_nummern(self):
@@ -560,7 +560,7 @@ class Gui(unittest.TestCase):
         ser = self.verbinden()
         w.show_page(w.page_tasten)
         ser.sim_taste("t3_kurz")
-        self.assertTrue(self.run_gui(3, lambda: w.ctrl.state in (self.gui.WAIT, self.gui.RUN)))
+        self.assertTrue(self.run_gui(3, lambda: w.ctrl.state in (self.gui.KLIMA, self.gui.WAIT, self.gui.RUN)))
         self.assertEqual(w.tabs.currentIndex(), 0)
         self.assertTrue(self.run_gui(3, lambda: tasten.LED_OK in ser.z_led))
         # zweiter Druck startet nichts neu und bricht nichts ab
@@ -569,7 +569,7 @@ class Gui(unittest.TestCase):
         ser.sim_taste("t3_kurz")
         self.assertTrue(self.run_gui(3, lambda: ser.z_led == [tasten.LED_FEHLER]))
         self.assertIs(w.ctrl.frames, frames)
-        self.assertIn(w.ctrl.state, (self.gui.WAIT, self.gui.RUN))
+        self.assertIn(w.ctrl.state, (self.gui.KLIMA, self.gui.WAIT, self.gui.RUN))
         self.assertIn("läuft schon", w.band.text())
         self.assertFalse(w.band.isHidden())
         self.shot("hinweis_lauf.png")
@@ -584,7 +584,7 @@ class Gui(unittest.TestCase):
         ser.sim_taste("t3_kurz")
         self.assertTrue(self.run_gui(3, lambda: ser.z_led == [tasten.LED_FEHLER]))
         self.assertIn("Oszi", w.band.text())
-        self.assertNotIn(w.ctrl.state, (self.gui.WAIT, self.gui.RUN))
+        self.assertNotIn(w.ctrl.state, (self.gui.KLIMA, self.gui.WAIT, self.gui.RUN))
         w.page_oszi.rec_btn.setChecked(False)
         # Flashen
         ser.z_led.clear()
@@ -600,7 +600,7 @@ class Gui(unittest.TestCase):
         ser.sim_taste("t3_kurz")
         self.assertTrue(self.run_gui(3, lambda: ser.z_led == [tasten.LED_FEHLER]))
         self.assertIsNone(self.app.activeModalWidget())
-        self.assertNotIn(w.ctrl.state, (self.gui.WAIT, self.gui.RUN))
+        self.assertNotIn(w.ctrl.state, (self.gui.KLIMA, self.gui.WAIT, self.gui.RUN))
 
     # ------------------------------------------------------------------ Übersetzung
     def test_uebersetzung(self):

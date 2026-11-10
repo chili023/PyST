@@ -47,7 +47,7 @@ from .bg import Bg, wait_in_thread, waiting
 from .plots import EXTRA_PREFIX, LOWER_DEFAULT, MAX_LOWER, MAX_OVERLAYS, DynoPlot, fmt_value, run_color
 from .rusefi import COLUMN_PREFIX
 from .runcache import RunCache
-from .runner import ABORTED, ACTIVE, COAST, DONE, IDLE, RUN, WAIT, RunController
+from .runner import ABORTED, ACTIVE, COAST, DONE, IDLE, KLIMA, RUN, WAIT, RunController
 from .rusefi_page import RusefiPage
 from .tasten_page import TastenBand, TastenPage
 from .viewer import LogViewer
@@ -85,6 +85,8 @@ PARAM_FIELDS = {
     ],
     "Lauf": [
         ("ratio", "Übersetzung nKW/nRolle", 0.01, 100, 3),
+        ("start_anstieg_s", "Start: steigt über [s]", 0.2, 5, 1),
+        ("start_anstieg_min", "Start: Anstieg mind. [1/min]", 0, 5000, 0),
         ("n_min", "n vom Gas [1/min]", 0, 30000, 0),
         ("n_stop", "n Stop [1/min] (0 = aus)", 0, 30000, 0),
     ],
@@ -102,6 +104,19 @@ PARAM_FIELDS = {
         ("temp_c", "Lufttemperatur [°C]", -30, 60, 1),
         ("p_mbar", "Luftdruck [mbar]", 500, 1200, 1),
     ],
+}
+
+
+# Tooltips der Felder (auch an den Spiegeln unter Messen › Lauf-Einstellungen …)
+PARAM_TIPS = {
+    "start_anstieg_s": "Laufbeginn: Nach GO beginnt die Messung, sobald die Motordrehzahl (Rolle × Übersetzung) so "
+                       "lange durchgehend steigt. Die Kurve beginnt am Anfang dieses Zeitfensters, nichts geht "
+                       "verloren. Standard 1,0 s.",
+    "start_anstieg_min": "Laufbeginn: Um so viel muss die Motordrehzahl im Zeitfenster mindestens steigen, damit "
+                         "Halten mit Messrauschen nicht als Start gilt. Standard 150 1/min.",
+    "n_min": "Ab dieser Motordrehzahl wird auf fallende Drehzahl (= Laufende, Gas weg) geprüft. Startet den Lauf "
+             "nicht, der beginnt mit dem Drehzahlanstieg. Muss über der Haltedrehzahl liegen.",
+    "n_stop": "Lauf endet spätestens bei dieser Motordrehzahl (0 = aus, Ende nur durch Gas weg).",
 }
 
 
@@ -228,6 +243,12 @@ class SettingsPage(QtWidgets.QScrollArea):
                     sp.setSingleStep(0.05)
                 sp.setValue(float(getattr(defaults, key)))
                 sp.setKeyboardTracking(False)
+                if key in PARAM_TIPS:
+                    sp.setToolTip(PARAM_TIPS[key])
+                if key == "start_anstieg_s":
+                    sp.setSingleStep(0.1)
+                elif key == "start_anstieg_min":
+                    sp.setSingleStep(50)
                 self.fields[key] = sp
                 ziel = "Verluste" if key in LOSS_KEYS else "Filter" if group.startswith("Filter") else group
                 if key == "ratio":                 # Art, Wert und der Knopf „Übersetzung einmessen …“
@@ -253,8 +274,9 @@ class SettingsPage(QtWidgets.QScrollArea):
                     continue
                 boxes[ziel].addRow(label, sp)
         fl = boxes["Lauf"]
-        note = QtWidgets.QLabel("n vom Gas: ab hier wird auf fallende Drehzahl (= Laufende) geprüft. "
-                                "Muss über der Haltedrehzahl liegen.")
+        note = QtWidgets.QLabel("Start: Nach GO beginnt der Lauf, sobald die Drehzahl so lange steigt. "
+                                "n vom Gas: ab hier wird auf fallende Drehzahl (= Laufende) geprüft, "
+                                "muss über der Haltedrehzahl liegen.")
         note.setWordWrap(True)
         theme.rolle(note, "neben")
         fl.addRow(note)
@@ -665,6 +687,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.cache = RunCache()                    # run_id -> (run, result, channels, params)
         self.last_keepalive = 0.0
         self._done_handled = True
+        self._klima_offen = False                  # Phase KLIMA des laufenden Laufs noch nicht uebernommen
         self._plot_due = 0.0
         self._shown_rate = 0.0
         self._cursor_n = 0.0
@@ -1437,19 +1460,30 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.plot.remove(LIVE_KEY)
         self.plot.freeze(True)                     # Skalierung wie beim vorherigen Lauf
         self.result_label.setText("")
-        wait_in_thread(self.ctrl.start)                    # Klima abfragen dauert
-        if self.ctrl.climate:
-            s.fields["temp_c"].setValue(self.ctrl.params.temp_c)
-            s.fields["p_mbar"].setValue(self.ctrl.params.p_mbar)
-            self._klima_gelesen(self.ctrl.climate)
+        wait_in_thread(self.ctrl.start)                    # ohne Klima: Messung starten; mit: Phase KLIMA
+        self._klima_offen = self.ctrl.state == KLIMA
         self.result_label.setText(self.ctrl.message)
         self._done_handled = False
+        self._laufzustand_zeigen(self.ctrl.state, self.ctrl.live)    # „Klima wird gemessen …“ bzw. GO sofort
         self._update_buttons()
+
+    def _klima_nach_start(self):
+        """Phase KLIMA vorbei: frischen Sensorwert eintragen (oder Hinweis, dass der eingetragene Wert gilt)."""
+        self._klima_offen = False
+        c = self.ctrl.climate
+        if c:
+            s = self.page_settings
+            s.fields["temp_c"].setValue(self.ctrl.params.temp_c)
+            s.fields["p_mbar"].setValue(self.ctrl.params.p_mbar)
+            self._klima_gelesen(c)
+        elif self.ctrl.state == WAIT:
+            self.statusBar().showMessage(self.ctrl.klima_text(), 8000)
+        self.result_label.setText(self.ctrl.message)
 
     def on_abort(self):
         if self.ctrl and self.ctrl.state == COAST:
             self.ctrl.end_coast()                          # Lauf ist fertig: nur das Ausrollen beenden
-        elif self.ctrl and self.ctrl.state in (WAIT, RUN):
+        elif self.ctrl and self.ctrl.state in (KLIMA, WAIT, RUN):
             self.ctrl.abort()
             if self.page_settings.live_check.isChecked():
                 self.link.start()
@@ -1467,8 +1501,10 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             if coast is not None:
                 self.page_kalib.show_result(coast, self._coast_label(None))
             return
+        klima = self.ctrl.klima_text()
         self.result_label.setText(r.summary() + f"\nEnde: {self.ctrl.message or r.end_reason}   |   "
                                   f"{len(self.ctrl.frames)} Telegramme, {self.link.lost} verloren"
+                                  + (f"   |   {klima}" if klima else "")
                                   + (f"\n{ratio_text}" if ratio_text else "")
                                   + (f"\n{self.ctrl.coast_text()}" if coast is not None else ""))
         if r.verluste:
@@ -1962,6 +1998,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             return
         new = self.ctrl.poll()
         lv = self.ctrl.live
+        if self._klima_offen and self.ctrl.state != KLIMA:
+            self._klima_nach_start()
         if new and self.ausroll_dlg is not None and self.ctrl.state not in ACTIVE:
             self.ausroll_dlg.telegramme(new)               # Assistent Rollen-Kalibrierung: Rolle ohne Lauf
         if new:

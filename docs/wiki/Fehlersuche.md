@@ -54,13 +54,30 @@ Wechsel des WLAN-Kanals sucht die Zange die Basis neu.
 *n Stop* muss größer als *n vom Gas* sein (oder 0). Übersetzung, Rollengeber, Zündimpulse, Trägheit und Filter
 müssen größer als 0 sein.
 
+**Der Lauf startet nicht: GO bleibt stehen, nach 60 s „Kein Drehzahlanstieg nach 60 s – abgebrochen“.**
+Der Lauf beginnt erst, wenn die Motordrehzahl (Rolle × Übersetzung) **1 s lang** durchgehend steigt, um mindestens
+150 1/min. Prüfen: Dreht die Rolle überhaupt (LIVE-Drehzahl rechts)? Stimmen Rollengeber und Übersetzung? Bei sehr
+schwerer Rolle oder hohem Gang steigt die Drehzahl langsam: unter **Lauf-Einstellungen …** › LAUF den Wert **Start:
+Anstieg mind.** kleiner stellen oder **Start: steigt über** verkürzen.
+
+**Der Lauf beginnt schon beim Halten.**
+Ein kurzer Gasstoß (Drehzahl steigt 1 s lang um mehr als 150 1/min) gilt als Start. Ruhig halten, bis GO kommt, oder
+**Start: Anstieg mind.** höher stellen. Die Kurve selbst stört das nicht: Der Vorlauf bis zur letzten Verzögerung
+unter *n vom Gas* wird weiter abgeschnitten.
+
+**„Klima: eingetragener Wert … (kein Sensorwert)“ im Ergebnis.**
+Der Klimasensor hat nach START nicht innerhalb von 3 s geantwortet (oder die Gegenstelle hat keinen, z. B. die Zange
+per USB). Der Lauf ist mit den Werten unter Einstellungen › Rolle/Lauf › Klima gerechnet. Unter Einstellungen ›
+Verbindung › Prüfen „Klima“ prüfen.
+
 **„Kein Laufende nach 120 s – abgebrochen“.**
 PyST hat kein Laufende gefunden. *n vom Gas* liegt vermutlich unter der Haltedrehzahl, oder die Drehzahl ist nie
 gefallen. *n vom Gas* über die Haltedrehzahl setzen oder *n Stop* einschalten.
 
 **Die Kurve fängt zu spät an oder ist zu kurz.**
-Vor dem START den Motor ruhig **unter** *n vom Gas* halten. PyST schneidet den Vorlauf bis zur letzten Verzögerung
-unter *n vom Gas* ab. Siehe [Rechenweg](Rechenweg.md#anfang-und-ende-der-kurve).
+Vor dem START den Motor ruhig **unter** *n vom Gas* halten und erst bei GO Vollgas geben. Die Kurve beginnt am Anfang
+der Sekunde, in der die Drehzahl steigt; davor schneidet PyST wie bisher den Vorlauf bis zur letzten Verzögerung unter
+*n vom Gas* ab. Siehe [Rechenweg](Rechenweg.md#anfang-und-ende-der-kurve).
 
 **Die Leistung ist viel zu hoch oder zu niedrig.**
 Meist stimmt die **Übersetzung** nicht. Sie geht quadratisch ein. Neu einmessen oder live abgleichen

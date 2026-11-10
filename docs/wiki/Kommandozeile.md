@@ -35,9 +35,14 @@ aufruft.
 | Option | Bedeutung |
 |---|---|
 | `--port` | Port oder `SIM`. Ohne Angabe sucht PyST einen Port |
-| `--no-climate` | keine Klimaabfrage |
+| `--no-climate` | keine Klimaabfrage (dann gleich GO, mit den eingetragenen Werten) |
 | `--vehicle` | Fahrzeugdaten (Text) |
 | `--dir` | Speicherordner |
+
+Der Ablauf ist derselbe wie in der Oberfläche: `Klima wird gemessen …` (frischer Sensorwert, höchstens 3 s, sonst
+gelten die eingetragenen Werte), dann `GO – Vollgas!`, und die Messung beginnt, sobald die Drehzahl `--start-anstieg-s`
+lang um mindestens `--start-anstieg-min` steigt (`Laufbeginn erkannt – Messung läuft`). Kommt nach GO 60 s kein
+Anstieg, bricht PyST ab.
 
 Während des Laufs schreibt PyST alle 0,5 s eine Zeile mit Zustand, Motordrehzahl (gerechnet und gemessen), km/h,
 Messfrequenz und verlorenen Telegrammen. Bei *n Stop* steht `>>> GAS WEG <<<`. Strg+C bricht ab. Am Ende kommen das
@@ -70,7 +75,9 @@ Für `run`, `recalc` und `compare`. Sie überschreiben die Werte aus der Datei.
 | `--ratio` | Übersetzung nKW/nRolle | 6,85 |
 | `--ma` | Gleitender Mittelwert [Messpunkte] | 35 |
 | `--dq` | Differenzenquotient [Messpunkte] | 15 |
-| `--n-min` | n vom Gas [1/min] | 4000 |
+| `--start-anstieg-s` | Laufbeginn: Drehzahl steigt so lange [s] (nur `run`) | 1,0 |
+| `--start-anstieg-min` | Laufbeginn: Anstieg mindestens [1/min] (nur `run`) | 150 |
+| `--n-min` | n vom Gas: ab hier Laufende prüfen [1/min] | 4000 |
 | `--n-stop` | n Stop [1/min], 0 = aus | 8000 |
 | `--m0`, `--m1` | Verlustmoment M0, M1 [Nm] | 0 |
 | `--n1` | Rollendrehzahl n1 [1/min] | 1 |

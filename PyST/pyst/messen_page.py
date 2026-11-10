@@ -31,7 +31,8 @@ mittelwert.mitteln einen Mittelwert, gezeichnet wie ein Mittelwert-Lauf (dick, B
 keinen der Plaetze, steht oben in der Liste („Ø AUTOMATISCH“, AUTO_ROLLE) und wird bei jedem Neuzeichnen nachgefuehrt
 (neuer Lauf, Schloss, Haken, Loeschen, Setup-Wechsel). Gespeichert wird er nur mit „speichern“ (auto_mittel_speichern):
 dann ist er ein echter Mittelwert-Lauf wie aus Auswertung › Mittelwert bilden.
-T/p werden nur zwischen den Laeufen gelesen (link.climate() unterbricht den Datenstrom): beim START (wie bisher),
+T/p werden nur zwischen den Laeufen gelesen (link.climate() unterbricht den Datenstrom): nach START in der Phase
+„Klima wird gemessen …“ (runner.KLIMA),
 von Hand und alle KLIMA_ALLE_S, solange nichts laeuft.
 
 Einstellung START_NACHFRAGE ("start_nachfrage_setup", Standard True): ist in SETUP-WERTE nichts geaendert, vor
@@ -41,7 +42,8 @@ die Zangentaste „Neuer Lauf“ fragt nie. Schalter: Einstellungen › Rolle/La
 
 Anzeige beim Messen (Einstellungen › Rolle/Lauf und Menue Ansicht, ANZEIGE_OPTIONEN):
   ERGEBNIS_GROSS   (Standard an)  nach dem Lauf Pmax/Mmax gross ueber dem Diagramm (weg mit START, Klick, Esc)
-  ANWEISUNG_GROSS  (Standard an)  Anweisung gross fuer den Fahrer: GO – Vollgas! bis n vom Gas, waehrend der Messung
+  ANWEISUNG_GROSS  (Standard an)  Anweisung gross fuer den Fahrer: Klima wird gemessen … (nach START, neutral), GO –
+                                  Vollgas! bis die Drehzahl start_anstieg_s lang steigt (Laufbeginn), waehrend der Messung
                                   nichts, am Laufende GAS WEG! bzw. GAS WEG – KUPPLUNG ZIEHEN! (Ausrollversuch),
                                   danach das Ergebnis; aus: nur „GAS WEG“
   ANZEIGE_LEGENDE  (Standard aus) Legende aller Läufe im Diagramm (Farbe, Datum/Zeit, Setup bzw. Notiz)
@@ -64,7 +66,7 @@ from .db import (ART_LAUF, ECU_PREFIX, LIVE_KANAELE, LIVE_MAX, LIVE_STANDARD, ME
                  SCHNELLWERT_STANDARD, SETUP_FIELDS, field_label, messplaetze, wert_text)
 from .kacheln import GROSS, KLEIN, MINI, Kanal, SeitenLeiste, WertKachel, farb_icon, schloss_icon, zahl
 from .plots import EXTRA_PREFIX, DynoPlot, run_color
-from .runner import ACTIVE, COAST, DONE, RUN, WAIT
+from .runner import ACTIVE, COAST, DONE, KLIMA, RUN, WAIT
 from .statusleiste import StatusFeld
 from .umbruch import UmbruchLayout
 
@@ -1443,7 +1445,8 @@ class StartNachfrage(QtWidgets.QDialog):
 # =============================================================================================== Lauf-Einstellungen
 LAUF_FELDER = (("ratio", "Übersetzung nKW/nRolle"), ("ma_s", "Gleitender Mittelwert [s]"),
                ("dq_s", "Differenzenquotient ± [s]"), ("ma", "Gleitender Mittelwert [Punkte]"),
-               ("dq", "Differenzenquotient [Punkte]"), ("n_min", "n vom Gas [1/min]"),
+               ("dq", "Differenzenquotient [Punkte]"), ("start_anstieg_s", "Start: steigt über [s]"),
+               ("start_anstieg_min", "Start: Anstieg mind. [1/min]"), ("n_min", "n vom Gas [1/min]"),
                ("n_stop", "n Stop [1/min] (0 = aus)"))
 ART_KURZ = {"hand": ("Hand", "von Hand"), "funken": ("Funken", "Funkenmessung, zuletzt gemessen")}
 
@@ -1471,9 +1474,11 @@ def lauf_stand(seite) -> Tuple[List[str], str]:
     n_stop = f["n_stop"].value()
     werte = (f"{zahl(f['ma_s'].value(), 2)} / {zahl(f['dq_s'].value(), 2)} s" if filt == "Standard" else "")
     tip = (f"Übersetzung nKW/nRolle {i} ({a_lang})\nFilter: {filt}" + (f" ({werte})" if werte else "")
+           + f"\nStart: Drehzahl steigt {zahl(f['start_anstieg_s'].value(), 1)} s um mind. "
+             f"{zahl(f['start_anstieg_min'].value())} 1/min"
            + f"\nn vom Gas {zahl(f['n_min'].value())} 1/min · n Stop "
            + (f"{zahl(n_stop)} 1/min" if n_stop else "aus")
-           + "\n\nKlick: Übersetzung, Filter und Laufgrenzen ändern")
+           + "\n\nKlick: Übersetzung, Filter, Start und Laufende ändern")
     return zeilen, tip
 
 
@@ -1550,7 +1555,8 @@ class LaufKnopf(QtWidgets.QPushButton):
 
 class LaufEinstellungen(QtWidgets.QFrame):
     """Popup am Knopf „Lauf-Einstellungen …“: Übersetzung (Art von Hand / Funkenmessung, Wert, „Übersetzung
-    einmessen …“), Filter und Laufgrenzen (n vom Gas, n Stop). Die Felder spiegeln die von Einstellungen › Rolle/Lauf
+    einmessen …“), Filter und Lauf (Start: Anstieg über s / mind. 1/min, n vom Gas, n Stop). Die Felder spiegeln die
+    von Einstellungen › Rolle/Lauf
     (seite = SettingsPage, dieselben Einstellungen): Aenderungen gelten sofort und stehen an beiden Orten.
     Unter DIAGRAMM der Haken „Ø automatisch mitteln“ (self.auto, Einstellung AUTO_MITTEL; MessenMixin verbindet ihn
     mit auto_mittel_setzen, gleich mit dem Eintrag im Menue Ansicht)."""
@@ -1623,11 +1629,16 @@ class LaufEinstellungen(QtWidgets.QFrame):
         self.filter_form.addRow(self.filter_hinweis)
         lay.addLayout(self.filter_form)
 
-        lay.addWidget(abschnitt("LAUFGRENZEN"))
+        lay.addWidget(abschnitt("LAUF  Start und Ende"))
         grenzen = QtWidgets.QFormLayout()
         grenzen.setLabelAlignment(QtCore.Qt.AlignRight)
-        for key in ("n_min", "n_stop"):
+        for key in ("start_anstieg_s", "start_anstieg_min", "n_min", "n_stop"):
             grenzen.addRow(texte[key], self._spiegel(key))
+        self.lauf_hinweis = QtWidgets.QLabel("Nach GO beginnt der Lauf, sobald die Drehzahl so lange steigt; ab n vom "
+                                             "Gas wird auf das Laufende geprüft.")
+        self.lauf_hinweis.setWordWrap(True)
+        theme.rolle(self.lauf_hinweis, "neben")
+        grenzen.addRow(self.lauf_hinweis)
         lay.addLayout(grenzen)
 
         lay.addWidget(abschnitt("DIAGRAMM"))
@@ -1665,6 +1676,7 @@ class LaufEinstellungen(QtWidgets.QFrame):
         sp.setSingleStep(src.singleStep())
         sp.setKeyboardTracking(False)
         sp.setMinimumWidth(96)
+        sp.setToolTip(src.toolTip())
         sp.setValue(src.value())
         sp.valueChanged.connect(src.setValue)
 
@@ -1745,6 +1757,9 @@ class LaufEinstellungen(QtWidgets.QFrame):
         """Unter dem Knopf, rechtsbuendig zu ihm, innerhalb des Bildschirms."""
         self.abgleichen()
         self.adjustSize()
+        h = self.layout().heightForWidth(self.width())     # umbrechende Hinweise brauchen ihre Hoehe
+        if h > self.height():
+            self.resize(self.width(), h)
         g = knopf.mapToGlobal(QtCore.QPoint(knopf.width(), knopf.height() + 2))
         x, y = g.x() - self.width(), g.y()
         scr = knopf.screen().availableGeometry() if knopf.screen() is not None else None
@@ -2166,19 +2181,29 @@ class MessenMixin:
 
     def _laufzustand_zeigen(self, st: str, lv):
         """Zustand des Laufs im Feld neben START und gross ueber dem Diagramm (Option ANWEISUNG_GROSS; aus: nur
-        „GAS WEG“). Gross: „GO – Vollgas!“ bis die Messung beginnt (n vom Gas), waehrend der Messung nichts (nur das
+        „GAS WEG“). Gross: nach START „Klima wird gemessen …“ (neutral, nur mit Klima vom Sensor), dann „GO – Vollgas!“
+        bis die Messung beginnt (Drehzahl steigt start_anstieg_s lang), waehrend der Messung nichts (nur das
         Feld neben START zeigt „Messung · 9.500 1/min“), am Laufende mit Ausrollversuch „GAS WEG – KUPPLUNG ZIEHEN!“ bis das
         Ausrollen fertig ist, ohne „GAS WEG!“ (mind. GAS_WEG_HALTEN_S, siehe _laufende_gas_weg), danach das Ergebnis."""
         gross = self.anzeige_an(ANWEISUNG_GROSS)
         a = self.anweisung
         vorher, self._lauf_st = self._lauf_st, st
-        if st == WAIT:
+        if st == KLIMA:
+            self._set_status("Klima wird gemessen …", theme.AUS)
+            if gross:
+                a.zeige("Klima wird\ngemessen …", "Drehzahl halten – gleich kommt GO", theme.AUS,
+                        ANWEISUNG_HALTEN_S)
+        elif st == WAIT:
+            if vorher == KLIMA and a.isVisible() and a.stufe == theme.AUS:
+                a.verbergen()                              # Klima fertig: gleich GO
             self._set_status("GO – Vollgas!", theme.GUT)
             if gross:
-                a.zeige("GO – Vollgas!", "", theme.GUT, ANWEISUNG_HALTEN_S)
+                fenster = getattr(self.ctrl.params, "start_anstieg_s", 1.0)
+                a.zeige("GO – Vollgas!", f"Messung beginnt, sobald die Drehzahl {zahl(fenster, 1)} s lang steigt",
+                        theme.GUT, ANWEISUNG_HALTEN_S)
         elif st == RUN:
-            if a.isVisible() and a.stufe == theme.GUT:
-                a.verbergen()                              # Messung beginnt: GO weg, waehrend der Messung nichts
+            if a.isVisible() and a.stufe in (theme.GUT, theme.AUS):
+                a.verbergen()                              # Laufbeginn: GO weg, waehrend der Messung nichts
             if self.ctrl.gas_off():
                 aus = self.ctrl.ausrollen
                 self._set_status("GAS WEG – KUPPLUNG ZIEHEN!" if aus else "GAS WEG!", theme.FEHLER)

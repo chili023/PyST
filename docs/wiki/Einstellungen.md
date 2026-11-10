@@ -29,7 +29,9 @@ Alle Einstellungen speichert PyST sofort in `~/PyST/einstellungen.json`.
 |---|---|
 | **Übersetzung aus** | **von Hand (eingetragen/eingemessen)** oder **Funkenmessung (jeder Lauf)**, siehe [Übersetzung](Übersetzung.md) |
 | **Übersetzung nKW/nRolle** | Wert bzw. Startwert (Standard 6,85). Knöpfe **Übersetzung einmessen …** und **Live abgleichen …** |
-| **n vom Gas [1/min]** | Standard 4000. Ab hier prüft PyST auf fallende Drehzahl (= Laufende). Muss über der Haltedrehzahl liegen |
+| **Start: steigt über [s]** | Standard 1,0. Laufbeginn: nach GO beginnt die Messung, sobald die Motordrehzahl (Rolle × Übersetzung) so lange durchgehend steigt. Die Kurve beginnt am Anfang dieses Zeitfensters |
+| **Start: Anstieg mind. [1/min]** | Standard 150. Um so viel muss die Motordrehzahl im Zeitfenster mindestens steigen, damit Halten mit Messrauschen nicht als Start gilt |
+| **n vom Gas [1/min]** | Standard 4000. Ab hier prüft PyST auf fallende Drehzahl (= Laufende). Startet den Lauf **nicht** mehr (seit 1.4.2 startet er mit dem Drehzahlanstieg). Muss über der Haltedrehzahl liegen |
 | **n Stop [1/min] (0 = aus)** | Standard 8000. Ab hier GAS WEG |
 | **Vor START nachfragen, ob sich das Setup geändert hat** | Ist in SETUP-WERTE nichts geändert, zeigt START kurz das Fenster „Setup unverändert – Änderungen eintragen?“ (Standard: an). Die Zangentaste „Neuer Lauf“ fragt nie. Siehe [Messen](Messen.md#start-nachfrage) |
 
@@ -40,7 +42,7 @@ Unter der Gruppe Prüfstand. Dieselben Schalter stehen im Menü **Ansicht**.
 | Schalter | Standard | Wirkung |
 |---|---|---|
 | **Ergebnis groß nach dem Lauf** | an | nach dem Lauf Pmax und Mmax groß über dem Diagramm (weg mit START, Klick oder Esc) |
-| **Anweisungen groß (GO, GAS WEG …)** | an | Anweisung für den Fahrer groß über dem Diagramm: GO – Vollgas! bis *n vom Gas*, während der Messung nichts, am Laufende GAS WEG! bzw. GAS WEG – KUPPLUNG ZIEHEN! (Ausrollversuch), danach das Ergebnis. Aus: nur das große „GAS WEG“ |
+| **Anweisungen groß (GO, GAS WEG …)** | an | Anweisung für den Fahrer groß über dem Diagramm: nach START „Klima wird gemessen …“, dann GO – Vollgas! bis die Drehzahl 1 s lang steigt (Laufbeginn), während der Messung nichts, am Laufende GAS WEG! bzw. GAS WEG – KUPPLUNG ZIEHEN! (Ausrollversuch), danach das Ergebnis. Aus: nur das große „GAS WEG“ |
 | **Legende im Diagramm** | aus | Legende aller Läufe (Farbe, Datum/Zeit, Setup bzw. Notiz). Mittelwerte stehen immer in der Legende |
 
 Bilder und Einzelheiten: [Messen](Messen.md#statusfeld).
@@ -61,7 +63,7 @@ LabVIEW-Standard 35/15 bei 20 Hz = 1,75 s / 0,75 s.“ Details: [Rechenweg](Rech
 | Feld | Bedeutung |
 |---|---|
 | Lufttemperatur [°C], Luftdruck [mbar] | für die Korrektur nach DIN 70020 |
-| **vor jedem Lauf vom Sensor lesen** | BME280 der Messelektronik beim START lesen (Standard: an) |
+| **vor jedem Lauf vom Sensor lesen** | nach jedem START frisch vom BME280/BMP280 der Messelektronik lesen: Phase „Klima wird gemessen …“ vor GO, höchstens 3 s; ohne Antwort gilt der eingetragene Wert („Klima: eingetragener Wert“ im Ergebnis). Standard: an. Aus: kein Lesen, gleich GO |
 | **Klima jetzt lesen** | sofort lesen |
 | „DIN 70020 k = …“ | Korrekturfaktor zu den eingetragenen Werten |
 

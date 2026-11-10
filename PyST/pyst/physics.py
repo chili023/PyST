@@ -19,6 +19,8 @@ Aus den Blockdiagrammen rekonstruiert (Haupt-VI, Messschleife):
           (LabVIEW-Kommentar "Beginn mit n(i)<nSchwelle & a(i)<0 wegschneiden"):
           von hinten die letzte Stelle mit a < 0 und n < n_min suchen, danach beginnt die Kurve
           = Beginn des Beschleunigens nach dem Halten
+          (PyST 1.4.2: der Lauf zeichnet erst ab dem Drehzahlanstieg auf, runner.anstieg_beginn – der Vorlauf ist
+          dann meist leer; fuer LabVIEW- und alte PyST-Laeufe gilt die Regel unveraendert)
 
 Erweiterung PyST: optional n_stop – der Lauf endet auch, sobald n >= n_stop.
 Erweiterung PyST: Verlustmoment optional mit quadratischem Anteil m2 (Vorgabe 0 = linear wie LabVIEW),
@@ -115,8 +117,11 @@ class DynoParams:
     dq: int = 15                  # Differenzenquotient [Messpunkte] (wie LabVIEW)
     ma_s: float = 0.0             # > 0: Glaettung in Sekunden, MA = ma_s * Messfrequenz (ersetzt ma)
     dq_s: float = 0.0             # > 0: Differenz +- in Sekunden, dq = dq_s * Messfrequenz (ersetzt dq)
-    n_min: float = 4000.0         # "n vom Gas": Start-/Endschwelle [1/min], ueber Haltedrehzahl!
+    n_min: float = 4000.0         # "n vom Gas": ab hier wird auf fallende Drehzahl (Laufende) geprueft [1/min]
     n_stop: float = 8000.0        # Lauf endet bei dieser Motordrehzahl (0 = aus, wie LabVIEW)
+    # Laufbeginn (runner.anstieg_beginn): Motordrehzahl steigt start_anstieg_s lang um mind. start_anstieg_min
+    start_anstieg_s: float = 1.0
+    start_anstieg_min: float = 150.0
     m0: float = 0.0               # Verlustmoment bei n=0 [Nm]
     m1: float = 0.0               # Verlustmoment bei n1 [Nm]
     n1: float = 1.0               # Rollendrehzahl zu M1 [1/min]

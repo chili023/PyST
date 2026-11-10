@@ -82,7 +82,7 @@ wertet den Lauf damit aus und übernimmt den Wert als neuen Startwert. Genommen 
 mit einer Rollendrehzahl von mindestens 30 % des Maximums. Von diesen nimmt PyST einen getrimmten Mittelwert
 (je 10 % der Werte oben und unten weg), wie beim Einmessen.
 
-Bis zum Laufende rechnen Live-Kurve und Laufgrenzen (*n vom Gas*, *n Stop*) mit dem eingetragenen Startwert.
+Bis zum Laufende rechnen Live-Kurve, Laufbeginn (Drehzahlanstieg) und Laufgrenzen (*n vom Gas*, *n Stop*) mit dem eingetragenen Startwert.
 Ist das Zündsignal nicht brauchbar, rechnet PyST mit dem eingestellten Wert.
 
 Voraussetzung: **Zündung [Imp/U]** stimmt (Einstellungen › Rolle/Lauf).
