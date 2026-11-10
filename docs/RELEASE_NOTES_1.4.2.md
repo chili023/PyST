@@ -88,6 +88,9 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 - Geräte, die nicht angeschlossen sind, stehen ausgegraut mit gestricheltem Rand; ihr Knopf ist aus und sagt im
   Tooltip, was zu tun ist.
 - Die Tabelle im Expertenmodus ist schmaler: ein Knopf **Erstflash …**, der Weg steht im Tooltip.
+- Neu im Expertenmodus: **Update-Quelle (Branch)**. Software (Standard `main`) und Firmware (Standard `firmware`) lassen
+  sich auf einen anderen Branch stellen, z.B. `release/1.4.2` zum Testen einer Vorabversion. **Branches laden** holt
+  die Liste von GitHub, **Standard** stellt zurück. Firmware aus einem anderen Branch wird genauso geprüft wie sonst.
 
 ![Software & Firmware](bilder/v142_einst_firmware.png)
 

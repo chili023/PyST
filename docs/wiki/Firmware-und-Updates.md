@@ -75,6 +75,23 @@ ggf. **Erstflash …** (der Weg steht im Tooltip) und ein Haken **erzwingen** (a
 Datei mit ungeprüfter Signatur flashen). Nicht angeschlossene Geräte sind nur abgeblendet; Erstflash und eigene Datei
 gehen trotzdem.
 
+### Update-Quelle (Branch)
+
+Aus welchem Branch von GitHub chili023/PyST PyST nach Neuem sucht:
+
+| Feld | Standard | Bedeutung |
+|------|----------|-----------|
+| **Software (PyST)** | `main` | Branch, in dem PyST nach einer neueren Programmversion sucht (Kachel PyST) |
+| **Firmware** | `firmware` | Branch mit `manifest.json` und den Firmware-Dateien |
+
+- Branch wählen oder eintippen, z.B. `release/1.4.2` zum Testen einer Vorabversion. **Branches laden** holt die Liste
+  von GitHub, **Standard** stellt beide zurück. PyST merkt sich die Wahl (`"update_zweig"` in `einstellungen.json`)
+  und sucht sofort neu; in der Kopfzeile steht die Quelle.
+- Firmware aus einem anderen Branch wird genauso geprüft wie sonst: Größe, SHA-256, Signatur und bekannter Schlüssel
+  (Lambda F042: Größe und SHA-256 aus dem Manifest).
+- PyST selbst installiert sich auch dann nicht von allein. Die Kachel nennt den Befehl:
+  `git fetch && git checkout <Branch> && git pull`.
+
 ### Eigene Datei (statt Firmware-Repo)
 
 **Gerät** wählen, Datei wählen. Erlaubt: `.pystfw` (Basis, Basis-ESP, Zange), `.hex` (Mega), `.bin` (F446, Lambda).

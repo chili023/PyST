@@ -31,6 +31,7 @@ from .flash import FlashCancelled, FlashError
 from .bg import Bg, wait_in_thread
 
 QUELLE = "GitHub chili023/PyST › firmware"
+REPO_TEXT = "GitHub chili023/PyST"
 PYST_SEITE = "https://github.com/chili023/PyST"
 PYST_RELEASES = f"{PYST_SEITE}/releases"
 # Kundenansicht: was zu tun ist, solange ein Gerät nicht angeschlossen ist (Tooltip des Knopfs)
@@ -333,9 +334,11 @@ class SoftwareKarte(FirmwareKarte):
         self.b_los.setToolTip(PYST_RELEASES)
         self.b_los.clicked.connect(lambda: QtGui.QDesktopServices.openUrl(QtCore.QUrl(PYST_RELEASES)))
 
-    def zeige_pyst(self, lokal: str, remote: Optional[str], gesucht: str, ordner: str):
-        """gesucht: "" (noch nicht), "suche", "fertig"; remote None = nicht erreichbar."""
+    def zeige_pyst(self, lokal: str, remote: Optional[str], gesucht: str, ordner: str,
+                   zweig: str = update.SOFTWARE_ZWEIG):
+        """gesucht: "" (noch nicht), "suche", "fertig"; remote None = nicht erreichbar; zweig = Branch der Suche."""
         neu = bool(remote and update.is_newer(remote, lokal))
+        anderer = zweig != update.SOFTWARE_ZWEIG
         self.unter.setText(f"Programm am PC · Datenordner {ordner}")
         self.installiert.setText(lokal or "–")
         self.verfuegbar.setText(remote or "–")
@@ -348,11 +351,15 @@ class SoftwareKarte(FirmwareKarte):
             self.erkannt.set_zustand(ew.NEUTRAL, "✔ installiert")
         self.b_los.setText("Update laden …" if neu else self.knopf_text)
         ew.setze_primaer(self.b_los, neu)
-        if neu:
+        if neu and anderer:
+            unten = (f"PyST {remote} ist im Branch {zweig} da. Update: im PyST-Ordner „git fetch && git checkout "
+                     f"{zweig} && git pull“. Datenbank und Einstellungen in {ordner} bleiben erhalten.")
+        elif neu:
             unten = (f"PyST {remote} ist da. Update: im PyST-Ordner „git pull“ – oder das ZIP von der Release-Seite "
                      f"laden und entpacken. Datenbank und Einstellungen in {ordner} bleiben erhalten.")
         elif remote:
-            unten = f"PyST {lokal} ist aktuell (neueste Version auf GitHub: {remote})."
+            unten = (f"PyST {lokal} ist aktuell (neueste Version auf GitHub"
+                     + (f", Branch {zweig}" if anderer else "") + f": {remote}).")
         elif gesucht == "fertig":
             unten = "Neueste Version nicht abrufbar (ohne Netz?) – „Jetzt nach Updates suchen“."
         elif gesucht == "suche":
@@ -460,7 +467,10 @@ class FlashPage(QtWidgets.QScrollArea):
         self.ports: Dict[str, List[str]] = {}
         self.queue: List[str] = []               # Ziele, die noch drankommen (Basis: STM, dann ESP)
         self._ablauf_erzwingen = False
-        self.update_base = update.FIRMWARE_URL
+        zw = settings.get("update_zweig") or {}
+        self.sw_zweig = zw.get("software") if update.zweig_ok(zw.get("software", "")) else update.SOFTWARE_ZWEIG
+        self.fw_zweig = zw.get("firmware") if update.zweig_ok(zw.get("firmware", "")) else update.FIRMWARE_ZWEIG
+        self.update_base = update.firmware_url(self.fw_zweig)
         self.download_dir = os.path.join(os.path.expanduser("~"), "PyST", "firmware_updates")
         self.setWidgetResizable(True)
         inner = QtWidgets.QWidget()
@@ -489,7 +499,7 @@ class FlashPage(QtWidgets.QScrollArea):
         row = QtWidgets.QHBoxLayout()
         t = QtWidgets.QLabel("Software und Firmware")
         t.setStyleSheet("font-size: 17px; font-weight: 700;")
-        self.quelle = ew.neben(f"Quelle: {QUELLE} · noch nicht gesucht", False)
+        self.quelle = ew.neben(f"Quelle: {self._quelle_text()} · noch nicht gesucht", False)
         self.b_suchen = QtWidgets.QPushButton("Jetzt nach Updates suchen")
         self.b_suchen.clicked.connect(self.suchen)
         self.schalter = ew.Schalter()
@@ -577,6 +587,8 @@ class FlashPage(QtWidgets.QScrollArea):
         lay.addWidget(g)
         self.experte_ablauf = QtWidgets.QVBoxLayout()
         lay.addLayout(self.experte_ablauf)
+        # ---- Update-Quelle: Branch fuer Software und Firmware
+        lay.addWidget(self._build_zweige())
         # ---- Eigene Datei (die Flash-Ziele von früher, je eines sichtbar) | Erstflash
         mitte = QtWidgets.QHBoxLayout()
         g = QtWidgets.QGroupBox("Eigene Datei (statt Firmware-Repo)")
@@ -664,6 +676,124 @@ class FlashPage(QtWidgets.QScrollArea):
         lay.addWidget(g, 1)
         return w
 
+    def _build_zweige(self) -> QtWidgets.QGroupBox:
+        """Expertenmodus: aus welchem Branch PyST nach neuer Software und Firmware sucht."""
+        g = QtWidgets.QGroupBox("Update-Quelle (Branch)")
+        gl = QtWidgets.QGridLayout(g)
+        self.zweig_sw = QtWidgets.QComboBox()
+        self.zweig_fw = QtWidgets.QComboBox()
+        for box, wert, std, tip in ((self.zweig_sw, self.sw_zweig, update.SOFTWARE_ZWEIG,
+                                     "Branch, in dem PyST nach einer neueren Programmversion sucht"),
+                                    (self.zweig_fw, self.fw_zweig, update.FIRMWARE_ZWEIG,
+                                     "Branch mit manifest.json und den Firmware-Dateien")):
+            box.setEditable(True)
+            box.setInsertPolicy(QtWidgets.QComboBox.NoInsert)
+            box.setMinimumWidth(220)
+            box.addItem(std)
+            if wert != std:
+                box.addItem(wert)
+            box.setCurrentText(wert)
+            box.setToolTip(tip + f" (Standard: {std})")
+            box.lineEdit().editingFinished.connect(self._zweig_geaendert)
+            box.activated.connect(lambda _i: self._zweig_geaendert())
+        self.b_zweige = QtWidgets.QPushButton("Branches laden")
+        self.b_zweige.setToolTip("Liste der Branches von GitHub holen")
+        self.b_zweige.clicked.connect(self.zweige_laden)
+        self.b_zweig_std = QtWidgets.QPushButton("Standard")
+        self.b_zweig_std.setToolTip(f"Software {update.SOFTWARE_ZWEIG}, Firmware {update.FIRMWARE_ZWEIG}")
+        self.b_zweig_std.clicked.connect(lambda: self.set_zweige(update.SOFTWARE_ZWEIG, update.FIRMWARE_ZWEIG))
+        gl.addWidget(QtWidgets.QLabel("Software (PyST)"), 0, 0)
+        gl.addWidget(self.zweig_sw, 0, 1)
+        gl.addWidget(QtWidgets.QLabel("Firmware"), 0, 2)
+        gl.addWidget(self.zweig_fw, 0, 3)
+        gl.addWidget(self.b_zweige, 0, 4)
+        gl.addWidget(self.b_zweig_std, 0, 5)
+        gl.setColumnStretch(6, 1)
+        self.zweig_hinweis = ew.neben("")
+        gl.addWidget(self.zweig_hinweis, 1, 0, 1, 7)
+        self._zweig_hinweis()
+        return g
+
+    def _zweig_hinweis(self, fehler: str = ""):
+        if fehler:
+            text = fehler
+        elif (self.sw_zweig, self.fw_zweig) == (update.SOFTWARE_ZWEIG, update.FIRMWARE_ZWEIG):
+            text = (f"Standard: Software aus {update.SOFTWARE_ZWEIG}, Firmware aus {update.FIRMWARE_ZWEIG}. Andere "
+                    "Branches nur zum Testen von Vorabversionen.")
+        else:
+            text = ("⚠ Test-Branch eingestellt. Firmware wird wie immer geprüft (Größe, SHA-256, Signatur und "
+                    "bekannter Schlüssel), die Lambda-Firmware (F042) nur über Größe und SHA-256 aus dem Manifest. "
+                    "PyST selbst aktualisiert sich nicht von allein: „git fetch && git checkout <Branch> && git pull“.")
+        self.zweig_hinweis.setText(text)
+
+    def set_zweige(self, software: str, firmware: str, suchen: bool = True) -> bool:
+        """Branches setzen, speichern und neu suchen. False bei ungueltigem Namen (nichts geaendert)."""
+        software, firmware = software.strip(), firmware.strip()
+        falsch = [n for n in (software, firmware) if not update.zweig_ok(n)]
+        if falsch:
+            self._zweig_hinweis(f"Ungültiger Branch-Name: {falsch[0]!r} (erlaubt: Buchstaben, Ziffern, . _ - /)")
+            for box, wert in ((self.zweig_sw, self.sw_zweig), (self.zweig_fw, self.fw_zweig)):
+                box.blockSignals(True)
+                box.setCurrentText(wert)
+                box.blockSignals(False)
+            return False
+        for box, wert in ((self.zweig_sw, software), (self.zweig_fw, firmware)):
+            box.blockSignals(True)
+            if box.findText(wert) < 0:
+                box.addItem(wert)
+            box.setCurrentText(wert)
+            box.blockSignals(False)
+        if (software, firmware) == (self.sw_zweig, self.fw_zweig):
+            self._zweig_hinweis()
+            return True
+        self.sw_zweig, self.fw_zweig = software, firmware
+        self.update_base = update.firmware_url(firmware)
+        if (software, firmware) == (update.SOFTWARE_ZWEIG, update.FIRMWARE_ZWEIG):
+            self.settings.pop("update_zweig", None)
+        else:
+            self.settings["update_zweig"] = {"software": software, "firmware": firmware}
+        self.save_settings()
+        self._zweig_hinweis()
+        self._log(f"Update-Quelle: Software {software}, Firmware {firmware}")
+        self.remote, self.stand, self.pyst_remote, self.pyst_neu = {}, "", None, ""
+        self._show_remote()
+        self.quelle.setText(f"Quelle: {self._quelle_text()} · noch nicht gesucht")
+        if suchen:
+            self.suchen()
+        else:
+            self._pyst_anzeigen()
+        return True
+
+    def _zweig_geaendert(self):
+        self.set_zweige(self.zweig_sw.currentText(), self.zweig_fw.currentText())
+
+    def zweige_laden(self):
+        self.b_zweige.setEnabled(False)
+        self.zweig_hinweis.setText("Branches werden geladen …")
+        self.bg.submit("zweige", update.zweige, self._zweige_da)
+
+    def _zweige_da(self, namen, err):
+        self.b_zweige.setEnabled(True)
+        if not namen:
+            self._zweig_hinweis("Branches nicht abrufbar (ohne Netz?) – Namen lassen sich auch eintippen.")
+            return
+        for box, std in ((self.zweig_sw, update.SOFTWARE_ZWEIG), (self.zweig_fw, update.FIRMWARE_ZWEIG)):
+            wert = box.currentText()
+            box.blockSignals(True)
+            box.clear()
+            box.addItems([std] + [n for n in namen if n != std])
+            if box.findText(wert) < 0:
+                box.addItem(wert)
+            box.setCurrentText(wert)
+            box.blockSignals(False)
+        self._zweig_hinweis()
+
+    def _quelle_text(self) -> str:
+        sw = getattr(self, "sw_zweig", update.SOFTWARE_ZWEIG)
+        fw = getattr(self, "fw_zweig", update.FIRMWARE_ZWEIG)
+        text = f"{REPO_TEXT} › {fw}"
+        return text + (f" · PyST aus {sw}" if sw != update.SOFTWARE_ZWEIG else "")
+
     def set_experte(self, on: bool, speichern: bool = True):
         self.kunde.setVisible(not on)
         self.experte.setVisible(on)
@@ -706,13 +836,30 @@ class FlashPage(QtWidgets.QScrollArea):
         if "pyst" not in self.bg.pending:
             self.pyst_gesucht = "suche"
             self._pyst_anzeigen()
-        self.bg.submit("pyst", update.latest_pyst, lambda v, e: self._pyst_seen(v, version))
-        self.bg.submit("manifest", lambda: update.fetch_manifest(base=self.update_base), self._manifest)
+        zweig, base = self.sw_zweig, self.update_base
+        # Ergebnisse mit ihrem Branch: wird waehrend der Suche umgestellt, gilt das alte Ergebnis nicht (neu suchen)
+        self.bg.submit("pyst", lambda: (zweig, update.latest_pyst(zweig=zweig)),
+                       lambda r, e: self._pyst_ergebnis(r, version))
+        self.bg.submit("manifest", lambda: (base, update.fetch_manifest(base=base)), self._manifest_ergebnis)
+
+    def _pyst_ergebnis(self, r, version: str):
+        zweig, remote = r if r else (self.sw_zweig, None)
+        if zweig != self.sw_zweig:
+            self.check_updates(version)
+            return
+        self._pyst_seen(remote, version)
+
+    def _manifest_ergebnis(self, r, err):
+        base, entries = r if r else (self.update_base, None)
+        if base != self.update_base:
+            self.check_updates(self.pyst_lokal)
+            return
+        self._manifest(entries, err)
 
     def suchen(self):
         """Knopf „Jetzt nach Updates suchen“."""
         from . import __version__
-        self.quelle.setText(f"Quelle: {QUELLE} · suche …")
+        self.quelle.setText(f"Quelle: {self._quelle_text()} · suche …")
         self.check_updates(self.pyst_lokal or __version__)
 
     def _pyst_seen(self, remote, local: str):
@@ -736,15 +883,16 @@ class FlashPage(QtWidgets.QScrollArea):
         ordner = self.datenordner
         if ordner == home or ordner.startswith(home + os.sep):
             ordner = "~" + ordner[len(home):]
-        self.pyst_karte.zeige_pyst(self.pyst_lokal or __version__, self.pyst_remote, self.pyst_gesucht, ordner)
+        self.pyst_karte.zeige_pyst(self.pyst_lokal or __version__, self.pyst_remote, self.pyst_gesucht, ordner,
+                                   getattr(self, "sw_zweig", update.SOFTWARE_ZWEIG))
 
     def _manifest(self, entries, err):
         self.remote = entries or {}
         self.stand = time.strftime("%d.%m.%Y %H:%M") if entries is not None else ""
-        self.quelle.setText(f"Quelle: {QUELLE} · " + (f"Stand {self.stand}" if self.stand else
+        self.quelle.setText(f"Quelle: {self._quelle_text()} · " + (f"Stand {self.stand}" if self.stand else
                                                       "nicht erreichbar (ohne Netz oder Branch)"))
         if entries:
-            self._log(f"Firmware-Liste gelesen ({QUELLE}): " +
+            self._log(f"Firmware-Liste gelesen ({self._quelle_text()}): " +
                       ", ".join(f"{k} {e.version}" for k, e in sorted(entries.items())))
         z = self.remote.get(flash.ZANGE)
         self.zange_verfuegbar.emit(z.version if z else "")
