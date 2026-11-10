@@ -18,9 +18,12 @@ Voraussetzung: einmal die Auslieferungs-Firmware per ST-Link (Basis STM) bzw. pe
 ESP-Brücke, Zange über USB) aufgespielt. Ältere Stände können diese Dateien nicht annehmen.
 
 Mega und F446 (ältere PST-Messelektronik) sind quelloffen und deshalb unverschlüsselt und unsigniert; PyST prüft
-Größe und SHA-256 aus dem Manifest. Quellen, Lizenz (GPL v3) und Bibliotheken: chili023/PyST, Branch `release/1.4`,
-Ordner `firmware/arduino-mega/PST_V3.1.0` und `firmware/stm32`. Beide Dateien sind aus diesem Stand gebaut; der
-F446-Build ist bitgleich mit `firmware/stm32/bin/PST-STM32_v1.1.0.bin`.
+Größe und SHA-256 aus dem Manifest. Quellen, Lizenz (GPL v3) und Bibliotheken: chili023/PyST, Branch `release/1.4.2`
+(ab der Freigabe `main`), Ordner `firmware/arduino-mega/PST_V3.2.0` und `firmware/stm32`. Beide Dateien sind aus
+diesem Stand gebaut; der F446-Build ist bitgleich mit `firmware/stm32/bin/PST-STM32_v1.2.0.bin`.
+
+Mega 3.2.0 und F446 1.2.0 können die Analogeingänge senden (`#CAP …;ai=…`, `#AI <hz>`, Zeilen `A;…`, PST-Diag 1
+§11). Ohne `#AI` ist die Ausgabe wie bei 3.1.0 bzw. 1.1.0, LabVIEW merkt nichts. PyST ab 1.4.2 nutzt das.
 
 ## Lizenzhinweise der enthaltenen Drittsoftware
 

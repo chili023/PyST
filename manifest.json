@@ -15,16 +15,16 @@
       "signature": "572c8d3b4d5616bfa83e432dd91759af0ae194276ab70eb0b16b59e4f07e36ce743fe451fb86c645754081a6e044cf798dd0077ebbd3435003e97ed9a3d3940d"
     },
     "mega": {
-      "version": "3.1.0",
-      "file": "pst-mega-3.1.0.hex",
-      "size": 85571,
-      "sha256": "c513739d296f09352bb3aa046a961c27da19beaf42b99baeba9cb0c9e4e18da2"
+      "version": "3.2.0",
+      "file": "pst-mega-3.2.0.hex",
+      "size": 88647,
+      "sha256": "85a0b904fd95101a6ec55a4606d80c84c71c0c74559d2466b4688f43e316e2c8"
     },
     "stm32_f446": {
-      "version": "1.1.0",
-      "file": "pst-stm32-f446-1.1.0.bin",
-      "size": 29376,
-      "sha256": "55cb63f8b8d91f597064c3219df4b9ac5384c8006c9a19cee83d43341f285a82"
+      "version": "1.2.0",
+      "file": "pst-stm32-f446-1.2.0.bin",
+      "size": 28824,
+      "sha256": "7c6c6792bc27ba79bb61158e7db1a07312699ff8ec11117ce696b85efb9cd3e2"
     },
     "zange": {
       "version": "0.4.0",
