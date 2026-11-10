@@ -1146,6 +1146,7 @@ class LaufListe(QtWidgets.QWidget):
         self.b_none = QtWidgets.QPushButton("Alle ausblenden")
         self.b_view = QtWidgets.QPushButton("In Auswertung")
         self.b_del = QtWidgets.QPushButton("Löschen")
+        self.b_del.setToolTip("Markierte Läufe samt Messdateien löschen (anklicken, mehrere mit Strg oder Umschalt)")
         for b in (self.b_none, self.b_view, self.b_del):
             knoepfe.addWidget(b)
         lay.addLayout(knoepfe)
@@ -3526,6 +3527,14 @@ class MessenMixin:
     def on_delete(self):
         ids = self._ausgewaehlte_ids()
         if not ids:
+            # ohne Meldung sah es aus, als ginge Löschen nicht (Testrückmeldung 10.11.)
+            if self.run_tree.selectedItems():
+                text = ("Der markierte Eintrag ist kein gespeicherter Lauf (z. B. Ø automatisch oder eine "
+                        "Überschrift) und lässt sich nicht löschen.")
+            else:
+                text = ("Kein Lauf markiert. Lauf in der Liste anklicken (mehrere mit Strg oder Umschalt), "
+                        "dann Löschen.")
+            QtWidgets.QMessageBox.information(self, "Löschen", text)
             return
         ans = QtWidgets.QMessageBox.question(
             self, "Löschen", f"{len(ids)} Lauf/Läufe aus der Datenbank löschen?\n"

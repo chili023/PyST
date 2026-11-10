@@ -247,7 +247,7 @@ Plätze rollieren: der neueste Lauf verdrängt den ältesten nicht gesperrten.
 | Doppelklick | Lauf in der Auswertung öffnen |
 | **Alle ausblenden** | alle Häkchen weg |
 | **In Auswertung** | markierte Läufe in die Auswertung |
-| **Löschen** | markierte Läufe (anklicken, mit Strg/Umschalt mehrere) nach Rückfrage löschen, **auch die Messdateien**. Ohne Markierung passiert nichts. Rückt danach ein älterer Lauf auf den freien Platz nach, ist das kein Fehler |
+| **Löschen** | markierte Läufe (anklicken, mit Strg/Umschalt mehrere) nach Rückfrage löschen, **auch die Messdateien**. Ohne Markierung kommt der Hinweis „Kein Lauf markiert“. Rückt danach ein älterer Lauf auf den freien Platz nach, ist das kein Fehler |
 
 **Rechtsklick auf einen Lauf:** **Platz sperren (Schloss)** / **Schloss lösen**, **In Auswertung öffnen**,
 **Notiz bearbeiten …**, **Farbe ändern …**, **Aktuellem Fahrzeug/Setup zuordnen**, **Mit aktuellen Einstellungen neu

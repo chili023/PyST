@@ -173,7 +173,7 @@ Die Datei hat die Endung, aber nicht das Format (z. B. eine andere XML-Datei). D
 
 **Ich kann keinen Lauf löschen.**
 Erst den Lauf in der Liste **Läufe** anklicken (markieren, mit Strg/Umschalt mehrere), dann **Löschen** unten in der
-Seitenleiste oder Rechtsklick › **Löschen …**. Ohne Markierung passiert nichts.
+Seitenleiste oder Rechtsklick › **Löschen …**. Ohne Markierung meldet PyST „Kein Lauf markiert …“.
 Nach dem Löschen rückt ein älterer Lauf auf den freien Platz im Diagramm nach – die Liste sieht dann fast gleich aus,
 der gelöschte Lauf ist aber weg. Nicht angepinnt sieht man die Knöpfe erst, wenn die Seitenleiste aufgeklappt ist.
 

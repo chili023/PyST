@@ -227,7 +227,8 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
   umbenannt). „Doppelt im Ordner“: gleicher Inhalt mehrmals im Ordner. Mittelwert-Ordner werden erkannt, aber nicht
   übernommen.
 - **Löschen in Messen:** Markierte Läufe (anklicken, Strg/Umschalt) löscht **Löschen** bzw. Rechtsklick ›
-  **Löschen …** nach Rückfrage samt Messdateien. Danach rückt ein älterer Lauf auf den freien Platz nach.
+  **Löschen …** nach Rückfrage samt Messdateien. Ohne Markierung meldet PyST jetzt „Kein Lauf markiert …“
+  statt still nichts zu tun. Danach rückt ein älterer Lauf auf den freien Platz nach.
 - Die neuen Funktionen sind im Simulator und mit automatischen Tests geprüft, **an der Hardware noch nicht**.
 
 ## Update von 1.4.1
@@ -261,6 +262,6 @@ Bitte Rückmeldungen über die [Issues](https://github.com/chili023/PyST/issues)
 ## Tests
 
 Automatische Tests unter Linux mit Python 3 und PySide6, dazu Oberflächen-Rauchtests im Simulator, in Tag und Nacht
-und bei 1280 × 800. Stand der Freigabe: 670 Tests bestanden, 1 übersprungen.
+und bei 1280 × 800. Stand der Freigabe: 680 Tests bestanden, 1 übersprungen.
 
 Der Stand 1.4.1 liegt unter dem Tag `v1.4.1`.

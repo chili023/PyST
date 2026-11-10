@@ -1250,6 +1250,30 @@ class Messen(unittest.TestCase):
         self.assertEqual(sorted(ids), sorted(quellen))
         w.db.delete_run(row.id, delete_files=True)      # gemeinsame Datenbank: test_laeufe_dialog zaehlt Mittelwerte
 
+    def test_loeschen_ohne_auswahl_meldet(self):
+        """Löschen ohne markierten Lauf: Meldung statt stillem Nichtstun; mit Auswahl Rückfrage und weg."""
+        from unittest import mock
+        w = self.w
+        ids = self._laeufe(2)
+        w.run_tree.clearSelection()
+        with mock.patch.object(QtWidgets.QMessageBox, "information") as info, \
+                mock.patch.object(QtWidgets.QMessageBox, "question") as frage:
+            w.b_del.click()
+        self.assertEqual(info.call_count, 1)
+        self.assertIn("Kein Lauf markiert", info.call_args[0][2])
+        frage.assert_not_called()
+        self.assertEqual(len([r for r in w.db.runs() if r.id in ids]), 2)
+        self.assertIn("Strg", w.b_del.toolTip())
+        it = next(w.run_tree.topLevelItem(i) for i in range(w.run_tree.topLevelItemCount())
+                  if w.run_tree.topLevelItem(i).data(0, QtCore.Qt.UserRole) == ids[0])
+        it.setSelected(True)
+        with mock.patch.object(QtWidgets.QMessageBox, "information") as info, \
+                mock.patch.object(QtWidgets.QMessageBox, "question", return_value=QtWidgets.QMessageBox.Yes):
+            w.b_del.click()
+        info.assert_not_called()
+        self.assertEqual([r.id for r in w.db.runs() if r.id in ids], [ids[1]])
+        w.db.delete_run(ids[1], delete_files=True)
+
     def test_live_plaetze_hinzufuegen_entfernen(self):
         """„＋“ fuegt Live-Plaetze an (hoechstens LIVE_MAX), „Platz entfernen“ im Titel-Menue, je Fahrzeug."""
         from pyst.db import LIVE_MAX

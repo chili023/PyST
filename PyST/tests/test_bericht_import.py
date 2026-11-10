@@ -333,6 +333,14 @@ class OrdnerImportFenster(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="pyst-ordner-ui-")
         os.makedirs(os.path.join(self.tmp, "a", "b"))
         shutil.copy2(os.path.join(DATA, XMLS[5]), os.path.join(self.tmp, "a", XMLS[5]))
+        # gemeinsame Test-Datenbank: haben andere Tests (z. B. test_messen) diese XML schon importiert, waere sie
+        # hier „schon vorhanden“ – vorher entfernen, damit der Test nicht von der Reihenfolge abhaengt
+        f = oi.pruefen(self.w.db, os.path.join(self.tmp, "a", XMLS[5]), oi.ART_LABVIEW)
+        while True:
+            rid = oi.schon_da(self.w.db, f.name, f.datum, f.quelle, inhalt=f.inhalt)
+            if rid is None:
+                break
+            self.w.db.delete_run(rid, delete_files=True)
         shutil.copy2(LOG, os.path.join(self.tmp, "a", "b", "mitschnitt.log"))
         _pyst_ordner(os.path.join(self.tmp, "a", "b", "lauf_1"), mit_xml=False)
         self.vid = self.w.db.save_vehicle({"hersteller": "Ordner", "modell": "Import"})
