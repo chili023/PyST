@@ -251,25 +251,35 @@ class WertKachel(QtWidgets.QFrame):
         self._zeige_kanal()
 
     # ------------------------------------------------------------ Stil
+    @staticmethod
+    def _css(w: QtWidgets.QWidget, css: str):
+        """Stylesheet nur setzen, wenn es sich aendert (setStyleSheet ist teuer; der Cursor ruft bis zu 40×/s)."""
+        if getattr(w, "_css_alt", None) != css:
+            w.setStyleSheet(css)
+            w._css_alt = css
+
     def _stil(self):
         T = theme.tokens()
         gross = self.groesse == GROSS
         mini = self.groesse == MINI
-        self.setStyleSheet(_kachel_css("wertkachel", "zone_warn" if self.hervorgehoben else "border"))
-        self.nr.setStyleSheet(f"QLabel {{ background: {T['track']}; border-radius: {7 if mini else 9}px;"
-                              f" color: {T['text']}; font-size: {11 if mini else 12}px; font-weight: 700; }}")
-        self.titel.setStyleSheet(f"QToolButton {{ color: {T['text']}; font-size: {14 if gross else (12 if mini else 13)}px;"
-                                 " font-weight: 700; border: none; padding: 0 2px; background: transparent; }"
-                                 "QToolButton::menu-indicator { image: none; }")
-        self.quelle.setStyleSheet(f"color: {T['text2']}; font-size: {11 if mini else 12}px;")
+        self._css(self, _kachel_css("wertkachel", "zone_warn" if self.hervorgehoben else "border"))
+        self._css(self.nr, f"QLabel {{ background: {T['track']}; border-radius: {7 if mini else 9}px;"
+                           f" color: {T['text']}; font-size: {11 if mini else 12}px; font-weight: 700; }}")
+        self._css(self.titel, f"QToolButton {{ color: {T['text']}; font-size: {14 if gross else (12 if mini else 13)}px;"
+                              " font-weight: 700; border: none; padding: 0 2px; background: transparent; }"
+                              "QToolButton::menu-indicator { image: none; }")
+        self._css(self.quelle, f"color: {T['text2']}; font-size: {11 if mini else 12}px;")
         wert_farbe = T["dim"] if (self._fehlt_text or self.wert is None) else T["value"]
-        self.wert_label.setStyleSheet(f"color: {wert_farbe}; font-size: {30 if gross else 20}px; font-weight: 700;")
-        self.einheit.setStyleSheet(f"color: {T['text2']}; font-size: 13px; padding-bottom: {5 if gross else 3}px;")
+        self._css(self.wert_label, f"color: {wert_farbe}; font-size: {30 if gross else 20}px; font-weight: 700;")
+        self._css(self.einheit, f"color: {T['text2']}; font-size: 13px; padding-bottom: {5 if gross else 3}px;")
         self._laufzeilen()
 
     # ------------------------------------------------------------ Kanal
     def set_kanaele(self, kanaele: Sequence[Kanal]):
-        self.kanaele = list(kanaele)
+        kanaele = list(kanaele)
+        if kanaele == getattr(self, "kanaele", None):
+            return                                      # unveraendert (Auswertung ruft das bei jeder Cursorbewegung)
+        self.kanaele = kanaele
         self._zeige_kanal()
 
     def kanal_info(self, schluessel: Optional[str] = None) -> Optional[Kanal]:
@@ -428,6 +438,18 @@ class WertKachel(QtWidgets.QFrame):
         self._laufzeilen()
 
     def _laufzeilen(self):
+        T = theme.tokens()
+        # gleiche Laeufe (Farbe, Bezeichnung) und gleiches Thema: nur die Zahlen tauschen, keine Widgets neu bauen –
+        # sonst ruckelt der Cursor in der Auswertung (je Lauf 3 Labels mit Stylesheet bei jeder Mausbewegung)
+        sig = (tuple((c, t) for c, t, _v in self.laeufe), T["text"], T["value"], T["dim"])
+        zeilen = getattr(self, "_lauf_widgets", [])
+        if self.laeufe and sig == getattr(self, "_lauf_sig", None) and len(zeilen) == len(self.laeufe):
+            for (_c, _t, wert), val in zip(self.laeufe, zeilen):
+                val.setText(zahl(wert, self.dez))
+                self._css(val, f"color: {T['value'] if wert is not None else T['dim']}; font-size: 14px; font-weight: 700;")
+            return
+        self._lauf_sig = sig
+        self._lauf_widgets = []
         g = self.lauf_grid
         while g.count():
             it = g.takeAt(0)
@@ -445,7 +467,8 @@ class WertKachel(QtWidgets.QFrame):
             name.setStyleSheet(f"color: {T['text']}; font-size: 13px;")
             val = QtWidgets.QLabel(zahl(wert, self.dez))
             val.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-            val.setStyleSheet(f"color: {T['value'] if wert is not None else T['dim']}; font-size: 14px; font-weight: 700;")
+            self._css(val, f"color: {T['value'] if wert is not None else T['dim']}; font-size: 14px; font-weight: 700;")
+            self._lauf_widgets.append(val)
             g.addWidget(strich, r, 0, QtCore.Qt.AlignVCenter)
             g.addWidget(name, r, 1)
             g.addWidget(val, r, 2)

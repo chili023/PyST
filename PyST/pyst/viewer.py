@@ -137,6 +137,7 @@ class LogViewer(QtWidgets.QWidget):
         cl.addWidget(self.leiste)
         self.glw = pg.GraphicsLayoutWidget()
         self.glw.setBackground(theme.farbe("plot"))
+        theme.ganz_neu_zeichnen(self.glw)                # keine Reste der Cursorlinie (Mac/Retina)
         cl.addWidget(self.glw, 1)
         self.hint = theme.rolle(QtWidgets.QLabel(HINWEIS), "neben")
         self.hint.setWordWrap(True)

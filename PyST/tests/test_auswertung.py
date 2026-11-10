@@ -287,6 +287,27 @@ class Auswertung(unittest.TestCase):
         self.assertEqual(self.v.leiste.zeilen[self.ids[1]]["knopf"].text(), "Setup …")
         self.assertIn("3 angezeigt", self.v.seitenleiste.streifen.text())
 
+    def test_cursor_baut_keine_widgets_neu(self):
+        """Cursorbewegung tauscht nur die Zahlen: gleiche Label-Objekte, kein neues Stylesheet (sonst ruckelt es und auf
+        dem Mac bleiben Reste stehen); Diagramme zeichnen ganz neu."""
+        self.v.add_runs(self.ids)
+        pump(0.1)
+        self.v._set_cursor_x(5000)
+        self.v._update_cursor()
+        k = next(k for k in self.v.cursor.kacheln if k.isVisible() and k.laeufe)
+        vorher, texte = list(k._lauf_widgets), k.lauf_texte()
+        css = [w.styleSheet() for w in vorher]
+        self.v._set_cursor_x(8000)
+        self.v._update_cursor()
+        self.assertEqual([id(w) for w in k._lauf_widgets], [id(w) for w in vorher])
+        self.assertNotEqual(k.lauf_texte(), texte)
+        self.assertEqual([w.styleSheet() for w in k._lauf_widgets], css)
+        self.assertEqual(self.v.glw.viewportUpdateMode(), QtWidgets.QGraphicsView.FullViewportUpdate)
+        from pyst.plots import DynoPlot
+        p = DynoPlot()
+        self.assertEqual(p.viewportUpdateMode(), QtWidgets.QGraphicsView.FullViewportUpdate)
+        p.deleteLater()
+
     def test_notiz_sichtbar_entfernen(self):
         self.v.add_runs(self.ids[:3])
         pump()

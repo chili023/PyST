@@ -379,6 +379,7 @@ class DynoPlot(pg.GraphicsLayoutWidget):
     def __init__(self):
         super().__init__()
         self.setBackground(theme.farbe("plot"))
+        theme.ganz_neu_zeichnen(self)                    # keine Reste von Cursor/Faehnchen, kein Randflackern
         self.top = DualAxisPlot(self.ci, 0, "Leistung [PS]", "Drehmoment [Nm]", self.P_COLOR, self.M_COLOR)
         self.bottom = DualAxisPlot(self.ci, 1, "Lambda λ", "EGT [°C]", self.LAM_COLOR, self.EGT_COLOR)
         self.bottom.pi.setXLink(self.top.pi)
