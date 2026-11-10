@@ -153,6 +153,9 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
   aus, bevor ein Telegramm verloren geht.
 - PyST erkennt die Fähigkeit an `ai=` in `#CAP`, nicht an der Versionsnummer. Mit Mega 3.1.0 und F446 1.1.0 bleibt
   alles wie bisher.
+- Beide stehen im Firmware-Repo (Branch `firmware`, `pst-mega-3.2.0.hex`, `pst-stm32-f446-1.2.0.bin`) und werden
+  unter **Einstellungen › Software & Firmware** angeboten. Der F446 wird per st-flash jetzt mit
+  `--connect-under-reset` geflasht (ohne ging es an einem Nucleo nicht: „Failed to enter SWD mode“).
 
 **11. Neuer Ablauf beim Laufstart: Klima → GO → Drehzahlanstieg**
 - Nach **START** (und der START-Nachfrage) bzw. der Zangentaste **Neuer Lauf**: **Klima wird gemessen …** (Statusfeld
@@ -260,8 +263,9 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 
 - Rollen-Kalibrierung mit abgehobenem Rad und die Aufteilung der Verluste.
 - Analogeingänge der Basis (`#STAT`) mit echtem Sensor.
-- Mega 3.2.0 und PST-STM32 1.2.0 (Analogeingänge): nur mit Host-Tests, im AVR-Simulator und gebaut geprüft, noch auf
-  keinem Gerät geflasht.
+- Mega 3.2.0 und PST-STM32 1.2.0 (Analogeingänge): am 10.11. auf je einem Board ohne Prüfstand geflasht und geprüft
+  (`#CAP`, `#AI 10` = 10 Zeilen/s, Telegramme ohne Verlust; Mega auch über den Flashweg von PyST aus dem
+  Firmware-Repo). Noch nicht mit echtem Sensor und Zünd-/Rollensignal.
 - Laufbeginn am Drehzahlanstieg und die Klima-Phase nach START (nur Simulator und Tests).
 - Aus 1.4.1: Mega und F446 aus PyST flashen, Übersetzungsart **Funkenmessung**, Zangentasten im Abgleichfenster,
   Updates im Format 2 und Firmware 0.4.0 von Basis, Zange und Basis-ESP.

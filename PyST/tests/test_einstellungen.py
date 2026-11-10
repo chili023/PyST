@@ -131,7 +131,7 @@ class Befehlszeilen(unittest.TestCase):
     def test_stflash_und_dfu(self):
         img = flash.Image(flash.F446, "/x", files=[(0x08000000, "/x/f.bin")], main="/x/f.bin")
         self.assertEqual(flash.f446_stflash_command(["st-flash"], img),
-                         ["st-flash", "--reset", "write", "/x/f.bin", "0x8000000"])
+                         ["st-flash", "--connect-under-reset", "--reset", "write", "/x/f.bin", "0x8000000"])
         self.assertEqual(flash.dfu_command(["dfu-util"], img),
                          ["dfu-util", "-a", "0", "-s", "0x08000000:leave", "-D", "/x/f.bin"])
 
@@ -177,8 +177,8 @@ class Befehlszeilen(unittest.TestCase):
             with mock.patch.object(flash, "nucleo_laufwerke", lambda muster=None: ["/media/u/NODE_F446RE"]):
                 self.assertEqual(flash.build_command(flash.F446, t, None)[1], [])          # kopieren
                 with mock.patch.object(flash, "find_stflash", lambda: ["st-flash"]):
-                    self.assertEqual(flash.build_command(flash.F446_STLINK, t, None)[1][:3],
-                                     ["st-flash", "--reset", "write"])
+                    self.assertEqual(flash.build_command(flash.F446_STLINK, t, None)[1][:4],
+                                     ["st-flash", "--connect-under-reset", "--reset", "write"])
             with mock.patch.object(flash, "nucleo_laufwerke", lambda muster=None: []), \
                     mock.patch.object(flash, "find_stflash", lambda: None):
                 with mock.patch.object(flash, "find_dfu_util", lambda: ["dfu-util"]):
