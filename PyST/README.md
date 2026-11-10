@@ -39,7 +39,7 @@ Ausführliche Anleitung zu jeder Funktion: **[PyST-Wiki](https://github.com/chil
 
 | Reiter | Inhalt |
 |---|---|
-| **Messen** | Kopfzeile Fahrzeug · Setup · Notiz · Auto-Speichern · Status · **Verbinden/Trennen** · **Lauf-Einstellungen …** (Übersetzung, Filter, Start und Ende des Laufs) · **START (F1)** (im Lauf rot: Abbrechen (Esc)). Zeile **SETUP-WERTE** (bis 8 Felder, ändern → als neues Setup speichern oder nur für diesen Lauf; bei unverändertem Setup fragt START „Setup unverändert – Änderungen eintragen?“). Leistungsdiagramm mit unterem Diagramm, „Kurven ▾“, Achsgrenzen, Fähnchen am Cursor je Kurve, große Anweisungen (Klima wird gemessen …, GO bis zum Drehzahlanstieg, in der Messung nichts, am Ende GAS WEG bzw. GAS WEG – KUPPLUNG ZIEHEN) und großes Ergebnis Pmax/Mmax, Legende (Option). Rechts Umgebung (BME280) in einer Zeile, Drehzahl groß, 0 bis 12 **LIVE**-Kacheln je Fahrzeug (ab 5 zweispaltig; Kanal und Balkengrenzen wählbar; mit der Maus im Diagramm die Werte des letzten Laufs am Cursor), Ergebnis. Seitenleiste **Läufe** (Breite am Rand ziehbar, auch nicht angepinnt): 5 Plätze, gesperrt (Schloss) oder rollierend, **＋** holt alte Läufe und Mittelwerte gesperrt ins Diagramm, Haken **Ø automatisch mitteln** neben **＋** (Mittelwert der Läufe im Diagramm mit gleichem Setup, mit Band, nach jedem Lauf neu, belegt keinen Platz, **speichern** legt einen Mittelwert-Lauf an) |
+| **Messen** | Kopfzeile Fahrzeug · Setup · Notiz · Auto-Speichern · Status · **Verbinden/Trennen** · **Lauf-Einstellungen …** (Übersetzung, Filter, Start und Ende des Laufs) · **START (F1)** (im Lauf rot: Abbrechen (Esc)). Zeile **SETUP-WERTE** (bis 8 Felder, ändern → als neues Setup speichern oder nur für diesen Lauf; bei unverändertem Setup fragt START „Setup unverändert – Änderungen eintragen?“; mit ▾/▸ einklappbar zu einer schmalen Zeile „Hauptdüse 135 · Clip 3 · …“). Nach dem Lauf das Fenster **Lauf fertig** (Notiz und Setup-Werte des Laufs nachtragen; ohne Auto-Speichern Speichern/Verwerfen/Später, mit Übernehmen/Schließen; nicht modal). Leistungsdiagramm mit unterem Diagramm, „Kurven ▾“, Achsgrenzen, Fähnchen am Cursor je Kurve, große Anweisungen (Klima wird gemessen …, GO bis zum Drehzahlanstieg, in der Messung nichts, am Ende GAS WEG bzw. GAS WEG – KUPPLUNG ZIEHEN) und großes Ergebnis Pmax/Mmax, Legende (Option). Rechts Umgebung (BME280) in einer Zeile, Drehzahl groß, 0 bis 12 **LIVE**-Kacheln je Fahrzeug (ab 5 zweispaltig; Kanal und Balkengrenzen wählbar; mit der Maus im Diagramm die Werte des letzten Laufs am Cursor), Ergebnis. Seitenleiste **Läufe** (Breite am Rand ziehbar, auch nicht angepinnt): 5 Plätze, gesperrt (Schloss) oder rollierend, **＋** holt alte Läufe und Mittelwerte gesperrt ins Diagramm, Haken **Ø automatisch mitteln** neben **＋** (Mittelwert der Läufe im Diagramm mit gleichem Setup, mit Band, nach jedem Lauf neu, belegt keinen Platz, **speichern** legt einen Mittelwert-Lauf an) |
 | **Fahrzeuge & Setups** | Fahrzeuge (Hersteller, Modell, Gemischaufbereitung, Motor …) und Setups (Motor, Vergaser, Einspritzung/ECU, Zündung, Antrieb, Ein-/Auslass, Kraftstoff). Kopieren, „Für neue Läufe verwenden“ |
 | **Auswertung** | Läufe überlagern wie MegaLogViewer: bis 4 Felder, X-Achse Zeit oder Drehzahl, Cursor mit Maus und ←/→. Laufleiste **ANGEZEIGTE LÄUFE** mit Setup-Spalten (Änderungen gelb), **Mittelwert bilden …**, rechts **Werte am Cursor** und **Setup-Vergleich**. Import (Dateien oder Ordner mit Unterordnern), PDF-Bericht, CSV |
 | **Oszi / Dauermessung** | Fehlersuche an Zündung und Rolle: Dauermessung mit Markern (F2), Linienschreiber, Software-Trigger, Ereignisliste, Flanken-Ansicht (PST-Diag 1), Geräte-Einstellungen |
@@ -49,9 +49,10 @@ Ausführliche Anleitung zu jeder Funktion: **[PyST-Wiki](https://github.com/chil
   **PDF-Bericht** (druckt, was gerade im Diagramm steht: Messen bzw. die Felder der Auswertung) und den kleinen
   Knöpfen **☀ ☾ ◐** für Tag, Nacht, Automatisch (auch Menü *Ansicht › Darstellung*). Fenstergröße unter
   *Ansicht › Größe*.
-- Menü **Datei**: Öffnen/importieren (Ctrl+O), **Ordner importieren (mit Unterordnern)** (Ctrl+Umschalt+I), Läufe
-  weitergeben als `.pyst` (Ctrl+S) oder HTML (Ctrl+H), PDF-Bericht (Ctrl+P), CSV-Export (Ctrl+E). Dateien lassen sich
-  auch ins Fenster ziehen.
+- Menü **Datei**: **Lauf speichern** (Ctrl+S, wie der Knopf unten rechts neben PDF-Bericht; nur mit ungespeichertem
+  Lauf aktiv), Öffnen/importieren (Ctrl+O), **Ordner importieren (mit Unterordnern)** (Ctrl+Umschalt+I), Läufe
+  weitergeben als `.pyst` (Ctrl+Umschalt+S) oder HTML (Ctrl+H), PDF-Bericht (Ctrl+P), CSV-Export (Ctrl+E). Dateien
+  lassen sich auch ins Fenster ziehen.
 - Während eines Laufs bleibt die Skalierung wie beim vorherigen Lauf stehen; danach wird neu skaliert.
 - Achsgrenzen direkt an den Achsenden: Drehzahl von/bis, PS von/bis, Nm von/bis (z.B. ab 5000 1/min und ab 5 PS);
   fett = fest, grau = automatisch aus den Kurven, „auto“ setzt alles zurück. Gilt auch für den PDF-Bericht.
@@ -518,7 +519,7 @@ Messen (Spalte „Fehler“, Tooltip mit Details), im PDF-Bericht und in der HTM
 
 ## Läufe weitergeben (ab 1.3)
 
-**Datei → Läufe weitergeben (.pyst) …** (Strg+S): markierte, sichtbare, alle des Fahrzeugs oder alle eines Tages –
+**Datei → Läufe weitergeben (.pyst) …** (Strg+Umschalt+S): markierte, sichtbare, alle des Fahrzeugs oder alle eines Tages –
 als eine `.pyst`-Datei, als Ordner mit je einer `.pyst` pro Lauf oder als HTML-Ansicht.
 
 - **`.pyst`** = ZIP mit `inhalt.json` (Fahrzeug, Setup, Notiz, Farbe, Parameter, Fehleranteile) und je Lauf dem
@@ -607,7 +608,13 @@ Alle Prüfstandsparameter lassen sich überschreiben, z.B. `--ratio 6.85 --inert
    **GAS WEG!** (mindestens 2 s) bzw. mit Ausrollversuch **GAS WEG – KUPPLUNG ZIEHEN!** bis das Ausrollen fertig
    ist. Ohne die Option nur GAS WEG.
 5. Danach wird das Ergebnis angezeigt (mit „Ergebnis groß“ Pmax/Mmax groß über dem Diagramm, weg mit Klick, START oder Esc) und
-   (Auto-Speichern) unter `~/PyST/messungen/` abgelegt.
+   (Auto-Speichern) unter `~/PyST/messungen/` abgelegt. Darunter geht das Fenster **Lauf fertig** auf: Notiz und
+   Setup-Werte des Laufs nachtragen (gelten für diesen Lauf, Haken „auch als neues Setup speichern“). Ohne
+   Auto-Speichern: **Speichern** (Enter), **Verwerfen**, **Später** (Esc) – gespeichert werden kann bis zum nächsten
+   START auch mit **Lauf speichern** unten rechts bzw. Ctrl+S. Mit Auto-Speichern: **Übernehmen** (Enter) schreibt
+   Notiz und Werte in den gespeicherten Lauf, **Schließen** (Esc). Das Fenster ist nicht modal: START/F1 und die
+   Zangentaste starten gleich den nächsten Lauf (ohne Auto-Speichern bleibt der alte dann ungespeichert, das Band
+   sagt es). Abschaltbar unter Einstellungen › Rolle/Lauf.
 6. **Abbrechen (Esc)** jederzeit (der START-Knopf wird im Lauf dazu rot). Mit Ausrollversuch: nach dem Laufende Kupplung ziehen (siehe „Ausrollversuch“);
    Esc beendet dann nur das Ausrollen, der Lauf bleibt.
 

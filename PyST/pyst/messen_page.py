@@ -11,7 +11,8 @@ Aufbau von oben nach unten:
   Setup-Werte  Schnellwerte (db.schnellwert_plaetze je Fahrzeug, 0 … SCHNELLWERT_MAX Plaetze: „＋“ fuegt an, Titel-Menue
                waehlt das Feld oder entfernt den Platz), direkt editierbar;
                geaendert: gelb mit „vorher 135“, Marke „✎ Setup: …“, Knoepfe Als neues Setup speichern … /
-               nur für diesen Lauf / Verwerfen; die Setup-Auswahl zeigt „✎ geändert“
+               nur für diesen Lauf / Verwerfen; die Setup-Auswahl zeigt „✎ geändert“. ▾/▸ am Titel klappt die Zeile
+               ein (Zusammenfassung „Hauptdüse 135 · Clip 3 · …“, Einstellung SETUP_EINGEKLAPPT)
   Mitte        Läufe als SeitenLeiste (32-px-Streifen, Overlay nach 300 ms, Anpinnen) | Diagramm mit Fähnchen am
                Cursor (plots.CursorFahnen), Legende (Referenz; Option ANZEIGE_LEGENDE: alle Läufe), grossen Anzeigen
                (AnweisungGross, ErgebnisGross) und darunter einer schmalen Ergebniszeile (ErgebnisText) | rechte Spalte
@@ -38,6 +39,12 @@ Einstellung START_NACHFRAGE ("start_nachfrage_setup", Standard True): ist in SET
 START kurz fragen „Setup unverändert – Änderungen eintragen?“ (StartNachfrage mit den Schnellwert-Plaetzen; Unverändert
 starten / Übernehmen und starten / Abbrechen). Geaendertes Setup startet ohne Frage (Werte gelten fuer diesen Lauf),
 die Zangentaste „Neuer Lauf“ fragt nie. Schalter: Einstellungen › Rolle/Lauf.
+
+Nach dem Lauf (Einstellung NACH_LAUF_FENSTER, Standard True): mit dem Ergebnis (nach GAS WEG bzw. dem Ausrollen) das
+nicht modale Fenster LaufFertig – Notiz und Schnellwerte des Laufs (_lauf_stand vom Laufende), ohne Auto-Speichern
+Speichern / Verwerfen / Später, mit Übernehmen (db.update_run) / Schließen. Ein neuer START schliesst es
+(_lauf_fertig_schliessen). Knopf „Lauf speichern“ der Statusleiste, Datei › Lauf speichern, Ctrl+S: lauf_speichern,
+aktiv nur mit ungespeicherter Kurve (lauf_ungespeichert).
 
 Anzeige beim Messen (Einstellungen › Rolle/Lauf und Menue Ansicht, ANZEIGE_OPTIONEN):
   ERGEBNIS_GROSS   (Standard an)  nach dem Lauf Pmax/Mmax gross ueber dem Diagramm (weg mit START, Klick, Esc)
@@ -71,6 +78,8 @@ from .umbruch import UmbruchLayout
 
 LIVE_KEY = "live"                          # Schluessel der laufenden Messung im Diagramm
 START_NACHFRAGE = "start_nachfrage_setup"  # Einstellung (bool, Standard True), Schalter unter Rolle/Lauf
+NACH_LAUF_FENSTER = "nach_lauf_fenster"    # Einstellung (bool, Standard True): Fenster „Lauf fertig“ nach dem Lauf
+SETUP_EINGEKLAPPT = "setup_werte_eingeklappt"   # Einstellung (bool, Standard False): Zeile SETUP-WERTE eingeklappt
 KLIMA_ALLE_S = 300.0                       # T/p zwischen den Laeufen hoechstens so oft lesen
 KLIMA_ERSTES_S = 10.0                      # erstes Lesen so lange nach dem Verbinden (falls kein START davor)
 GAS_WEG_HALTEN_S = 2.0                     # „GAS WEG“ steht so lange nach dem letzten Erreichen von n Stop
@@ -108,6 +117,8 @@ LAUF_KANAL = {"ign": "Drehzahl Zündung", "v": "Geschwindigkeit", "egt1": "EGT 1
               "lam": "Lambda", "ratio": "Übersetzung gefiltert", "ratio_ecu": "Übersetzung ECU/Rolle gefiltert",
               "rate": "Messfrequenz"}
 
+# Kurzname in der eingeklappten Zeile SETUP-WERTE („Hauptdüse 135 · Clip 3 · ZZP 18“), sonst wie KURZ
+ZEILE_KURZ = {"hauptduese": "Hauptdüse", "nadelduese": "Nadeldüse", "leerlaufduese": "Leerlaufdüse"}
 # Kurzname eines Setup-Felds in der Marke („HD 135 → HD 138“) und im Vorschlag fuer den neuen Setup-Namen
 KURZ = {"hauptduese": "HD", "nadelduese": "ND", "leerlaufduese": "LLD", "clip": "Clip", "zzp": "ZZP",
         "nadel": "Nadel", "sekundaer": "Sek.", "primaer": "Prim.", "kerze": "Kerze", "auspuff": "Auspuff"}
@@ -180,6 +191,18 @@ def kanal_bereich(kanal: str) -> Tuple[float, float, int, list, bool]:
 
 def kurz(feld: str) -> str:
     return KURZ.get(feld) or field_label(feld).split(" [")[0]
+
+
+def neuer_setup_name(name: str, basis: Dict[str, Any], aend: Dict[str, str]) -> str:
+    """Vorschlag fuer ein neues Setup: „Serie, HD 135, Auspuff“ mit {hauptduese: 138} -> „Serie, HD 138, Auspuff“."""
+    name = name or "Setup"
+    for f, neu in aend.items():
+        k, alt = kurz(f), wert_text(basis.get(f))
+        if alt and f"{k} {alt}" in name:
+            name = name.replace(f"{k} {alt}", f"{k} {neu}")
+        else:
+            name += f", {k} {neu}"
+    return name
 
 
 def alter_text(sek: float) -> str:
@@ -506,7 +529,9 @@ class SetupZeile(QtWidgets.QFrame):
     plaetze_geaendert = QtCore.Signal(list)        # Felder aller Plaetze ("" = leer) nach Wahl/Hinzufuegen/Entfernen
     geaendert = QtCore.Signal()                    # Aenderungen oder „nur für diesen Lauf“ anders
     neu_speichern = QtCore.Signal()
+    eingeklappt_geaendert = QtCore.Signal(bool)    # Pfeil am Titel geklickt (Einstellung SETUP_EINGEKLAPPT)
     HOEHE = 46
+    HOEHE_ZU = 30                                  # eingeklappt: Titel und Zusammenfassung in einer schmalen Zeile
 
     def __init__(self):
         super().__init__()
@@ -523,9 +548,15 @@ class SetupZeile(QtWidgets.QFrame):
         self.fahrzeug = ""
         self.gemisch = ""
         self._geladen = False
+        self.eingeklappt = False
         self.lay = UmbruchLayout(self, abstand=6, zeilenabstand=6)
         self.lay.setContentsMargins(10, 4, 10, 4)
-        self.titel = QtWidgets.QLabel("SETUP-WERTE")
+        self.titel = QtWidgets.QToolButton()           # „▾ SETUP-WERTE“: Klick klappt ein und aus
+        self.titel.setAutoRaise(True)
+        self.titel.setCursor(QtCore.Qt.PointingHandCursor)
+        self.titel.clicked.connect(lambda _c=False: self.set_eingeklappt(not self.eingeklappt))
+        self.kurzinfo = KurzText()                     # eingeklappt: „Hauptdüse 135 · Clip 3 · ZZP 18“
+        self.kurzmarke = QtWidgets.QLabel("")          # eingeklappt und geaendert: „✎ geändert, ungespeichert“
         self.titel_knoepfe: List[QtWidgets.QToolButton] = []
         self.edits: List[QtWidgets.QLineEdit] = []
         self.vorher: List[QtWidgets.QLabel] = []
@@ -567,7 +598,7 @@ class SetupZeile(QtWidgets.QFrame):
 
     def _plaetze_bauen(self):
         """So viele Plaetze (Titel, Wert, „vorher“) wie Felder, dann die Zeile neu anordnen: Titel | Plaetze | ＋ |
-        Stretch | Ruhetext | Marke + Knoepfe."""
+        Stretch | Ruhetext | Marke + Knoepfe. Eingeklappt: Titel | Zusammenfassung | Marke „✎ …“."""
         while len(self.titel_knoepfe) < len(self.felder):
             i = len(self.titel_knoepfe)
             b = QtWidgets.QToolButton(self)
@@ -595,6 +626,22 @@ class SetupZeile(QtWidgets.QFrame):
         lay.leeren()
         lay.add(self.titel)
         lay.addSpacing(4)
+        zu = self.eingeklappt
+        self.setMinimumHeight(self.HOEHE_ZU if zu else self.HOEHE)
+        voll = self.titel_knoepfe + self.edits + [self.b_plus, self.ruhe, self.marke, self.b_neu, self.b_lauf,
+                                                   self.b_weg]
+        if zu:
+            for x in voll + self.vorher:
+                x.hide()
+            lay.add(self.kurzinfo, 1)
+            lay.add(self.kurzmarke)
+            self.kurzinfo.show()
+            self.updateGeometry()
+            return
+        self.kurzinfo.hide()
+        self.kurzmarke.hide()
+        for x in self.titel_knoepfe + self.edits:
+            x.show()
         for b, e, v in zip(self.titel_knoepfe, self.edits, self.vorher):
             lay.add_gruppe(b, e, v)                    # Feld, Wert und „vorher“ bleiben beim Umbruch zusammen
             lay.addSpacing(10)
@@ -712,14 +759,30 @@ class SetupZeile(QtWidgets.QFrame):
 
     def neuer_name(self) -> str:
         """Vorschlag fuer das neue Setup: „Serie, HD 135, Auspuff“ -> „Serie, HD 138, Auspuff“."""
-        name = self.name or "Setup"
-        for f, neu in self.aend.items():
-            k, alt = kurz(f), wert_text(self.basis.get(f))
-            if alt and f"{k} {alt}" in name:
-                name = name.replace(f"{k} {alt}", f"{k} {neu}")
-            else:
-                name += f", {k} {neu}"
-        return name
+        return neuer_setup_name(self.name, self.basis, self.aend)
+
+    # ------------------------------------------------------------ Einklappen
+    def set_eingeklappt(self, an: bool, melden: bool = True):
+        """Zeile ein- bzw. ausklappen; melden: Signal eingeklappt_geaendert (das Hauptfenster speichert)."""
+        an = bool(an)
+        if an == self.eingeklappt:
+            return
+        self.eingeklappt = an
+        self._plaetze_bauen()
+        self._zeigen()
+        if melden:
+            self.eingeklappt_geaendert.emit(an)
+
+    def zusammenfassung(self) -> str:
+        """Eingeklappt: „Hauptdüse 135 · Clip 3 · ZZP 18“ (Werte, wie sie fuer den naechsten Lauf gelten)."""
+        teile = [f"{ZEILE_KURZ.get(f) or kurz(f)} {self.wert(f) or '–'}" for f in self.felder if f]
+        return " · ".join(teile) if teile else "keine Plätze belegt – ausklappen und mit „＋“ hinzufügen"
+
+    def zusatz_text(self) -> str:
+        """Eingeklappt bei Aenderungen: „· geändert, ungespeichert“ bzw. „· nur dieser Lauf“."""
+        if not self.aend:
+            return ""
+        return "· nur dieser Lauf" if self.nur_lauf else "· geändert, ungespeichert"
 
     # ------------------------------------------------------------ Darstellung
     def _menue(self, i: int, m: QtWidgets.QMenu):
@@ -786,13 +849,30 @@ class SetupZeile(QtWidgets.QFrame):
     def _zeigen(self):
         T = theme.tokens()
         geaendert = bool(self.aend)
+        zu = self.eingeklappt
+        self.titel.setText(("▸" if zu else "▾") + "  SETUP-WERTE")
+        self.titel.setToolTip("Ausklappen: Setup-Werte bearbeiten" if zu else
+                              "Einklappen: nur eine schmale Zeile mit den Werten, das Diagramm wird größer")
         if geaendert:
             self.setStyleSheet(f"QFrame#setupzeile {{ background: {T['strip_changed_bg']}; border: 2px solid"
                                f" {T['zone_warn']}; border-radius: 4px; }} QLabel {{ background: transparent; }}")
         else:
             self.setStyleSheet(f"QFrame#setupzeile {{ background: {T['panel']}; border: 1px solid {T['border']};"
                                " border-radius: 4px; } QLabel { background: transparent; }")
-        self.titel.setStyleSheet(f"color: {T['text']}; font-size: 13px; font-weight: 700; letter-spacing: 1px;")
+        self.titel.setStyleSheet(f"QToolButton {{ color: {T['text']}; font-size: 13px; font-weight: 700;"
+                                 " letter-spacing: 1px; border: none; padding: 0 2px; background: transparent; }"
+                                 f"QToolButton:hover {{ color: {T['accent_border']}; }}")
+        if zu:
+            text = self.zusammenfassung()
+            self.kurzinfo.setText(text)
+            self.kurzinfo.setToolTip(text + ("\n" + self.marke_text() if geaendert else ""))
+            self.kurzinfo.setStyleSheet(f"color: {T['text']}; font-size: 13px; font-weight: 600;")
+            self.kurzmarke.setText("✎  " + self.zusatz_text()[2:])
+            self.kurzmarke.setToolTip(self.marke_text() + "\nAusklappen: als neues Setup speichern oder verwerfen")
+            self.kurzmarke.setStyleSheet(f"QLabel {{ background: {T['changed_bg']}; color: {T['changed_text']};"
+                                         " font-size: 13px; font-weight: 800; border-radius: 3px; padding: 1px 8px; }")
+            self.kurzmarke.setVisible(geaendert)
+            return
         self.b_plus.setStyleSheet(f"QToolButton {{ color: {T['text2']}; font-size: 15px; font-weight: 700;"
                                   f" border: 1px dashed {T['border_strong']}; border-radius: 4px; padding: 1px 7px;"
                                   f" background: transparent; }} QToolButton:hover {{ color: {T['text']};"
@@ -1335,73 +1415,46 @@ class LaeufeDialog(QtWidgets.QDialog):
         self.accept()
 
 
-class StartNachfrage(QtWidgets.QDialog):
-    """Kurzes Fenster vor START, wenn in SETUP-WERTE nichts geaendert ist: „Setup unverändert – Änderungen
-    eintragen?“ mit den Schnellwert-Plaetzen (Feldname + aktueller Wert) als Felder. Knoepfe: Unverändert starten
-    (Standard, Enter/F1, Fokus) | Übernehmen und starten (erst nach einer Aenderung, dann Enter) | Abbrechen (Esc).
-    Nach exec(): Accepted mit aenderungen() {feld: wert} (leer = unveraendert starten), Rejected = nicht starten."""
+class SetupFormular(QtWidgets.QWidget):
+    """Schnellwert-Plaetze als Formular (Feldname ueber dem Wert, SPALTEN je Zeile), vorbelegt; Felder mit anderem
+    Wert als vorbelegt sind gelb. Gemeinsam fuer StartNachfrage und LaufFertig."""
+    bearbeitet = QtCore.Signal()
     SPALTEN = 4                                    # Felder je Zeile
 
-    def __init__(self, felder: Sequence[Tuple[str, str]], setup_name: str = "", parent=None):
-        """felder: [(Setup-Feld, aktueller Wert)] der belegten Schnellwert-Plaetze."""
+    def __init__(self, felder: Sequence[Tuple[str, str]], parent=None, spalten: int = 0):
+        """felder: [(Setup-Feld, Wert)] der belegten Schnellwert-Plaetze; spalten: Felder je Zeile (0 = SPALTEN)."""
         super().__init__(parent)
-        self.setWindowTitle("Setup unverändert")
-        self.setModal(True)
+        spalten = spalten or self.SPALTEN
         self.alt = {f: w for f, w in felder}
-        lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(18, 14, 18, 14)
-        lay.setSpacing(10)
-        self.frage = QtWidgets.QLabel("Setup unverändert – Änderungen eintragen?")
-        lay.addWidget(self.frage)
-        if setup_name:
-            name = QtWidgets.QLabel(f"Setup: {setup_name}")
-            theme.rolle(name, "neben")
-            lay.addWidget(name)
-        grid = QtWidgets.QGridLayout()
+        grid = QtWidgets.QGridLayout(self)
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(14)
         grid.setVerticalSpacing(2)
         self.edits: Dict[str, QtWidgets.QLineEdit] = {}
         self.titel: List[QtWidgets.QLabel] = []
         for i, (feld, wert) in enumerate(felder):
-            r, c = divmod(i, self.SPALTEN)
+            r, c = divmod(i, spalten)
             lab = QtWidgets.QLabel(field_label(feld))
             lab.setContentsMargins(0, 8 if r else 0, 0, 0)
             e = QtWidgets.QLineEdit(wert)
             e.setAlignment(QtCore.Qt.AlignCenter)
             e.setMinimumWidth(96)
-            e.textEdited.connect(lambda _t: self._pruefen())
+            e.textEdited.connect(lambda _t: self.bearbeitet.emit())
             grid.addWidget(lab, 2 * r, c)
             grid.addWidget(e, 2 * r + 1, c)
             self.titel.append(lab)
             self.edits[feld] = e
-        lay.addLayout(grid)
-        self.hinweis = QtWidgets.QLabel("Geänderte Werte gelten für diesen Lauf (gelb in SETUP-WERTE, wie dort getippt).")
-        self.hinweis.setWordWrap(True)
-        theme.rolle(self.hinweis, "neben")
-        lay.addWidget(self.hinweis)
-        knoepfe = QtWidgets.QHBoxLayout()
-        self.b_ab = QtWidgets.QPushButton("Abbrechen")
-        self.b_ueber = QtWidgets.QPushButton("Übernehmen und starten")
-        self.b_start = QtWidgets.QPushButton("Unverändert starten")
-        for b in (self.b_ab, self.b_ueber, self.b_start):
-            b.setAutoDefault(False)
-            b.setMinimumHeight(34)
-        knoepfe.addWidget(self.b_ab)
-        knoepfe.addStretch(1)
-        knoepfe.addWidget(self.b_ueber)
-        knoepfe.addWidget(self.b_start)
-        lay.addLayout(knoepfe)
-        self.b_ab.clicked.connect(self.reject)
-        self.b_start.clicked.connect(self._unveraendert)
-        self.b_ueber.clicked.connect(self.accept)
-        QtGui.QShortcut(QtGui.QKeySequence("F1"), self, activated=self.b_start.click)
-        self._uebernehmen = False
-        self._pruefen()
-        theme.bei_wechsel(self, lambda _t: self._stil())
 
-    def _stil(self):
+    def werte(self) -> Dict[str, str]:
+        """Alle Felder {feld: Wert}."""
+        return {f: e.text().strip() for f, e in self.edits.items()}
+
+    def offen(self) -> Dict[str, str]:
+        """Felder, deren Wert gerade anders ist als vorbelegt."""
+        return {f: w for f, w in self.werte().items() if wert_text(w) != wert_text(self.alt.get(f))}
+
+    def stil(self):
         T = theme.tokens()
-        self.frage.setStyleSheet(f"color: {T['text']}; font-size: 16px; font-weight: 800;")
         for lab in self.titel:
             lab.setStyleSheet(f"color: {T['text']}; font-size: 13px; font-weight: 700;")
         for feld, e in self.edits.items():
@@ -1411,10 +1464,110 @@ class StartNachfrage(QtWidgets.QDialog):
             else:
                 e.setStyleSheet("QLineEdit { font-size: 15px; font-weight: 800; }")
 
+
+class SetupFenster(QtWidgets.QDialog):
+    """Grundgeruest der kurzen Fenster um den Lauf: Frage/Kopf (gross), Unterzeile (Setup …), Platz fuer Zusaetze
+    (self.oben), SetupFormular, Hinweis, Knopfzeile (self.knoepfe). edits/titel/alt kommen vom Formular."""
+
+    def __init__(self, fenstertitel: str, frage: str, felder: Sequence[Tuple[str, str]], unter: str = "",
+                 hinweis: str = "", parent=None, spalten: int = 0, kompakt: bool = False):
+        """spalten: Felder je Zeile im Formular; kompakt: engere Abstaende (LaufFertig, unter dem grossen Ergebnis)."""
+        super().__init__(parent)
+        self.setWindowTitle(fenstertitel)
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(*((16, 10, 16, 10) if kompakt else (18, 14, 18, 14)))
+        lay.setSpacing(6 if kompakt else 10)
+        self.frage = QtWidgets.QLabel(frage)
+        lay.addWidget(self.frage)
+        self.unter = QtWidgets.QLabel(unter)
+        self.unter.setWordWrap(True)
+        theme.rolle(self.unter, "neben")
+        self.unter.setVisible(bool(unter))
+        lay.addWidget(self.unter)
+        self.oben = QtWidgets.QHBoxLayout()            # Zusaetze vor dem Formular (LaufFertig: Notiz)
+        self.oben.setSpacing(8)
+        lay.addLayout(self.oben)
+        self.formular = SetupFormular(felder, spalten=spalten)
+        self.edits, self.titel, self.alt = self.formular.edits, self.formular.titel, self.formular.alt
+        self.formular.setVisible(bool(felder))
+        lay.addWidget(self.formular)
+        self.hinweis = QtWidgets.QLabel(hinweis)
+        self.hinweis.setWordWrap(True)
+        theme.rolle(self.hinweis, "neben")
+        lay.addWidget(self.hinweis)
+        self.knoepfe = QtWidgets.QHBoxLayout()
+        lay.addLayout(self.knoepfe)
+        self.formular.bearbeitet.connect(self._pruefen)
+        theme.bei_wechsel(self, lambda _t: self._stil(), sofort=False)   # Unterklassen: _pruefen() am Ende
+
+    @staticmethod
+    def _knopf(text: str) -> QtWidgets.QPushButton:
+        b = QtWidgets.QPushButton(text)
+        b.setAutoDefault(False)
+        b.setMinimumHeight(34)
+        return b
+
+    def _stil(self):
+        T = theme.tokens()
+        self.frage.setStyleSheet(f"color: {T['text']}; font-size: 16px; font-weight: 800;")
+        self.formular.stil()
+
     def _offen(self) -> Dict[str, str]:
-        """Felder, deren Wert gerade anders ist als vorbelegt."""
-        return {f: e.text().strip() for f, e in self.edits.items()
-                if wert_text(e.text()) != wert_text(self.alt.get(f))}
+        return self.formular.offen()
+
+    def _pruefen(self):
+        self._stil()
+
+    def mittig_ueber(self, seite: QtWidgets.QWidget, unten: bool = False,
+                     frei: Optional[QtWidgets.QWidget] = None):
+        """Ueber seite mittig; unten: am unteren Rand von seite, frei (sichtbar, z.B. das grosse Ergebnis) bleibt
+        darueber frei, solange das Fenster ins Hauptfenster passt. Bleibt im Bildschirm."""
+        self.adjustSize()
+        r = seite.rect()
+        mitte = seite.mapToGlobal(r.center())
+        x = mitte.x() - self.width() // 2
+        if unten:
+            h = self.frameGeometry().height()          # mit Titelleiste, sobald das Fenster einmal gezeigt wurde
+            y = seite.mapToGlobal(r.bottomLeft()).y() - h - 8
+            if frei is not None and frei.isVisible():
+                y = max(y, frei.mapToGlobal(frei.rect().bottomLeft()).y() + 8)
+            fenster = seite.window()
+            y = min(y, fenster.mapToGlobal(fenster.rect().bottomLeft()).y() - h)
+            y = max(seite.mapToGlobal(r.topLeft()).y() + 8, y)
+        else:
+            y = mitte.y() - self.height() // 2
+        scr = (seite.screen() or QtGui.QGuiApplication.primaryScreen()).availableGeometry()
+        x = min(max(scr.left(), x), scr.right() - self.width())
+        y = min(max(scr.top(), y), scr.bottom() - self.height())
+        self.move(x, y)
+
+
+class StartNachfrage(SetupFenster):
+    """Kurzes Fenster vor START, wenn in SETUP-WERTE nichts geaendert ist: „Setup unverändert – Änderungen
+    eintragen?“ mit den Schnellwert-Plaetzen (Feldname + aktueller Wert) als Felder. Knoepfe: Unverändert starten
+    (Standard, Enter/F1, Fokus) | Übernehmen und starten (erst nach einer Aenderung, dann Enter) | Abbrechen (Esc).
+    Nach exec(): Accepted mit aenderungen() {feld: wert} (leer = unveraendert starten), Rejected = nicht starten."""
+    SPALTEN = SetupFormular.SPALTEN
+
+    def __init__(self, felder: Sequence[Tuple[str, str]], setup_name: str = "", parent=None):
+        """felder: [(Setup-Feld, aktueller Wert)] der belegten Schnellwert-Plaetze."""
+        super().__init__("Setup unverändert", "Setup unverändert – Änderungen eintragen?", felder,
+                         f"Setup: {setup_name}" if setup_name else "",
+                         "Geänderte Werte gelten für diesen Lauf (gelb in SETUP-WERTE, wie dort getippt).", parent)
+        self.setModal(True)
+        self.b_ab = self._knopf("Abbrechen")
+        self.b_ueber = self._knopf("Übernehmen und starten")
+        self.b_start = self._knopf("Unverändert starten")
+        self.knoepfe.addWidget(self.b_ab)
+        self.knoepfe.addStretch(1)
+        self.knoepfe.addWidget(self.b_ueber)
+        self.knoepfe.addWidget(self.b_start)
+        self.b_ab.clicked.connect(self.reject)
+        self.b_start.clicked.connect(self._unveraendert)
+        self.b_ueber.clicked.connect(self.accept)
+        QtGui.QShortcut(QtGui.QKeySequence("F1"), self, activated=self.b_start.click)
+        self._uebernehmen = False
+        self._pruefen()
 
     def aenderungen(self) -> Dict[str, str]:
         """Nach „Übernehmen und starten“: {feld: neuer Wert}; nach „Unverändert starten“ leer."""
@@ -1442,6 +1595,134 @@ class StartNachfrage(QtWidgets.QDialog):
     def showEvent(self, ev):
         super().showEvent(ev)
         self.b_start.setFocus()                    # Enter/F1 gleich hinterher startet unveraendert
+
+
+# Wahl im Fenster LaufFertig (Signal gewaehlt)
+SPEICHERN, VERWERFEN, SPAETER, UEBERNEHMEN, SCHLIESSEN = "speichern", "verwerfen", "spaeter", "uebernehmen", "schliessen"
+
+
+class LaufFertig(SetupFenster):
+    """Fenster „Lauf fertig“ nach dem Lauf, nicht modal: START/F1, die Zangentaste „Neuer Lauf“ und Esc gehen weiter.
+    Kopf mit Pmax/Mmax, Feld Notiz (vorbelegt aus der Kopfzeile), die Schnellwert-Plaetze mit den Werten, die fuer den
+    Lauf galten; Aenderungen gelten fuer diesen Lauf. Haken „auch als neues Setup speichern“ (nur mit Fahrzeug, aktiv
+    bei einer Abweichung vom Setup).
+    Ohne Auto-Speichern: Verwerfen | Später (Esc) | Speichern (Standard, Enter, Ctrl+S).
+    Lauf schon gespeichert (Auto-Speichern): Schließen (Esc) | Übernehmen (Standard, Enter).
+    F1 meldet start (das Hauptfenster startet und schliesst das Fenster). Jede Wahl: gewaehlt(SPEICHERN …)."""
+    gewaehlt = QtCore.Signal(str)
+    start = QtCore.Signal()
+    SPALTEN = 5                                    # 5 Plaetze in einer Zeile: das Fenster bleibt flach
+
+    def __init__(self, felder: Sequence[Tuple[str, str]], kopf: str, unter: str = "", notiz: str = "",
+                 gespeichert: bool = False, basis: Optional[Dict[str, Any]] = None, neues_setup: bool = False,
+                 weitere_abweichung: bool = False, parent=None):
+        """felder: [(Feld, Wert im Lauf)]; basis: gespeichertes Setup {feld: Wert} (fuer den Haken neues Setup);
+        neues_setup: Haken anbieten (Fahrzeug gewaehlt); weitere_abweichung: der Lauf weicht schon in Feldern ohne
+        Platz vom Setup ab."""
+        hinweis = ("Schon gespeichert (Auto-Speichern) – „Übernehmen“ schreibt Notiz und Werte in den Lauf"
+                   if gespeichert else "Notiz und Werte gelten für diesen Lauf – später: „Lauf speichern“ unten rechts "
+                                       "(Ctrl+S)")
+        super().__init__("Lauf fertig", kopf, felder, unter, hinweis + "  ·  F1: neuer Lauf", parent,
+                         spalten=self.SPALTEN, kompakt=True)
+        self.setModal(False)
+        self.setWindowModality(QtCore.Qt.NonModal)
+        for lab in (self.unter, self.hinweis):         # eine Zeile: das Fenster wird breiter statt hoeher
+            lab.setWordWrap(False)
+        self.gespeichert = gespeichert
+        self.basis = {f: wert_text(v) for f, v in (basis or {}).items()}
+        self.weitere_abweichung = weitere_abweichung
+        self.wahl = ""
+        self.notiz_titel = QtWidgets.QLabel("Notiz")
+        self.notiz = QtWidgets.QLineEdit(notiz)
+        self.notiz.setPlaceholderText("Notiz zu diesem Lauf (z.B. Änderung gegenüber vorher)")
+        self.notiz.setMinimumWidth(420)
+        self.notiz.textEdited.connect(lambda _t: self._pruefen())
+        self._notiz_alt = notiz
+        self.oben.addWidget(self.notiz_titel)
+        self.oben.addWidget(self.notiz, 1)
+        self.neu_setup = QtWidgets.QCheckBox("auch als neues Setup speichern")
+        self.neu_setup.setVisible(neues_setup)
+        self.neu_setup.toggled.connect(lambda _on: self._pruefen())
+        self.knoepfe.addWidget(self.neu_setup)
+        self.knoepfe.addStretch(1)
+        if gespeichert:
+            self.b_zu = self._knopf("Schließen")
+            self.b_ok = self._knopf("Übernehmen")
+            self.b_zu.setToolTip("Fenster schließen, nichts ändern (Esc)")
+            self.b_ok.setToolTip("Notiz und Setup-Werte in den gespeicherten Lauf schreiben (Enter)")
+            self.knoepfe.addWidget(self.b_zu)
+            self.knoepfe.addWidget(self.b_ok)
+            self.b_zu.clicked.connect(self.reject)
+        else:
+            self.b_weg = self._knopf("Verwerfen")
+            self.b_spaeter = self._knopf("Später")
+            self.b_ok = self._knopf("Speichern")
+            self.b_weg.setToolTip("Nicht speichern – die Kurve bleibt bis zum nächsten START im Diagramm")
+            self.b_spaeter.setToolTip("Nur schließen (Esc) – speichern später mit „Lauf speichern“ unten rechts")
+            self.b_ok.setToolTip("Lauf mit Notiz und Setup-Werten speichern (Enter, Ctrl+S)")
+            for b in (self.b_weg, self.b_spaeter, self.b_ok):
+                self.knoepfe.addWidget(b)
+            self.b_weg.clicked.connect(lambda _c=False: self._waehlen(VERWERFEN))
+            self.b_spaeter.clicked.connect(self.reject)
+            QtGui.QShortcut(QtGui.QKeySequence("Ctrl+S"), self, activated=self.b_ok.click)
+        self.b_ok.setDefault(True)
+        theme.rolle(self.b_ok, "primaer")
+        self.b_ok.clicked.connect(self.accept)
+        QtGui.QShortcut(QtGui.QKeySequence("F1"), self, activated=self.start.emit)
+        self._pruefen()
+
+    def notiz_text(self) -> str:
+        return self.notiz.text().strip()
+
+    def werte(self) -> Dict[str, str]:
+        """Alle Felder des Formulars {feld: Wert} (wie fuer diesen Lauf eingetragen)."""
+        return self.formular.werte()
+
+    def aenderungen(self) -> Dict[str, str]:
+        """Felder, die im Fenster geaendert wurden."""
+        return self._offen()
+
+    def neues_setup(self) -> bool:
+        return self.neu_setup.isVisibleTo(self) and self.neu_setup.isEnabled() and self.neu_setup.isChecked()
+
+    def geaendert(self) -> bool:
+        """Etwas eingetragen (Notiz, Werte, Haken)?"""
+        return self.notiz_text() != self._notiz_alt.strip() or bool(self._offen()) or self.neues_setup()
+
+    def _pruefen(self):
+        weicht_ab = self.weitere_abweichung or any(wert_text(w) != self.basis.get(f, "")
+                                                   for f, w in self.werte().items())
+        self.neu_setup.setEnabled(weicht_ab)
+        self.neu_setup.setToolTip("Neues Setup aus dem Setup des Laufs und den Werten hier anlegen und wählen; der Lauf "
+                                  "gehört dann zu diesem Setup" if weicht_ab else
+                                  "Die Werte sind wie im gewählten Setup – kein neues Setup nötig")
+        self._stil()
+
+    def _stil(self):
+        super()._stil()
+        T = theme.tokens()
+        self.notiz_titel.setStyleSheet(f"color: {T['text']}; font-size: 13px; font-weight: 700;")
+        self.notiz.setStyleSheet("QLineEdit { font-size: 15px; font-weight: 600; }")
+
+    def _waehlen(self, wahl: str):
+        self.wahl = wahl
+        QtWidgets.QDialog.done(self, QtWidgets.QDialog.Rejected if wahl in (SPAETER, SCHLIESSEN, VERWERFEN)
+                               else QtWidgets.QDialog.Accepted)
+        self.gewaehlt.emit(wahl)
+
+    def accept(self):
+        """Enter bzw. Speichern/Übernehmen."""
+        self._waehlen(UEBERNEHMEN if self.gespeichert else SPEICHERN)
+
+    def reject(self):
+        """Esc, Später/Schließen, Fenster-X."""
+        self._waehlen(SCHLIESSEN if self.gespeichert else SPAETER)
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        self.activateWindow()
+        self.notiz.setFocus()                      # gleich tippen; Enter speichert (Standardknopf)
+        self.notiz.end(False)
 
 
 # =============================================================================================== Lauf-Einstellungen
@@ -1841,7 +2122,16 @@ class MessenMixin:
         self.setup_zeile.plaetze_geaendert.connect(self._schnellwert_plaetze)
         self.setup_zeile.geaendert.connect(self._setup_combo_marke)
         self.setup_zeile.neu_speichern.connect(self._setup_neu_dialog)
+        self.setup_zeile.set_eingeklappt(bool(self.settings.get(SETUP_EINGEKLAPPT, False)), melden=False)
+        self.setup_zeile.eingeklappt_geaendert.connect(self._setup_eingeklappt)
         lay.addWidget(self.setup_zeile)
+        # ---- nach dem Lauf: Fenster „Lauf fertig“, Stand des letzten Laufs (Knopf „Lauf speichern“)
+        self.lauf_fertig: Optional[LaufFertig] = None
+        self._nachlauf_faellig = False             # Fenster kommt mit dem Ergebnis (nach GAS WEG bzw. Ausrollen)
+        self._lauf_stand: Optional[Dict[str, Any]] = None   # Fahrzeug, Setup, Aenderungen, Notiz beim Laufende
+        self._lauf_ctrl = None                     # RunController des letzten Laufs (bleibt auch nach Trennen)
+        self._lauf_rid: Optional[int] = None       # gespeichert als … (None = ungespeichert)
+        self._lauf_verworfen = False               # „Verwerfen“ gedrueckt: beim naechsten START kein Hinweis
 
         # ---- Mitte: Diagramm (Fähnchen am Cursor, grosse Anzeigen) und schmale Ergebniszeile
         center = QtWidgets.QWidget()
@@ -2272,6 +2562,7 @@ class MessenMixin:
         """START: grosse Anzeigen weg (Ergebnis des letzten Laufs, Reste der Anweisung, wartendes Ergebnis)."""
         self._ergebnis_timer.stop()
         self._ergebnis_wartet = None
+        self._nachlauf_faellig = False
         self.ergebnis_gross.hide()
         self.anweisung.verbergen()
 
@@ -2294,8 +2585,13 @@ class MessenMixin:
             self._ergebnis_timer.start(max(1, int(rest * 1000)))
             return
         self.anweisung.verbergen()
-        if r is None or not self.anzeige_an(ERGEBNIS_GROSS):
-            return
+        if r is not None and self.anzeige_an(ERGEBNIS_GROSS):
+            self._ergebnis_gross_setzen(r, rid)
+        if self._nachlauf_faellig:                 # Fenster „Lauf fertig“ mit dem Ergebnis (gui._finish_run)
+            self._nachlauf_faellig = False
+            self._lauf_fertig_zeigen()
+
+    def _ergebnis_gross_setzen(self, r, rid: Optional[int]):
         row = self.db.run(rid) if rid is not None else None
         farbe = self._run_color(row) if row is not None else theme.farbe("live_curve")
         zeit = (self._run_label(row).split("  ")[0][-5:] if row is not None
@@ -2472,15 +2768,201 @@ class MessenMixin:
             z.set_nur_lauf(True)
         return True
 
-    def _setup_schnappschuss(self) -> Tuple[List[Dict[str, str]], bool]:
-        """(setup_werte, nur_lauf) fuer den naechsten gespeicherten Lauf."""
+    def _setup_schnappschuss(self, stand: Optional[Dict[str, Any]] = None) -> Tuple[List[Dict[str, str]], bool]:
+        """(setup_werte, nur_lauf) fuer den naechsten gespeicherten Lauf; stand (_lauf_stand_jetzt): statt der
+        Auswahl und SETUP-WERTE von jetzt."""
         from .db import all_setup_keys, setup_schnappschuss
-        sid = self.setup_combo.currentData()
+        stand = stand or self._lauf_stand_jetzt()
+        sid = stand["sid"]
         setup = (self.db.setup(sid) or {}) if sid else {}
-        aend = self.setup_zeile.aenderungen()
-        felder = list(dict.fromkeys([f for f in self.setup_zeile.felder if f]
+        aend = dict(stand["aend"])
+        felder = list(dict.fromkeys(list(stand["felder"])
                                     + [k for k in all_setup_keys() if wert_text(setup.get(k))] + list(aend)))
         return setup_schnappschuss(setup, felder, aend), bool(aend)
+
+    # ------------------------------------------------------------------ nach dem Lauf: Fenster, Speichern
+    def _lauf_stand_jetzt(self) -> Dict[str, Any]:
+        """Fahrzeug, Setup, Aenderungen in SETUP-WERTE, Notiz und Plaetze, wie sie gerade gelten."""
+        vid, vname = self._fahrzeug()
+        z = self.setup_zeile
+        return {"vid": vid, "vname": vname, "sid": self.setup_combo.currentData(), "setup_name": z.name,
+                "aend": z.aenderungen(), "notiz": self.run_note.text(), "felder": [f for f in z.felder if f],
+                "zeit": time.strftime("%H:%M")}
+
+    def _lauf_merken(self, ctrl):
+        """Laufende (gui._finish_run): Stand fuer das Fenster „Lauf fertig“ und „Lauf speichern“ festhalten."""
+        self._lauf_ctrl = ctrl
+        self._lauf_stand = self._lauf_stand_jetzt()
+        self._lauf_rid = None
+        self._lauf_verworfen = False
+
+    def _lauf_vergessen(self):
+        """START: der alte Lauf ist weg (ungespeichert wie bisher)."""
+        self._lauf_ctrl = None
+        self._lauf_stand = None
+        self._lauf_rid = None
+        self._lauf_verworfen = False
+        self._speichern_stand()
+
+    def lauf_ungespeichert(self) -> bool:
+        """Ungespeicherte Kurve des letzten Laufs da (Knopf „Lauf speichern“ aktiv)?"""
+        return (self._lauf_stand is not None and self._lauf_rid is None and self._lauf_ctrl is not None
+                and self._lauf_ctrl.result is not None and not self._lauf_aktiv())
+
+    def _speichern_stand(self):
+        """Knopf „Lauf speichern“ (Statusleiste) und Datei › Lauf speichern: aktiv nur mit ungespeicherter Kurve."""
+        an = self.lauf_ungespeichert()
+        knopf = getattr(getattr(self, "statusleiste", None), "speichern_knopf", None)
+        if knopf is not None:
+            knopf.set_aktiv(an)
+        akt = getattr(self, "speichern_aktion", None)
+        if akt is not None:
+            akt.setEnabled(an)
+
+    def _lauf_fertig_text(self) -> Tuple[str, str]:
+        """(Kopf, Unterzeile) des Fensters „Lauf fertig“."""
+        r = self._lauf_ctrl.result
+        st = self._lauf_stand
+        kopf = f"Lauf fertig: {zahl(r.p_max, 1)} PS bei {zahl(r.n_pmax)} 1/min  ·  {zahl(r.m_max, 1)} Nm bei " \
+               f"{zahl(r.n_mmax)} 1/min"
+        teile = [f"Lauf {st['zeit']}"]
+        if st["vname"]:
+            teile.append(st["vname"])
+        teile.append(f"Setup: {st['setup_name']}" if st["sid"] else "ohne Setup")
+        if st["aend"]:
+            teile.append("geändert nur für diesen Lauf")
+        teile.append("gespeichert ✓" if self._lauf_rid is not None else "noch nicht gespeichert")
+        return kopf, "  ·  ".join(teile)
+
+    def _lauf_fertig_zeigen(self) -> Optional[LaufFertig]:
+        """Fenster „Lauf fertig“ (Einstellung NACH_LAUF_FENSTER): Notiz und Setup-Werte des Laufs, nicht modal,
+        im unteren Teil des Diagramms (das grosse Ergebnis bleibt frei)."""
+        if (not self.settings.get(NACH_LAUF_FENSTER, True) or self._lauf_stand is None or self._lauf_ctrl is None
+                or self._lauf_ctrl.result is None or self._lauf_aktiv()):
+            return None
+        self._lauf_fertig_schliessen()
+        st = self._lauf_stand
+        sid = st["sid"]
+        setup = (self.db.setup(sid) or {}) if sid else {}
+        basis = {f: wert_text(setup.get(f)) for f in st["felder"]}
+        werte = {f: st["aend"].get(f, basis[f]) for f in st["felder"]}
+        kopf, unter = self._lauf_fertig_text()
+        weitere = any(f not in st["felder"] and wert_text(v) != wert_text(setup.get(f)) for f, v in st["aend"].items())
+        dlg = LaufFertig([(f, werte[f]) for f in st["felder"]], kopf, unter, st["notiz"],
+                         gespeichert=self._lauf_rid is not None, basis=basis, neues_setup=bool(st["vid"]),
+                         weitere_abweichung=weitere, parent=self)
+        dlg.gewaehlt.connect(lambda wahl, d=dlg: self._lauf_fertig_gewaehlt(d, wahl))
+        dlg.start.connect(lambda: self.on_start())
+        self.lauf_fertig = dlg
+        dlg.mittig_ueber(self.plot, unten=True, frei=self.ergebnis_gross)
+        dlg.show()
+        dlg.raise_()
+        QtCore.QTimer.singleShot(0, dlg, lambda d=dlg: self.lauf_fertig is d and d.mittig_ueber(
+            self.plot, unten=True, frei=self.ergebnis_gross))    # mit Titelleiste nachrechnen
+        return dlg
+
+    def _lauf_fertig_schliessen(self, start: bool = False):
+        """Fenster „Lauf fertig“ zu. start (neuer START): mit Auto-Speichern gelten schon getippte Aenderungen
+        (Übernehmen), ohne bleibt der Lauf ungespeichert wie bisher."""
+        dlg, self.lauf_fertig = self.lauf_fertig, None
+        if dlg is None:
+            return
+        try:
+            dlg.gewaehlt.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+        if start and dlg.gespeichert and dlg.geaendert():
+            self._lauf_fertig_anwenden(dlg)
+        dlg.hide()
+        dlg.deleteLater()
+
+    def _lauf_fertig_gewaehlt(self, dlg: LaufFertig, wahl: str):
+        if self.lauf_fertig is dlg:
+            self.lauf_fertig = None
+        if wahl in (SPEICHERN, UEBERNEHMEN):
+            self._lauf_fertig_anwenden(dlg)
+        elif wahl == VERWERFEN:
+            self._lauf_verworfen = True
+            self.statusBar().showMessage("Lauf nicht gespeichert – die Kurve bleibt bis zum nächsten START; "
+                                         "„Lauf speichern“ (Ctrl+S) sichert ihn doch noch.", 8000)
+        dlg.deleteLater()
+
+    def _stand_aus_fenster(self, dlg: LaufFertig) -> Dict[str, Any]:
+        """Stand des Laufs mit Notiz und Werten aus dem Fenster (Werte wie im Setup = keine Aenderung)."""
+        st = dict(self._lauf_stand)
+        setup = (self.db.setup(st["sid"]) or {}) if st["sid"] else {}
+        aend = dict(st["aend"])
+        for f, w in dlg.werte().items():
+            if wert_text(w) == wert_text(setup.get(f)):
+                aend.pop(f, None)
+            else:
+                aend[f] = wert_text(w)
+        st["aend"], st["notiz"] = aend, dlg.notiz_text()
+        return st
+
+    def _neues_setup_aus_stand(self, st: Dict[str, Any]) -> Dict[str, Any]:
+        """Haken „auch als neues Setup speichern“: Setup des Laufs + Aenderungen als neues Setup anlegen und waehlen;
+        der Lauf gehoert dann dazu (ohne Aenderungen)."""
+        if not st["vid"] or not st["aend"]:
+            return st
+        alt = (self.db.setup(st["sid"]) or {}) if st["sid"] else {}
+        werte = {k: v for k, v in alt.items() if k not in ("id", "vehicle_id", "name", "notiz")}
+        werte.update(st["aend"])
+        name = neuer_setup_name(alt.get("name", ""), alt, st["aend"])
+        notiz = (f"aus „{alt.get('name', '')}“ nach dem Lauf {st['zeit']}: " if alt else f"nach dem Lauf {st['zeit']}: ") \
+            + ", ".join(f"{kurz(f)} {wert_text(alt.get(f)) or '–'} → {kurz(f)} {w}" for f, w in st["aend"].items())
+        sid = self.db.save_setup(st["vid"], name, werte, notiz)
+        self._setup_neu_fertig(st["vid"], sid)
+        return dict(st, sid=sid, setup_name=name, aend={})
+
+    def _lauf_fertig_anwenden(self, dlg: LaufFertig) -> Optional[int]:
+        """Speichern (ungespeichert) bzw. Übernehmen (Auto-Speichern): Notiz und Setup-Werte des Fensters."""
+        if self._lauf_stand is None:
+            return None
+        st = self._stand_aus_fenster(dlg)
+        if dlg.neues_setup():
+            st = self._neues_setup_aus_stand(st)
+        if self._lauf_rid is None:
+            return self.lauf_speichern(st)
+        werte, nur_lauf = self._setup_schnappschuss(st)
+        self.db.update_run(self._lauf_rid, notiz=st["notiz"], setup_werte=werte, nur_lauf=nur_lauf,
+                           setup_id=st["sid"])
+        self._lauf_stand = st
+        self._reload_runs()
+        self.statusBar().showMessage("Notiz und Setup-Werte in den gespeicherten Lauf übernommen ✓", 6000)
+        return self._lauf_rid
+
+    def lauf_speichern(self, stand: Optional[Dict[str, Any]] = None) -> Optional[int]:
+        """Knopf „Lauf speichern“, Ctrl+S, Datei › Lauf speichern und Speichern im Fenster: ungespeicherten Lauf
+        speichern (stand: mit Notiz/Werten aus dem Fenster). Offenes Fenster: dessen Eintraege gelten."""
+        if not self.lauf_ungespeichert():
+            self.statusBar().showMessage("Kein ungespeicherter Lauf", 4000)
+            return None
+        if stand is None and self.lauf_fertig is not None:
+            dlg = self.lauf_fertig
+            dlg.accept()                           # wie „Speichern“ im Fenster (-> _lauf_fertig_anwenden)
+            return self._lauf_rid
+        if stand is None:                          # Werte vom Laufende, die Notiz wie jetzt in der Kopfzeile
+            stand = dict(self._lauf_stand, notiz=self.run_note.text())
+        rid = self.save_current_run(stand)
+        if rid is None:
+            return None
+        if self.ergebnis_gross.isVisible():
+            self._ergebnis_gross_setzen(self._lauf_ctrl.result, rid)    # Farbe und Zeit des gespeicherten Laufs
+        self.statusBar().showMessage("Lauf gespeichert ✓", 6000)
+        return rid
+
+    def _setup_eingeklappt(self, an: bool):
+        """Pfeil an SETUP-WERTE: Zustand speichern (gilt nach dem Neustart)."""
+        self.settings[SETUP_EINGEKLAPPT] = bool(an)
+        _speichern(self.settings)
+
+    def _start_hinweis_ungespeichert(self, zange: bool = False):
+        """START (gui.on_start, das Fenster ist schon zu): blieb der letzte Lauf ungespeichert, kurz im Band sagen."""
+        if self.lauf_ungespeichert() and not self._lauf_verworfen:
+            self.band.zeige("Neuer Lauf – letzter Lauf nicht gespeichert" if zange else
+                            "Letzter Lauf nicht gespeichert", theme.WARNUNG, 4.0)
+        self._lauf_vergessen()
 
     # ------------------------------------------------------------------ Live-Plaetze
     def _live_kanaele(self) -> List[Kanal]:

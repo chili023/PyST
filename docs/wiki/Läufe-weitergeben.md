@@ -5,7 +5,7 @@ Läufe an Kunden, Kollegen oder einen zweiten PC geben, und Läufe aus anderen Q
 
 ## Weitergeben
 
-**Datei › Läufe weitergeben (.pyst) …** (Ctrl+S) öffnet das Fenster **„Läufe weitergeben“**.
+**Datei › Läufe weitergeben (.pyst) …** (Ctrl+Shift+S) öffnet das Fenster **„Läufe weitergeben“**.
 
 ### Welche Läufe?
 

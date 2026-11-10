@@ -34,6 +34,7 @@ Alle Einstellungen speichert PyST sofort in `~/PyST/einstellungen.json`.
 | **n vom Gas [1/min]** | Standard 4000. Ab hier prüft PyST auf fallende Drehzahl (= Laufende). Startet den Lauf **nicht** mehr (seit 1.4.2 startet er mit dem Drehzahlanstieg). Muss über der Haltedrehzahl liegen |
 | **n Stop [1/min] (0 = aus)** | Standard 8000. Ab hier GAS WEG |
 | **Vor START nachfragen, ob sich das Setup geändert hat** | Ist in SETUP-WERTE nichts geändert, zeigt START kurz das Fenster „Setup unverändert – Änderungen eintragen?“ (Standard: an). Die Zangentaste „Neuer Lauf“ fragt nie. Siehe [Messen](Messen.md#start-nachfrage) |
+| **Nach dem Lauf Notiz/Setup-Fenster zeigen** | Standard an: nach dem Lauf (mit dem Ergebnis) das Fenster „Lauf fertig“ mit Notiz und Setup-Werten des Laufs; ohne Auto-Speichern wird dort gespeichert. Nicht modal, START/F1/Zangentaste gehen weiter. Aus: speichern mit **Lauf speichern** unten rechts (Ctrl+S). Eintrag `"nach_lauf_fenster"`. Siehe [Messen](Messen.md#nach-dem-lauf-fenster-lauf-fertig) |
 
 ### Anzeige beim Messen
 
@@ -285,3 +286,4 @@ WLAN-Steckdosen (Shelly, Tasmota, ESPHome) für Lüfter, Absaugung, Heizlüfter.
 - `einstellungen.json` wird atomar geschrieben: ein Absturz beim Speichern lässt die alte Datei stehen.
 - Der zuletzt offene Reiter und Unterreiter werden gespeichert.
 - Kanal-Setups der ECU liegen in `einstellungen.json` unter `rusefi` und lassen sich als Datei weitergeben.
+- Eingeklappte Zeile SETUP-WERTE (Messen): `"setup_werte_eingeklappt"` (Standard `false`).

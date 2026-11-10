@@ -8,7 +8,8 @@ Einstellungen:  Rolle/Lauf | Verbindung | Zange | Lambda | ECU | Software & Firm
   Zange: Zange (Zustand, Kopplung, Log) | Tasten;  Lambda: Lambda-Heizung;  ECU: rusEFI (frueher Hauptreiter ECU)
   WiFi: Netzwerk der Basis, Steckdosen
 Tag/Nacht: theme.py (Menue Ansicht › Darstellung, Umschalter in der Statusleiste), Statusleiste: statusleiste.py
-Messen: Aufbau und Messlogik in messen_page.py (MessenMixin), Einstellung messen_page.START_NACHFRAGE
+Messen: Aufbau und Messlogik in messen_page.py (MessenMixin), Einstellungen messen_page.START_NACHFRAGE,
+  NACH_LAUF_FENSTER (Fenster „Lauf fertig“), SETUP_EINGEKLAPPT; Lauf speichern: save_current_run / lauf_speichern
 PDF-Bericht: bericht.py (was im Diagramm steht; Knopf unten rechts: on_pdf_aktiv), Ordner-Import: ordner_import.py
 """
 import json
@@ -52,7 +53,7 @@ from .runner import ABORTED, ACTIVE, COAST, DONE, IDLE, KLIMA, RUN, WAIT, RunCon
 from .rusefi_page import RusefiPage
 from .tasten_page import TastenBand, TastenPage
 from .viewer import LogViewer
-from .messen_page import GEAENDERT, LIVE_KEY, START_NACHFRAGE, MessenMixin  # noqa: F401
+from .messen_page import GEAENDERT, LIVE_KEY, NACH_LAUF_FENSTER, START_NACHFRAGE, MessenMixin  # noqa: F401
 
 log = logging.getLogger("pyst.gui")
 
@@ -288,6 +289,14 @@ class SettingsPage(QtWidgets.QScrollArea):
         self.start_nachfrage.setChecked(bool(settings.get("start_nachfrage_setup", True)))
         self.start_nachfrage.setStyleSheet("font-weight: 600;")
         fl.addRow(self.start_nachfrage)
+        self.nach_lauf_fenster = QtWidgets.QCheckBox("Nach dem Lauf Notiz/Setup-Fenster zeigen")
+        self.nach_lauf_fenster.setToolTip("Nach dem Lauf (mit dem Ergebnis) das Fenster „Lauf fertig“: Notiz und "
+                                          "Setup-Werte des Laufs nachtragen, ohne Auto-Speichern dort speichern. "
+                                          "Nicht modal – START, F1 und die Zangentaste gehen weiter. "
+                                          "Einstellung „nach_lauf_fenster“.")
+        self.nach_lauf_fenster.setChecked(bool(settings.get("nach_lauf_fenster", True)))
+        self.nach_lauf_fenster.setStyleSheet("font-weight: 600;")
+        fl.addRow(self.nach_lauf_fenster)
         self.filter_label = QtWidgets.QLabel()
         self.filter_label.setWordWrap(True)
         theme.rolle(self.filter_label, "neben")
@@ -766,6 +775,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.statusleiste = Statusleiste()
         self.statusleiste.einbauen(self.statusBar())
         self.statusleiste.pdf_gewuenscht.connect(lambda: self.on_pdf_aktiv())   # Knopf „PDF-Bericht“ unten rechts
+        self.statusleiste.speichern_gewuenscht.connect(lambda: self.lauf_speichern())   # daneben „Lauf speichern“
+        self._speichern_stand()
         self._zange_state = ""
         self._zange_weitere = 0
         self.page_hw.zange_state.connect(self._zange_state_neu)
@@ -813,11 +824,17 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             self.thema_aktionen[wahl] = a
         self._anzeige_verbinden(v)                 # Anzeige beim Messen: Ergebnis/Anweisungen groß, Legende
         m = self.menuBar().addMenu("Datei")
+        self.speichern_aktion = m.addAction("Lauf speichern")         # wie der Knopf unten rechts
+        self.speichern_aktion.setShortcut("Ctrl+S")
+        self.speichern_aktion.setToolTip("Letzten Lauf speichern (nur ohne Auto-Speichern nötig)")
+        self.speichern_aktion.triggered.connect(lambda _c=False: self.lauf_speichern())
+        self.speichern_aktion.setEnabled(False)
+        m.addSeparator()
         for text, slot, key in (("Öffnen / importieren (.pyst, Läufe, Mitschnitte) …", self.on_import, "Ctrl+O"),
                                 ("Läufe importieren …", self.on_import, "Ctrl+I"),
                                 ("Ordner importieren (mit Unterordnern) …", lambda: self.on_import_ordner(),
                                  "Ctrl+Shift+I"),
-                                ("Läufe weitergeben (.pyst) …", lambda: self.on_share(), "Ctrl+S"),
+                                ("Läufe weitergeben (.pyst) …", lambda: self.on_share(), "Ctrl+Shift+S"),
                                 ("Als HTML-Ansicht exportieren (ohne PyST ansehbar) …", lambda: self.on_share(html=True),
                                  "Ctrl+H"),
                                 ("PDF-Bericht der sichtbaren Läufe …", self.on_pdf, "Ctrl+P"),
@@ -1106,6 +1123,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.setup_combo.setEnabled(not busy)
         self.setup_zeile.setEnabled(not busy)
         self.b_hinzu.setEnabled(not busy)
+        self._speichern_stand()
 
     def _persist(self):
         s = self.page_settings
@@ -1451,8 +1469,10 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         if msg:
             QtWidgets.QMessageBox.warning(self, "Einstellungen", msg)
             return
+        self._lauf_fertig_schliessen(start=True)          # Fenster „Lauf fertig“ zu (Auto-Speichern: Eingaben gelten)
         if nachfrage and not self._setup_vor_start():
             return
+        self._start_hinweis_ungespeichert(zange=not nachfrage)    # alter Lauf ungespeichert: kurz im Band
         self._persist()
         self.tabs.setCurrentIndex(0)
         self._gross_verbergen()
@@ -1517,6 +1537,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
                              "#b8e6b8")
         else:
             self._set_status(f"{r.p_max:.1f} PS bei {r.n_pmax:.0f} 1/min", "#b8e6b8")
+        self._lauf_merken(self.ctrl)                      # Stand fuer „Lauf fertig“ und „Lauf speichern“
         rid = None
         if self.autosave.isChecked():
             rid = self.save_current_run()
@@ -1524,6 +1545,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             self._draw_live(final=True)
             self.plot.auto_scale()
             self._legende_zeigen()
+        self._nachlauf_faellig = True                     # Fenster „Lauf fertig“ kommt mit dem Ergebnis
         self._ergebnis_gross_zeigen(r, rid, warten=coast is None)   # Option „Ergebnis groß nach dem Lauf“
         if coast is not None:
             self.page_kalib.show_result(coast, self._coast_label(rid), rid, n_pmax=r.n_pmax)
@@ -1666,24 +1688,31 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self._set_status(text, "#b8e6b8")
         self.statusBar().showMessage(text, 8000)
 
-    def save_current_run(self) -> Optional[int]:
-        if not self.ctrl or not self.ctrl.result:
+    def save_current_run(self, stand: Optional[dict] = None) -> Optional[int]:
+        """Letzten Lauf speichern (Auto-Speichern, „Lauf speichern“, Fenster „Lauf fertig“). stand: Fahrzeug, Setup,
+        Aenderungen und Notiz (messen_page._lauf_stand_jetzt); ohne den beim Laufende festgehaltenen bzw. den von jetzt."""
+        ctrl = self._lauf_ctrl or self.ctrl
+        if not ctrl or not ctrl.result:
             return None
-        vid, sid = self.vehicle_combo.currentData(), self.setup_combo.currentData()
-        vname = self.vehicle_combo.currentText() if vid else ""
-        folder = storage.save_run(self.ctrl, vehicle=vname, firmware=self.firmware, base_dir=self.db.runs_dir())
-        r = self.ctrl.result
-        werte, nur_lauf = self._setup_schnappschuss()
+        stand = stand or self._lauf_stand or self._lauf_stand_jetzt()
+        vid, sid, vname = stand["vid"], stand["sid"], stand["vname"]
+        folder = storage.save_run(ctrl, vehicle=vname, firmware=self.firmware, base_dir=self.db.runs_dir())
+        r = ctrl.result
+        werte, nur_lauf = self._setup_schnappschuss(stand)
         rid = self.db.add_run(folder, "lauf.json", "PyST", os.path.basename(folder),
                               QtCore.QDateTime.currentDateTime().toString(QtCore.Qt.ISODate), r,
-                              params=asdict(self.ctrl.params), rate=self._current_rate(), vehicle_id=vid,
-                              setup_id=sid, notiz=self.run_note.text(), farbe="", sichtbar=True,
+                              params=asdict(ctrl.params), rate=self._current_rate(), vehicle_id=vid,
+                              setup_id=sid, notiz=stand["notiz"], farbe="", sichtbar=True,
                               setup_werte=werte, nur_lauf=nur_lauf)
+        if ctrl is self._lauf_ctrl:
+            self._lauf_rid = rid
+            self._lauf_stand = stand
         self.plot.remove(LIVE_KEY)
         self._reload_runs()
         self.plot.auto_scale()
         self.result_label.setText(self.result_label.text() + "   |   gespeichert ✓")
         self.result_label.setToolTip(folder)
+        self._speichern_stand()
         return rid
 
     def _draw_live(self, final: bool = False, res=None):
@@ -2136,6 +2165,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         s.abgleich_btn.clicked.connect(self.on_abgleich_live)
         self.settings.setdefault("start_nachfrage_setup", True)
         s.start_nachfrage.toggled.connect(self._start_nachfrage_geaendert)
+        self.settings.setdefault(NACH_LAUF_FENSTER, True)
+        s.nach_lauf_fenster.toggled.connect(self._nach_lauf_fenster_geaendert)
         # Verbindung: Messboard mit den Geräte-Einstellungen der Basis, Prüfen (Sammelknopf)
         self.dev_settings_btn = QtWidgets.QPushButton("Geräte-Einstellungen der Basis …")
         self.dev_settings_btn.setToolTip("#GET/#SET der Basis bzw. des Messboards (PST-Diag 1): Messfrequenz, Flanken, "
@@ -2209,6 +2240,11 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
     def _start_nachfrage_geaendert(self, on: bool):
         """Rolle/Lauf: „Vor START nachfragen, ob sich das Setup geändert hat“ (gelesen beim START unter Messen)."""
         self.settings["start_nachfrage_setup"] = bool(on)
+        save_settings(self.settings)
+
+    def _nach_lauf_fenster_geaendert(self, on: bool):
+        """Rolle/Lauf: „Nach dem Lauf Notiz/Setup-Fenster zeigen“ (gelesen beim naechsten Laufende)."""
+        self.settings[NACH_LAUF_FENSTER] = bool(on)
         save_settings(self.settings)
 
     def _messboard_einstellungen(self):
