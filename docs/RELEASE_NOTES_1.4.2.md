@@ -211,6 +211,31 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 
 ![Ordner importieren: Vorschau](bilder/v142_import_ordner.png)
 
+**15. Nach dem Lauf: Fenster „Lauf fertig“, Knopf „Lauf speichern“, SETUP-WERTE einklappbar**
+- Ohne **Auto-Speichern** ließ sich ein Lauf bisher gar nicht speichern. Jetzt geht nach dem Lauf (mit dem großen
+  Ergebnis, nach GAS WEG bzw. nach dem Ausrollversuch) das Fenster **Lauf fertig** auf: Kopf mit Pmax/Mmax, Feld
+  **Notiz** (vorbelegt aus der Kopfzeile) und die SETUP-WERTE mit den Werten, die für den Lauf galten. Änderungen
+  gelten für diesen Lauf; mit dem Haken **auch als neues Setup speichern** entsteht daraus ein neues Setup, dem der
+  Lauf zugeordnet wird.
+- Ohne Auto-Speichern: **Speichern** (Enter, Ctrl+S), **Verwerfen** (ohne Rückfrage, die Kurve bleibt bis zum
+  nächsten START), **Später** (Esc). Mit Auto-Speichern ist der Lauf schon gespeichert: **Übernehmen** schreibt Notiz
+  und Setup-Werte in den Lauf, **Schließen** lässt ihn.
+- Das Fenster ist nicht modal: START, F1 (auch im Fenster), die Zangentaste **Neuer Lauf** und Esc gehen weiter. Ein
+  neuer START schließt es; mit Auto-Speichern gelten schon getippte Änderungen, ohne bleibt der alte Lauf ungespeichert
+  und das Band zeigt kurz **„Letzter Lauf nicht gespeichert“**. Schalter **Nach dem Lauf Notiz/Setup-Fenster zeigen**
+  unter Einstellungen › Rolle/Lauf (Standard an).
+- Neuer Knopf **Lauf speichern** unten rechts neben **PDF-Bericht** (Diskette mit Häkchen, bei schmalem Fenster nur
+  „Speichern“), dazu **Datei › Lauf speichern** mit **Ctrl+S**. Nur aktiv, wenn eine ungespeicherte Kurve da ist;
+  danach steht der Lauf in der Liste Läufe und ERGEBNIS verliert „nicht gespeichert“. **Läufe weitergeben (.pyst)**
+  liegt deshalb jetzt auf **Ctrl+Umschalt+S**.
+- Die Zeile **SETUP-WERTE** klappt mit **▾/▸** am Titel ein: eine schmale Zeile „Hauptdüse 135 · Clip 3 · ZZP 18 ·
+  …“, bei Änderungen mit **✎ geändert, ungespeichert** bzw. **✎ nur dieser Lauf**. Das Diagramm bekommt den Platz,
+  der Zustand gilt nach dem Neustart.
+
+![Fenster „Lauf fertig“](bilder/v142_lauf_fertig.png)
+
+![SETUP-WERTE eingeklappt](bilder/v142_setup_eingeklappt.png)
+
 ## Hinweise und Annahmen
 
 - **Laufbeginn:** Die Drehzahl gilt als steigend, wenn im Fenster drei Bedingungen zugleich erfüllt sind: robuste
@@ -245,6 +270,12 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 - **Löschen in Messen:** Markierte Läufe (anklicken, Strg/Umschalt) löscht **Löschen** bzw. Rechtsklick ›
   **Löschen …** nach Rückfrage samt Messdateien. Ohne Markierung meldet PyST jetzt „Kein Lauf markiert …“
   statt still nichts zu tun. Danach rückt ein älterer Lauf auf den freien Platz nach.
+- **Lauf fertig / Lauf speichern:** Gespeichert werden Fahrzeug, Setup und Setup-Werte, wie sie am Laufende galten
+  (nicht wie nach einem späteren Wechsel der Auswahl), dazu die Notiz aus dem Fenster bzw. beim Knopf ohne Fenster die
+  Notiz, wie sie gerade in der Kopfzeile steht. Änderungen im Fenster gelten nur für diesen Lauf, die Zeile
+  SETUP-WERTE für die nächsten Läufe bleibt. Der letzte Lauf lässt sich bis zum nächsten START speichern, auch nach
+  **Verwerfen** und nach dem Trennen des Messboards. Simulator und Kommandozeile (`python -m pyst run`) sind
+  unverändert.
 - Die neuen Funktionen sind im Simulator und mit automatischen Tests geprüft, **an der Hardware noch nicht**.
 
 ## Update von 1.4.1
@@ -252,8 +283,8 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 1. Ordner mit `git pull` aktualisieren oder das ZIP neu laden.
 2. Wie gewohnt starten (`start_mac.command`, `start_linux.sh`, `start_windows.bat`). Neue Abhängigkeiten gibt es nicht.
 3. Datenbank, Läufe und Einstellungen in `~/PyST` bleiben erhalten. Die neuen Schalter starten mit ihrem Standard
-   (Ergebnis groß an, Anweisungen groß an, Legende aus, Nachfrage vor START an, Ø automatisch mitteln aus, Start:
-   1,0 s / 150 1/min).
+   (Ergebnis groß an, Anweisungen groß an, Legende aus, Nachfrage vor START an, Fenster nach dem Lauf an, SETUP-WERTE
+   ausgeklappt, Ø automatisch mitteln aus, Start: 1,0 s / 150 1/min).
 4. Von 1.2 oder älter: zuerst die Hinweise in den [Release Notes 1.4.1](RELEASE_NOTES_1.4.1.md#update-von-12).
 
 ## Noch nicht an der Hardware bestätigt
@@ -280,6 +311,6 @@ Bitte Rückmeldungen über die [Issues](https://github.com/chili023/PyST/issues)
 ## Tests
 
 Automatische Tests unter Linux mit Python 3 und PySide6, dazu Oberflächen-Rauchtests im Simulator, in Tag und Nacht
-und bei 1280 × 800. Stand der Freigabe: 690 Tests bestanden, 1 übersprungen.
+und bei 1280 × 800. Stand der Freigabe: 701 Tests bestanden, 1 übersprungen.
 
 Der Stand 1.4.1 liegt unter dem Tag `v1.4.1`.

@@ -12,8 +12,8 @@ Der Reiter **Messen** ist der Arbeitsplatz am Prüfstand: Lauf starten, Kurve li
 |---|---|
 | **Fahrzeug** | Fahrzeug für die nächsten Läufe |
 | **Setup** | Setup des Fahrzeugs. Bei ungespeicherten Änderungen steht hier „✎ geändert“ |
-| **Notiz** | „Notiz zu diesem Lauf (z.B. Änderung gegenüber vorher)“, wird mit dem Lauf gespeichert |
-| **Auto-Speichern** | Lauf nach dem Ende sofort in die Datenbank schreiben |
+| **Notiz** | „Notiz zu diesem Lauf (z.B. Änderung gegenüber vorher)“, wird mit dem Lauf gespeichert. Nach dem Lauf lässt sie sich im Fenster [Lauf fertig](#nach-dem-lauf-fenster-lauf-fertig) noch ändern |
+| **Auto-Speichern** | Lauf nach dem Ende sofort in die Datenbank schreiben. Aus: gespeichert wird im Fenster **Lauf fertig** oder mit **Lauf speichern** unten rechts (Ctrl+S) |
 | Statusfeld | Zustand und Anweisung an den Fahrer (Tabelle unten) |
 | **Verbinden / Trennen** | Messboard verbinden oder trennen |
 | **Lauf-Einstellungen …** | kleines Fenster mit Übersetzung, Filter sowie Start und Ende des Laufs. Darunter steht kurz, was gilt, z. B. „i 6,850 (Hand) · Filter 35 / 15 Pkt.“ |
@@ -68,7 +68,7 @@ PyST ab („Kein Drehzahlanstieg nach 60 s – abgebrochen“). Findet es 120 s 
    (**Start: steigt über [s]**, **Start: Anstieg mind. [1/min]**).
 5. **Messung:** GO verschwindet, über der Kurve steht nichts.
 6. **Laufende:** Ab *n vom Gas* prüft PyST auf fallende Drehzahl (Gas weg) bzw. endet bei *n Stop* – **GAS WEG!**,
-   danach das große Ergebnis.
+   danach das große Ergebnis und das Fenster [Lauf fertig](#nach-dem-lauf-fenster-lauf-fertig).
 
 | GO – Vollgas! | Messung |
 |---|---|
@@ -84,6 +84,54 @@ mit Drehzahl groß über dem Diagramm, mit Farbe, Uhrzeit und Setup des Laufs. W
 
 Beide Optionen und **Legende im Diagramm** (Standard aus) schaltet man unter Einstellungen › Rolle/Lauf ›
 **Anzeige beim Messen** oder im Menü **Ansicht**.
+
+### Nach dem Lauf: Fenster „Lauf fertig“
+
+![Fenster „Lauf fertig“ ohne Auto-Speichern](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_lauf_fertig.png)
+
+Sobald das Ergebnis steht (nach GAS WEG bzw. nach dem Ausrollversuch), geht unter dem großen Ergebnis ein kleines
+Fenster auf. Hier trägt man nach, was beim Lauf anders war, oder macht eine Notiz.
+
+| Teil | Inhalt |
+|---|---|
+| Kopf | „Lauf fertig: 32,0 PS bei 9.972 1/min · 22,8 Nm bei 9.739 1/min“, darunter Uhrzeit, Fahrzeug, Setup und ob der Lauf schon gespeichert ist |
+| **Notiz** | vorbelegt mit der Notiz aus der Kopfzeile. Der Cursor steht gleich im Feld |
+| SETUP-WERTE | die belegten Plätze mit den Werten, die für den Lauf galten. Eine Änderung (gelb) gilt **nur für diesen Lauf**, wie **nur für diesen Lauf** in SETUP-WERTE. Die Zeile SETUP-WERTE für die nächsten Läufe bleibt, wie sie ist |
+| **auch als neues Setup speichern** | nur mit Fahrzeug, aktiv sobald ein Wert vom Setup abweicht: legt ein neues Setup an (Name wie „Serie, HD 140“), wählt es und ordnet den Lauf ihm zu |
+
+Knöpfe **ohne Auto-Speichern**:
+
+| Knopf | Wirkung |
+|---|---|
+| **Speichern** | Standard (Enter, Ctrl+S): Lauf mit Notiz und Setup-Werten speichern. Er steht danach in der Liste Läufe |
+| **Verwerfen** | nicht speichern, ohne Rückfrage. Die Kurve bleibt bis zum nächsten START im Diagramm; bis dahin kann **Lauf speichern** unten rechts sie doch noch sichern |
+| **Später** | Esc: nur schließen. Speichern geht danach mit **Lauf speichern** unten rechts (Ctrl+S) |
+
+![Fenster „Lauf fertig“ mit Auto-Speichern](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_lauf_fertig_autosave.png)
+
+**Mit Auto-Speichern** ist der Lauf schon gespeichert. **Übernehmen** (Enter) schreibt Notiz und Setup-Werte in den
+gespeicherten Lauf, **Schließen** (Esc) lässt ihn, wie er ist.
+
+Das Fenster sperrt nichts: **START**, **F1** (auch im Fenster), die Zangentaste **Neuer Lauf** und Esc gehen weiter,
+der Fahrer braucht keine Maus. Kommt ein neuer START, schließt es sich:
+
+- mit Auto-Speichern gelten schon getippte Änderungen (wie **Übernehmen**),
+- ohne Auto-Speichern bleibt der alte Lauf ungespeichert wie bisher; das Band oben zeigt kurz
+  **„Letzter Lauf nicht gespeichert“** (Zangentaste: „Neuer Lauf – letzter Lauf nicht gespeichert“). Nach
+  **Verwerfen** kommt dieser Hinweis nicht.
+
+Abschaltbar mit **Nach dem Lauf Notiz/Setup-Fenster zeigen** (Einstellungen › Rolle/Lauf, Standard an).
+
+### Lauf speichern (unten rechts)
+
+![Statusleiste mit „Lauf speichern“ und „PDF-Bericht“](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_statusleiste.png)
+
+Neben **PDF-Bericht** steht der Knopf **Lauf speichern** (Diskette mit Häkchen; bei schmalem Fenster nur
+„Speichern“), dazu **Datei › Lauf speichern** und **Ctrl+S**. Er ist nur aktiv, wenn eine ungespeicherte Kurve da ist,
+sonst grau mit dem Tooltip „Kein ungespeicherter Lauf“. Gespeichert werden Fahrzeug, Setup und Setup-Werte vom
+Laufende und die Notiz, wie sie gerade in der Kopfzeile steht (bei offenem Fenster **Lauf fertig**: dessen Einträge).
+Danach steht der Lauf in der Liste Läufe, der Titel ERGEBNIS verliert „nicht gespeichert“ und der Knopf ist wieder aus.
+Auch nach dem Trennen des Messboards lässt sich der letzte Lauf noch speichern, bis zum nächsten START.
 
 Vor dem Start prüft PyST die Werte: *n Stop* muss größer als *n vom Gas* sein, Übersetzung, Rollengeber,
 Zündimpulse, Trägheit und Filter müssen größer als 0 sein. Sonst kommt eine Meldung und der Lauf startet nicht.
@@ -109,6 +157,7 @@ Zündzeitpunkt.
 
 | Bedienung | Wirkung |
 |---|---|
+| **▾ / ▸** am Titel SETUP-WERTE | Zeile ein- und ausklappen (siehe unten) |
 | Wert anklicken und ändern | Wert gilt für die nächsten Läufe |
 | **＋** | weiteren Platz anlegen |
 | Titel des Platzes anklicken | Feld wählen. Gruppen: Vergaser (bei EFI: Einspritzung / ECU), Zündung, Antrieb, Ein- und Auslass, **Weitere Felder**, außerdem **leer lassen** und **Platz entfernen** |
@@ -126,6 +175,16 @@ Nach einer Änderung wird die Zeile gelb. Am Wert steht „vorher X“, daneben 
 Drückt man START mit geänderten Werten, startet der Lauf ohne Rückfrage. Die Werte gelten dann nur für diesen Lauf
 (wie **nur für diesen Lauf**). Ein neues Setup legt man mit **Als neues Setup speichern …** an. Wählt man ein anderes
 Setup, sind ungespeicherte Werte verworfen.
+
+### Eingeklappt
+
+![SETUP-WERTE eingeklappt, mit Änderung nur für diesen Lauf](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_setup_eingeklappt.png)
+
+Ein Klick auf **▾ SETUP-WERTE** klappt die Zeile ein. Dann bleibt eine schmale Zeile mit dem Titel und einer
+Zusammenfassung wie „Hauptdüse 135 · Clip 3 · ZZP 18 · …“; das Diagramm wird entsprechend höher. Sind Werte geändert,
+bleibt die Zeile gelb und rechts steht **✎ geändert, ungespeichert** bzw. **✎ nur dieser Lauf**, damit es nicht
+unbemerkt bleibt. Zum Ändern, Speichern oder Verwerfen klappt man mit **▸** wieder aus. PyST merkt sich den Zustand
+(auch nach dem Neustart).
 
 ### START-Nachfrage
 

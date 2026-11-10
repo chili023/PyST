@@ -14,10 +14,10 @@ Umschalten:
 
 - Menü **Ansicht › Darstellung**, oder
 - die drei kleinen Knöpfe **☀ ☾ ◐** unten rechts in der Statusleiste: ☀ = Tag, ☾ = Nacht, ◐ = Automatisch. Die
-  gewählte Darstellung ist blau hinterlegt, der Tooltip nennt sie. Links daneben der Knopf **PDF-Bericht** (siehe
-  [Messen](Messen.md#pdf-bericht)).
+  gewählte Darstellung ist blau hinterlegt, der Tooltip nennt sie. Links daneben die Knöpfe **PDF-Bericht** (siehe
+  [Messen](Messen.md#pdf-bericht)) und **Lauf speichern** (siehe [Messen](Messen.md#lauf-speichern-unten-rechts)).
 
-![Statusleiste unten rechts: PDF-Bericht und ☀ ☾ ◐](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_statusleiste.png)
+![Statusleiste unten rechts: PDF-Bericht, Lauf speichern und ☀ ☾ ◐](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_statusleiste.png)
 
 Der Wechsel wirkt sofort, auch auf Diagramme und Kacheln.
 

@@ -129,7 +129,7 @@ denselben Mittelwert-Lauf an wie dieser Dialog (Band min–max, Raster 50 1/min,
 | **PDF-Bericht …** (Ctrl+P) | Bericht vom Diagramm in Messen: Diagramm wie angezeigt, Tabelle mit Läufen, Referenzen und Ø automatisch, Klima, Setup. Immer in Tag-Farben, siehe [Messen › PDF-Bericht](Messen.md#pdf-bericht) |
 | Knopf **PDF-Bericht** (Statusleiste) | im Reiter Auswertung: die Felder der Auswertung mit den angezeigten Läufen |
 | **CSV-Export …** (Ctrl+E) | markierter Lauf. Trennzeichen Semikolon, öffnet in Excel/LibreOffice |
-| Weitergeben (Ctrl+S, Ctrl+H) | siehe [Läufe weitergeben](Läufe-weitergeben.md) |
+| Weitergeben (Ctrl+Shift+S, Ctrl+H) | siehe [Läufe weitergeben](Läufe-weitergeben.md) |
 
 ## Ordner importieren
 

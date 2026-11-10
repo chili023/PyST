@@ -65,6 +65,15 @@ Ein kurzer Gasstoß (Drehzahl steigt 1 s lang um mehr als 150 1/min) gilt als St
 **Start: Anstieg mind.** höher stellen. Die Kurve selbst stört das nicht: Der Vorlauf bis zur letzten Verzögerung
 unter *n vom Gas* wird weiter abgeschnitten.
 
+**Der Lauf lässt sich nicht speichern (Auto-Speichern aus).**
+Ohne **Auto-Speichern** schreibt PyST den Lauf erst auf Wunsch in die Datenbank: im Fenster **Lauf fertig** nach dem
+Lauf mit **Speichern** (Enter), sonst mit dem Knopf **Lauf speichern** unten rechts neben **PDF-Bericht**, mit
+**Datei › Lauf speichern** oder **Ctrl+S**. Das geht bis zum nächsten START, auch nach **Später** oder **Verwerfen**.
+Ist der Knopf grau („Kein ungespeicherter Lauf“), ist der Lauf schon gespeichert, es gab kein Ergebnis oder seitdem
+wurde neu gestartet – dann ist die alte Kurve weg (das Band hat beim START „Letzter Lauf nicht gespeichert“ gezeigt).
+Kommt das Fenster nicht: Einstellungen › Rolle/Lauf › **Nach dem Lauf Notiz/Setup-Fenster zeigen** einschalten.
+Mehr: [Messen](Messen.md#nach-dem-lauf-fenster-lauf-fertig).
+
 **„Klima: eingetragener Wert … (kein Sensorwert)“ im Ergebnis.**
 Der Klimasensor hat nach START nicht innerhalb von 3 s geantwortet (oder die Gegenstelle hat keinen, z. B. die Zange
 per USB). Der Lauf ist mit den Werten unter Einstellungen › Rolle/Lauf › Klima gerechnet. Unter Einstellungen ›
