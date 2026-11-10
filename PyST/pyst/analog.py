@@ -1,8 +1,8 @@
 """
 Analogeingaenge der Messboards (Arduino Mega, STM32 F446, PyST-Basis): Kanaele benennen und umrechnen.
 
-Eingaenge je Geraet (Stand Firmware Mega 3.1.0, F446 1.1.0, Basis 0.4):
-  Arduino Mega   A0 … A15, 10 bit, 0–5 V (AREF = 5 V). Der Sketch liest heute keinen davon.
+Eingaenge je Geraet (Stand Firmware Mega 3.2.0, F446 1.2.0, Basis 0.4):
+  Arduino Mega   A0 … A15, 10 bit, 0–5 V (AVcc = 5 V als Referenz, ohne Teiler). Ab Sketch 3.2.0 per '#AI'.
   STM32 F446     ADC1 = PB0 (ADC1_IN8), ADC2 = PA1 (ADC1_IN1), 12 bit, 0–3,3 V ohne Teiler. Einer davon kann der
                  AFR-Eingang sein (#SET afr_src 1|2, Kennlinie afr_0v/afr_fs); im ASCII-Telegramm steht nur das AFR.
   PyST-Basis     AI1 = X6.1, AI2 = X6.2 (X6.3 = 5 V Sensor, X6.4 = GND), 12 bit x 16, Teiler auf der Platine:
@@ -12,7 +12,8 @@ Eingaenge je Geraet (Stand Firmware Mega 3.1.0, F446 1.1.0, Basis 0.4):
 Wie die Werte zu PyST kommen:
   - Vorschlag PST-Diag 1 (alle Geraete): '#CAP;…;ai=AI1,AI2' nennt die Eingaenge, '#AI <hz>' schaltet Zeilen
     'A;<t_ms>;AI1=1.234;AI2=0.501' (Volt an der Klemme bzw. mA, nan = kein Wert) ein, '#AI 0' aus. Nach dem Start aus
-    (LabVIEW merkt nichts). Die Firmwares koennen das noch nicht, der Simulator schon (Mega, F446).
+    (LabVIEW merkt nichts). Mega ab 3.2.0, F446 ab 1.2.0 und der Simulator (Mega, F446) koennen das; erkannt wird es
+    an 'ai=' in '#CAP', nicht an der Versionsnummer.
   - PyST-Basis heute: '#STAT' etwa jede Sekunde (analog_page.py), nur wenn Kanaele aktiv sind oder die Seite offen ist.
   Der zuletzt empfangene Wert gilt fuer alle folgenden Telegramme (link.Frame.ain), hoechstens HALTEN_S lang.
 
@@ -61,13 +62,14 @@ class Geraet:
 GERAETE: Dict[str, Geraet] = {
     MEGA: Geraet(MEGA, "Arduino Mega", "0–5 V, 10 bit",
                  tuple(Eingang(f"A{i}", f"A{i}", 5.0) for i in range(16)),
-                 "PST-Mega 3.1.0 sendet noch keine Analogwerte (Firmware fehlt). PyST holt sie, sobald die Firmware "
-                 "„#AI“ kann (zeigt schon der Simulator SIM:mega)."),
+                 "Ab Sketch 3.2.0 sendet der Mega die Spannungen an A0 … A15 (Referenz 5 V, etwa 5 mV Auflösung), "
+                 "PyST holt sie zehnmal je Sekunde. Mit 3.1.0 kommen keine Werte, dann den Sketch aktualisieren."),
     F446: Geraet(F446, "STM32 F446", "0–3,3 V, 12 bit (ohne Teiler, nicht über 3,3 V)",
                  (Eingang("ADC1", "ADC1 (PB0)", 3.3, "AFR-Eingang, wenn afr_src = 1"),
                   Eingang("ADC2", "ADC2 (PA1)", 3.3, "AFR-Eingang, wenn afr_src = 2")),
-                 "PST-STM32 1.1.0 sendet die Spannungen noch nicht, nur das AFR des gewählten Eingangs "
-                 "(Lambda › AFR-Eingang). PyST holt sie, sobald die Firmware „#AI“ kann (zeigt schon der Simulator)."),
+                 "Ab PST-STM32 1.2.0 kommen die Spannungen an ADC1 und ADC2, zehnmal je Sekunde, auch an dem Eingang, "
+                 "der als AFR-Eingang dient (Lambda › AFR-Eingang). Mit 1.1.0 kommt nur das AFR, dann die "
+                 "Firmware aktualisieren."),
     BASIS: Geraet(BASIS, "PyST-Basis", "0–10 V (Werkszustand), 0–5 V oder 4–20 mA per Lötbrücke, 12 bit",
                   (Eingang("AI1", "AI1 (X6.1)", 10.0), Eingang("AI2", "AI2 (X6.2)", 10.0)),
                   "Klemme X6: AI1, AI2, 5 V Sensor, GND. Bereich per Lötbrücke JP60–JP63 und ai1_mode/ai2_mode "

@@ -11,12 +11,12 @@ Live-Kacheln, im unteren Diagramm, in der Auswertung und im CSV-Export.
 | Gerät | Eingänge | Bereich | Werte heute |
 |---|---|---|---|
 | **PyST-Basis** | AI1 (X6.1), AI2 (X6.2); X6.3 = 5 V Sensor, X6.4 = GND | Werkszustand 0–10 V (Lötbrücken JP60–JP63 offen, `ai1_mode`/`ai2_mode` = 1). JP60/JP62 zu: 0–5 V (mode 0). Zusätzlich JP61/JP63: 4–20 mA (mode 2, Wert in mA). 12 bit | PyST fragt die Basis etwa einmal je Sekunde (`#STAT`) |
-| **STM32 F446** (PST-STM32) | ADC1 = PB0, ADC2 = PA1 | 0–3,3 V ohne Teiler, nicht höher. 12 bit | Firmware 1.1.0 sendet die Spannungen noch nicht |
-| **Arduino Mega** (PST 3.x) | A0 … A15 | 0–5 V, 10 bit | Sketch 3.1.0 liest die Eingänge noch nicht |
+| **STM32 F446** (PST-STM32) | ADC1 = PB0, ADC2 = PA1 | 0–3,3 V ohne Teiler, nicht höher. 12 bit | ab Firmware 1.2.0 zehnmal je Sekunde (`#AI`), 1.1.0 sendet sie nicht |
+| **Arduino Mega** (PST 3.x) | A0 … A15 | 0–5 V, 10 bit (Referenz = Versorgung, nominell 5 V) | ab Sketch 3.2.0 zehnmal je Sekunde (`#AI`), 3.1.0 liest sie nicht |
 
 Beim F446 kann ADC1 oder ADC2 der **AFR-Eingang** sein (Einstellungen › Lambda › AFR-Eingang, `afr_src` = 1 bzw. 2). Dann
 misst die Firmware dort das AFR. Die Tabelle zeigt das in der Spalte **Hinweis**. Einen eigenen Kanal braucht dieser
-Eingang dann nicht. Die Lambdasonde der Basis (LSU 4.9 über CAN) und die Thermoelemente sind keine Analogeingänge.
+Eingang dann nicht; ab 1.2.0 kommt seine Spannung trotzdem mit. Die Lambdasonde der Basis (LSU 4.9 über CAN) und die Thermoelemente sind keine Analogeingänge.
 
 Den Bereich der Basis (0–5 V, 0–10 V, 4–20 mA) legen Lötbrücke und `ai1_mode`/`ai2_mode` fest
 (Verbindung › Geräte-Einstellungen der Basis). Beides muss zusammenpassen, denn die Firmware kann die Lötbrücken
@@ -79,18 +79,23 @@ Jede Änderung speichert PyST sofort in `~/PyST/einstellungen.json` (Eintrag `"a
 - **PyST-Basis:** Die Basis misst AI1/AI2 mit 20 Hz und meldet sie in `#STAT` (`ai1=1.234V;ai2=…`). PyST fragt etwa
   einmal je Sekunde, solange die Seite offen ist oder Kanäle der Basis aktiv sind. Im Lauf gilt der letzte Wert für
   alle Telegramme bis zum nächsten, also Stufen im Sekundentakt.
-- **Vorschlag für alle Firmwares (PST-Diag 1):** `#CAP;…;ai=AI1,AI2` nennt die Eingänge, `#AI <hz>` schaltet Zeilen
-  `A;<t_ms>;AI1=1.234;AI2=0.501` ein (Spannung an der Klemme in V bzw. mA, `nan` = kein Wert), `#AI 0` aus. Nach dem
-  Start ist das aus, LabVIEW merkt nichts. PyST schickt `#AI 10`, wenn `#CAP` die Eingänge nennt. Die Firmwares können
-  das noch nicht, der Simulator schon.
+- **Mega ab 3.2.0, F446 ab 1.2.0 (PST-Diag 1 §11):** `#CAP;…;ai=A0,…,A15` bzw. `ai=ADC1,ADC2` nennt die Eingänge,
+  `#AI <hz>` schaltet Zeilen `A;<t_ms>;A0=1.234;A1=0.501;…` ein (Spannung an der Klemme in V, `nan` = noch kein
+  Wert), `#AI 0` aus. Nach dem Start ist das aus, LabVIEW merkt nichts. PyST schickt `#AI 10`, wenn `#CAP` die
+  Eingänge nennt, und `#AI 0` beim Trennen (der F446 startet beim Öffnen des Ports nicht neu). Erkannt wird das an
+  `ai=` in `#CAP`, nicht an der Versionsnummer. Im Lauf gilt jeder Wert für die folgenden Telegramme, höchstens 3 s.
 - **Simulator:** `SIM:mega` (A0 … A15) und `SIM` (F446, ADC1/ADC2) liefern A-Zeilen nach dem Vorschlag, `SIM:basis`
   liefert AI1/AI2 in `#STAT` wie die echte Basis. Der erste Eingang steigt mit der Drehzahl (wie ein Öldruck), der
   zweite ändert sich langsam.
 
 ## Grenzen
 
-- Mega 3.1.0 und F446 1.1.0 senden noch keine Analogwerte. Die Einstellungen gehen trotzdem, Werte kommen mit einer
-  Firmware, die `#AI` kann.
+- Mega 3.1.0 und F446 1.1.0 senden keine Analogwerte. Die Einstellungen gehen trotzdem, Werte kommen ab Mega 3.2.0
+  bzw. F446 1.2.0 (Einstellungen › Software & Firmware).
+- Mega: Die Referenz ist die Versorgung des Mega (nominell 5 V, an USB oft 4,7–5,1 V). Für genaue Werte mit
+  Faktor/Offset gegen ein Messgerät abgleichen. Auflösung etwa 5 mV.
+- Mega im Modus D (Dauermessung): mehr als etwa 30 Zeilen je Sekunde passen mit 16 Kanälen nicht durch 115200 Baud,
+  dann fallen A-Zeilen aus (nie Telegramme). PyST fordert 10 je Sekunde an.
 - Die Basis liefert die Werte heute nur etwa einmal je Sekunde.
 - **Dauermessung** (Oszi) zeichnet die Analogwerte noch nicht auf.
 

@@ -1,6 +1,6 @@
 """
-Simulierte Messelektronik: verhaelt sich wie die PST-STM32-Firmware 1.1 bzw. der Arduino-Mega-Sketch
-3.1.0 (Arduino-Protokoll + PST-Diag 1) oder – ohne Diagnose – wie F446 1.0.0 / Mega 3.0.0,
+Simulierte Messelektronik: verhaelt sich wie die PST-STM32-Firmware 1.2 bzw. der Arduino-Mega-Sketch
+3.2.0 (Arduino-Protokoll + PST-Diag 1 + Analogeingaenge '#AI') oder – ohne Diagnose – wie F446 1.0.0 / Mega 3.0.0,
 und simuliert Motor + Rolle, damit PyST ohne Pruefstand getestet werden kann.
 
 Ablauf nach 'm': Motor haelt 3000 1/min, nach 3 s Vollgas bis 11500 1/min, dann Gas weg
@@ -447,7 +447,7 @@ class SimSerial:
                     self.engine.reset()
                     self.streaming = True
             elif c == "v":
-                ver = "3.1.0 vom 26.10.26" if self.diag else "3.0.0 vom 28.03.24"
+                ver = "3.2.0 vom 10.11.26" if self.diag else "3.0.0 vom 28.03.24"
                 self._out(f"Version {ver};\r\nRingspeicher Zuendsignal:5;\r\nRingspeicher Rolle:50;\r\n"
                           "Adresse BME280:76;\r\nThermoelement (1=ja 0=nein):0;\r\n")
             return
@@ -459,7 +459,7 @@ class SimSerial:
         elif c == "s":
             self.streaming = False
         elif c in "v?":
-            fw = "1.1.0" if self.diag else "1.0.0"
+            fw = "1.2.0" if self.diag else "1.0.0"
             self._out(f"PST-STM32 SIMULATOR {fw};\r\nMessfrequenz [Hz]:{self.engine.rate:.0f};\r\n")
 
     def _diag_command(self, line: str):
@@ -468,15 +468,13 @@ class SimSerial:
         cmd = parts[0].upper() if parts else ""
         a = parts[1:]
         if cmd == "?":
-            fw = "PST-Mega 3.1.0 SIM" if self.mega else "PST-STM32 1.1.0 SIM"
+            fw = "PST-Mega 3.2.0 SIM" if self.mega else "PST-STM32 1.2.0 SIM"
             ai = ",".join(self.ai_eingaenge())
             self._out(f"#CAP;proto=1;fw={fw};tick_ns={self.tick_ns:g};ch=I,R;burst_max={self.burst_max()};"
                       f"modes=N,D;set=1" + (f";ai={ai}" if ai else "") + "\r\n")
-        elif cmd == "AI" and a and self.ai_eingaenge():
-            try:
-                hz = int(float(a[0]))
-            except ValueError:
-                hz = -1
+        elif cmd == "AI" and self.ai_eingaenge():
+            # wie Mega 3.2.0 / F446 1.2.0: genau eine ganze Zahl 0 … 50
+            hz = int(a[0]) if len(a) == 1 and a[0].isdigit() and len(a[0]) <= 3 else -1
             if 0 <= hz <= 50:
                 self.ai_hz, self._ai_acc = hz, 0.0
                 self._out(f"#OK;AI;{hz}\r\n")
