@@ -16,7 +16,7 @@ Der Reiter **Messen** ist der Arbeitsplatz am Prüfstand: Lauf starten, Kurve li
 | **Auto-Speichern** | Lauf nach dem Ende sofort in die Datenbank schreiben |
 | Statusfeld | Zustand und Anweisung an den Fahrer (Tabelle unten) |
 | **Verbinden / Trennen** | Messboard verbinden oder trennen |
-| **Lauf-Einstellungen …** | kleines Fenster mit Übersetzung, Filter, Laufgrenzen und **Ø automatisch mitteln**. Darunter steht kurz, was gilt, z. B. „i 6,850 (Hand) · Filter 35 / 15 Pkt.“ |
+| **Lauf-Einstellungen …** | kleines Fenster mit Übersetzung, Filter, Start und Ende des Laufs und **Ø automatisch mitteln**. Darunter steht kurz, was gilt, z. B. „i 6,850 (Hand) · Filter 35 / 15 Pkt.“ |
 | **START  (F1)** | Lauf starten, bei unverändertem Setup erst mit kurzer [Nachfrage](#start-nachfrage). Im Lauf wird der Knopf rot: **Abbrechen  (Esc)**, beim Ausrollen **Ausrollen beenden (Esc)** |
 
 ### Statusfeld
@@ -25,7 +25,8 @@ Der Reiter **Messen** ist der Arbeitsplatz am Prüfstand: Lauf starten, Kurve li
 |---|---|
 | Nicht verbunden – „Verbinden“ drücken | kein Messboard |
 | Verbunden – START drücken (F1) | bereit |
-| GO – Vollgas! | Lauf gestartet, Motor noch unter *n vom Gas* |
+| Klima wird gemessen … | gleich nach START: PyST liest Temperatur und Luftdruck frisch vom Sensor (grau, höchstens 3 s) |
+| GO – Vollgas! | bereit zum Lauf – Vollgas geben. Die Messung beginnt, sobald die Drehzahl 1 s lang steigt |
 | Messung · 9.500 1/min | Kurve wird aufgenommen. Ist das Feld schmal (1280 px), steht nur „Messung …“ |
 | GAS WEG! | *n Stop* erreicht oder Laufende erkannt |
 | GAS WEG – KUPPLUNG ZIEHEN! | dasselbe, wenn danach der Ausrollversuch läuft |
@@ -40,13 +41,41 @@ um.
 
 | Zeitpunkt | groß über dem Diagramm |
 |---|---|
-| START bis *n vom Gas* | **GO – Vollgas!** (grün) |
-| Messung (über *n vom Gas*) | nichts – die Kurve bleibt frei. Das Statusfeld oben zeigt „Messung …“ |
+| gleich nach START | **Klima wird gemessen …** (grau), darunter „Drehzahl halten – gleich kommt GO“. Nur mit **vor jedem Lauf vom Sensor lesen** |
+| danach bis zum Laufbeginn | **GO – Vollgas!** (grün), darunter „Messung beginnt, sobald die Drehzahl 1,0 s lang steigt“ |
+| Messung (ab dem Drehzahlanstieg) | nichts – die Kurve bleibt frei. Das Statusfeld oben zeigt „Messung …“ |
 | Laufende, ohne Ausrollversuch | **GAS WEG!** (rot), „n Stop … 1/min erreicht – Lauf wird ausgewertet“. Steht mindestens 2 s, danach gleich das große Ergebnis |
 | Laufende, mit [Ausrollversuch](Ausrollversuch.md) | **GAS WEG – KUPPLUNG ZIEHEN!** (rot), darunter „ausrollen lassen … 1/min“, bis das Ausrollen fertig ist. Dann das große Ergebnis |
 
-Ist die Option aus, erscheint wie bisher nur das große **GAS WEG**. Findet PyST nach 120 s kein Laufende, bricht es ab
+Ist die Option aus, erscheint wie bisher nur das große **GAS WEG**. Steigt die Drehzahl nach GO 60 s lang nicht, bricht
+PyST ab („Kein Drehzahlanstieg nach 60 s – abgebrochen“). Findet es 120 s nach dem Laufbeginn kein Laufende, ebenso
 („Kein Laufende nach 120 s – abgebrochen“).
+
+### Ablauf eines Laufs
+
+![Klima wird gemessen …](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_start_1_klima.png)
+
+1. **START** (F1, bzw. Zangentaste **Neuer Lauf**). Bei unverändertem Setup kommt erst die
+   [START-Nachfrage](#start-nachfrage).
+2. **Klima wird gemessen …**: PyST fordert eine frische Messung vom Klimasensor (BME280/BMP280 auf der Basis) an und
+   nimmt nur einen Wert, der nach dem START gemessen wurde. Antwortet der Sensor nicht innerhalb von 3 s, rechnet der
+   Lauf mit den eingetragenen Werten; im Ergebnis steht dann „Klima: eingetragener Wert … (kein Sensorwert)“. Ist
+   **vor jedem Lauf vom Sensor lesen** (Einstellungen › Rolle/Lauf › Klima) aus, entfällt dieser Schritt.
+3. **GO – Vollgas!**: Jetzt Vollgas geben.
+4. **Laufbeginn:** Steigt die Motordrehzahl (Rolle × Übersetzung) **1 s lang** durchgehend und um mindestens
+   **150 1/min**, beginnt die Messung. Die Kurve beginnt am **Anfang** dieser Sekunde, es geht nichts verloren. Was
+   davor war (Halten), gehört nicht zum Lauf. Beide Werte stehen unter **Lauf-Einstellungen …** › LAUF
+   (**Start: steigt über [s]**, **Start: Anstieg mind. [1/min]**).
+5. **Messung:** GO verschwindet, über der Kurve steht nichts.
+6. **Laufende:** Ab *n vom Gas* prüft PyST auf fallende Drehzahl (Gas weg) bzw. endet bei *n Stop* – **GAS WEG!**,
+   danach das große Ergebnis.
+
+| GO – Vollgas! | Messung |
+|---|---|
+| ![GO – Vollgas!](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_start_2_go.png) | ![Messung](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_start_3_messung.png) |
+
+*n vom Gas* startet den Lauf nicht mehr. Es ist nur noch die Drehzahl, ab der PyST auf fallende Drehzahl (= Laufende)
+prüft.
 
 ![Großes Ergebnis nach dem Lauf](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_ergebnis_gross.png)
 
@@ -70,7 +99,7 @@ Ein kleines Fenster mit den Werten, die man zwischen zwei Läufen am häufigsten
 |---|---|
 | **ÜBERSETZUNG  nKW/nRolle** | Auswahl **von Hand (Wert eintragen oder einmessen)** oder **Funkenmessung (aus Zündung/Rolle jedes Laufs)**. Feld **Übersetzung** (bei Funkenmessung heißt es **Startwert**). Knöpfe **Übersetzung einmessen …** und **Live abgleichen …**. Siehe [Übersetzung](Übersetzung.md) |
 | **FILTER** | **Filter in** Sekunden oder Messpunkte (wie LabVIEW), die zwei Filterwerte, Knopf **Standard** (1,75 s / 0,75 s) |
-| **LAUFGRENZEN** | **n vom Gas [1/min]** und **n Stop [1/min] (0 = aus)** |
+| **LAUF  Start und Ende** | **Start: steigt über [s]** (Standard 1,0) und **Start: Anstieg mind. [1/min]** (Standard 150): nach GO beginnt der Lauf, sobald die Drehzahl so lange und so viel steigt. **n vom Gas [1/min]**: ab hier wird auf fallende Drehzahl (= Laufende) geprüft. **n Stop [1/min] (0 = aus)** |
 | **DIAGRAMM** | Haken **Ø automatisch mitteln** (Standard aus, wirkt sofort, auch im Menü **Ansicht**), siehe [unten](#ø-automatisch-mitteln) |
 | Link | **Alle Einstellungen › Rolle/Lauf …** |
 
@@ -124,8 +153,8 @@ und es noch nicht eingetragen, ändert man es gleich hier.
 ### UMGEBUNG  (PST-Basis, BME280)
 
 Eine schmale Zeile **T … °C  p … mbar** mit dem Alter des Werts („noch nicht gelesen“, „gelesen gerade eben“, „vor x min“,
-„von Hand eingetragen“). PyST liest das Klima nur zwischen den Läufen: beim START, von Hand und im Leerlauf alle 5 min,
-solange der Reiter Messen offen ist.
+„von Hand eingetragen“). PyST liest das Klima nur zwischen den Läufen: nach jedem START frisch („Klima wird gemessen
+…“), von Hand und im Leerlauf alle 5 min, solange der Reiter Messen offen ist.
 
 ### LIVE · Belegung für &lt;Fahrzeug&gt;
 
@@ -271,8 +300,14 @@ Ein PNG legt PyST nicht mehr an.
 
 - Nach einem WLAN-Abriss zur Basis verbindet PyST selbst wieder und meldet sich neu an. Eine abgelehnte Anmeldung
   wiederholt es nicht.
+- **Laufbeginn:** Die Drehzahl gilt als steigend, wenn im Fenster (1 s) drei Dinge zugleich stimmen: die robuste
+  Steigung (Median aller Punktpaare) ergibt mindestens 150 1/min, sie liegt deutlich über dem Messrauschen im Fenster
+  (5-fache Unsicherheit), und jedes Fünftel des Fensters liegt höher als das vorige. Halten mit Rauschen oder einzelne
+  Ausreißer starten so keinen Lauf.
 - **Laufende:** erste Verzögerung oberhalb *n vom Gas* oder *n Stop*. Der Vorlauf bis zur letzten Verzögerung unter
-  *n vom Gas* wird abgeschnitten. Details: [Rechenweg](Rechenweg.md).
+  *n vom Gas* wird abgeschnitten (seit dem neuen Laufbeginn meist nichts mehr). Details: [Rechenweg](Rechenweg.md).
+- `lauf.json` enthält `klima_quelle` („Sensor 14:30:05“ bzw. „eingetragen (kein Sensorwert)“ / „eingetragen (Sensor
+  aus)“), `klima_zeit` und `laufbeginn`.
 - Die Spalte **Fehler** zeigt den Anteil gestörter Messpunkte (Rolle, Zündung, Doppelimpuls, eingefrorener Wert).
   Siehe [Fehlersuche](Fehlersuche.md).
 - **Neu rechnen** nimmt die aktuellen Prüfstands-, Filter- und Verlustwerte und das gespeicherte Klima des Laufs.

@@ -42,7 +42,8 @@ Unter **Einstellungen › Rolle/Lauf** eintragen:
 | Rollenträgheit J [kgm²] | Trägheit der Rolle |
 | Zündung [Imp/U] | Zündimpulse je Kurbelwellenumdrehung |
 | Übersetzung nKW/nRolle | Motordrehzahl ÷ Rollendrehzahl, siehe [Übersetzung](Übersetzung.md) |
-| n vom Gas [1/min] | Schwelle für das Laufende, **muss über der Haltedrehzahl liegen** |
+| Start: steigt über [s] / Start: Anstieg mind. [1/min] | Laufbeginn: nach GO beginnt die Messung, sobald die Drehzahl so lange und so viel steigt (Standard 1,0 s / 150 1/min) |
+| n vom Gas [1/min] | ab hier wird auf fallende Drehzahl (= Laufende) geprüft, **muss über der Haltedrehzahl liegen** |
 | n Stop [1/min] (0 = aus) | ab hier zeigt PyST **GAS WEG** und beendet die Kurve |
 
 Die Filter in Sekunden (Standard 1,75 s / 0,75 s) passen sich der Messfrequenz selbst an.
@@ -56,13 +57,15 @@ Siehe [Fahrzeuge und Setups](Fahrzeuge-und-Setups.md).
 
 ## 5. Der erste Lauf
 
-1. Motor im Messgang **unter** *n vom Gas* halten.
+1. Motor im Messgang ruhig halten (**unter** *n vom Gas*).
 2. **START (F1)** drücken. Ist das Setup unverändert, fragt PyST kurz „Setup unverändert – Änderungen eintragen?“:
    nichts umgebaut → **Unverändert starten** (Enter oder F1), sonst die neuen Werte eintragen und **Übernehmen und
    starten**. Abschaltbar, siehe [Messen](Messen.md#start-nachfrage).
-3. PyST liest das Klima (wenn eingeschaltet) und zeigt **„GO – Vollgas!“** (grün), auch groß über dem Diagramm.
-4. Vollgas. Über *n vom Gas* verschwindet das große GO, im Statusfeld steht **„Messung …“** (gelb), die Live-Kurve
-   wächst schwarz bzw. weiß mit.
+3. **„Klima wird gemessen …“** (grau, groß über dem Diagramm): PyST liest Temperatur und Luftdruck frisch vom Sensor
+   (wenn eingeschaltet, höchstens 3 s). Drehzahl weiter halten.
+4. **„GO – Vollgas!“** (grün, auch groß): Vollgas geben. Sobald die Drehzahl **1 s lang steigt**, beginnt die
+   Messung – die Kurve beginnt am Anfang dieser Sekunde. Das große GO verschwindet, im Statusfeld steht
+   **„Messung …“** (gelb), die Live-Kurve wächst schwarz bzw. weiß mit.
 5. Bei *n Stop* erscheint **GAS WEG** (rot), groß über dem Diagramm. Gas weg.
 6. PyST wertet aus. Pmax und Mmax stehen groß über dem Diagramm (weg mit Klick oder Esc), außerdem im Feld oben
    (z. B. „32.0 PS bei 10000 1/min“), unter dem Diagramm und rechts unten unter **ERGEBNIS**. Mit **Auto-Speichern**

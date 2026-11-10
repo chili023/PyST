@@ -107,8 +107,10 @@ docs/                  Roadmap, Zündsignal-Diagnose, Firmware-Messung, Protokol
   bei 20 Hz entsprechen bei 60 Hz 105/45. PyST stellt die Filter standardmäßig in **Sekunden** ein
   (1,75 s / 0,75 s = LabVIEW 35/15 bei 20 Hz) und rechnet sie für jede Messfrequenz um; der Modus
   „Messpunkte (wie LabVIEW)“ bleibt wählbar.
+- **Laufbeginn:** Nach START liest PyST das Klima frisch („Klima wird gemessen …“), dann kommt **GO – Vollgas!**;
+  die Messung beginnt, sobald die Drehzahl 1 s lang steigt.
 - **„n vom Gas“** ist die Schwelle, ab der ein Laufende (fallende Drehzahl) erkannt wird – sie muss über
-  der Haltedrehzahl liegen.
+  der Haltedrehzahl liegen. Den Lauf startet sie nicht mehr.
 - PyST steuert den Motor nicht. „n Stop“ beendet nur die Aufzeichnung und zeigt **GAS WEG**.
 
 ## Herkunft und Lizenz

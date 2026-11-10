@@ -34,7 +34,8 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 **3. Groß über dem Diagramm**
 - **Anweisungen groß** (Standard an): groß und farbig über dem Diagramm, mit dem Grund darunter, immer in derselben
   Schriftgröße (lange Texte brechen um):
-  - **GO – Vollgas!** (grün) bis die Messung beginnt (*n vom Gas*), dann ist sie weg.
+  - **Klima wird gemessen …** (grau) gleich nach START, dann **GO – Vollgas!** (grün) bis die Messung beginnt
+    (Drehzahl steigt 1 s lang, siehe Punkt 10), dann ist sie weg.
   - **Während der Messung steht nichts Großes über der Kurve.** Nur das Statusfeld oben zeigt „Messung …“.
   - Am Laufende ohne Ausrollversuch **GAS WEG!** (rot, mindestens 2 s), danach gleich das große Ergebnis.
   - Mit Ausrollversuch **GAS WEG – KUPPLUNG ZIEHEN!** (rot), bis das Ausrollen fertig ist, dann das große Ergebnis.
@@ -114,7 +115,42 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 - Angepinnt zieht man wie bisher am Teiler. Es gibt eine Breite für beide Zustände (240 bis 900 px), PyST merkt sie
   sich (`"laeufe_leiste"` in `einstellungen.json`). Dasselbe gilt für die Seitenleiste „Läufe & Kanäle“ der Auswertung.
 
+**10. Neuer Ablauf beim Laufstart: Klima → GO → Drehzahlanstieg**
+- Nach **START** (und der START-Nachfrage) bzw. der Zangentaste **Neuer Lauf**: **Klima wird gemessen …** (Statusfeld
+  und groß über dem Diagramm, grau). PyST fordert eine frische Messung vom BME280/BMP280 an und nimmt nur einen Wert,
+  der nach dem START gemessen wurde. Antwortet der Sensor nicht binnen 3 s, rechnet der Lauf mit den eingetragenen
+  Werten; das steht im Ergebnis („Klima: eingetragener Wert … (kein Sensorwert)“). Ist **vor jedem Lauf vom Sensor
+  lesen** aus, entfällt die Phase.
+- Dann **GO – Vollgas!**. Die Messung beginnt, sobald die Motordrehzahl (Rolle × Übersetzung) **1 s lang steigt**,
+  um mindestens **150 1/min**. Die Kurve beginnt am **Anfang** dieser Sekunde (Vorpuffer, nichts geht verloren),
+  das Halten davor gehört nicht mehr zum Lauf. Ab dem Laufbeginn ist GO weg.
+- Beide Werte sind einstellbar: **Start: steigt über [s]** und **Start: Anstieg mind. [1/min]** unter
+  **Lauf-Einstellungen …** (Abschnitt **LAUF  Start und Ende**) und Einstellungen › Rolle/Lauf, mit Tooltip; sie
+  stehen in `einstellungen.json` und in `lauf.json` (`parameter`).
+- **n vom Gas** startet den Lauf nicht mehr. Es ist nur noch die Drehzahl, ab der auf fallende Drehzahl (= Laufende)
+  geprüft wird. *n Stop*, Laufende und Ausrollversuch sind unverändert.
+- Steigt die Drehzahl nach GO 60 s nicht, bricht PyST ab („Kein Drehzahlanstieg nach 60 s – abgebrochen“). Die
+  120 s bis zum Laufende zählen jetzt ab dem Laufbeginn.
+- `lauf.json` hat neu `klima_quelle` („Sensor 14:30:05“, „eingetragen (kein Sensorwert)“, „eingetragen (Sensor
+  aus)“), `klima_zeit` und `laufbeginn`.
+- Die Kommandozeile (`python -m pyst run`) läuft genauso ab und kennt `--start-anstieg-s` und `--start-anstieg-min`.
+
+| Klima wird gemessen … | GO – Vollgas! |
+|---|---|
+| ![Klima wird gemessen](bilder/v142_start_1_klima.png) | ![GO](bilder/v142_start_2_go.png) |
+
 ## Hinweise und Annahmen
+
+- **Laufbeginn:** Die Drehzahl gilt als steigend, wenn im Fenster drei Bedingungen zugleich erfüllt sind: robuste
+  Steigung (Theil-Sen, Median aller Punktpaar-Steigungen) × Fensterlänge ≥ Mindestanstieg; diese Steigung liegt
+  mindestens 5 Standardfehler über 0 (das Rauschen schätzt PyST robust aus dem Fenster selbst); und jede der fünf
+  Teilstrecken des Fensters liegt um mindestens ein Viertel ihres Anteils am Anstieg höher als die vorige (Median je
+  Teilstrecke). In Simulationen mit Rauschen wie an den Mai-Läufen (20 Hz bis 65 1/min, 60 Hz bis 150 1/min, mit
+  Ausreißern) löst Halten in 2 Minuten nie aus; Vollgas mit 230 bis 3000 1/min pro Sekunde löst nach etwa 0,5 bis
+  1,5 s aus. An der Hardware ist das noch nicht bestätigt.
+- **Klima „frisch“:** Die Firmware liest den Sensor beim Befehl `e` neu, die Antwort ist also jünger als der START.
+  Ohne Sensor antwortet die F446-Firmware mit Normwerten (20 °C, 1013,25 mbar); PyST nimmt sie wie bisher als
+  Sensorwert.
 
 - **Rollen-Kalibrierung:** Mit abgehobenem Rad misst der Assistent nur die Verluste der Rolle. Sie gelten für den
   Prüfstand (Einstellungen, `"rollen_kalibrierung"` in `einstellungen.json`) und werden bei jedem Lauf in `lauf.json`
@@ -131,12 +167,14 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 1. Ordner mit `git pull` aktualisieren oder das ZIP neu laden.
 2. Wie gewohnt starten (`start_mac.command`, `start_linux.sh`, `start_windows.bat`). Neue Abhängigkeiten gibt es nicht.
 3. Datenbank, Läufe und Einstellungen in `~/PyST` bleiben erhalten. Die neuen Schalter starten mit ihrem Standard
-   (Ergebnis groß an, Anweisungen groß an, Legende aus, Nachfrage vor START an, Ø automatisch mitteln aus).
+   (Ergebnis groß an, Anweisungen groß an, Legende aus, Nachfrage vor START an, Ø automatisch mitteln aus, Start:
+   1,0 s / 150 1/min).
 4. Von 1.2 oder älter: zuerst die Hinweise in den [Release Notes 1.4.1](RELEASE_NOTES_1.4.1.md#update-von-12).
 
 ## Noch nicht an der Hardware bestätigt
 
 - Rollen-Kalibrierung mit abgehobenem Rad und die Aufteilung der Verluste.
+- Laufbeginn am Drehzahlanstieg und die Klima-Phase nach START (nur Simulator und Tests).
 - Aus 1.4.1: Mega und F446 aus PyST flashen, Übersetzungsart **Funkenmessung**, Zangentasten im Abgleichfenster,
   Updates im Format 2 und Firmware 0.4.0 von Basis, Zange und Basis-ESP.
 
@@ -152,6 +190,6 @@ Bitte Rückmeldungen über die [Issues](https://github.com/chili023/PyST/issues)
 ## Tests
 
 Automatische Tests unter Linux mit Python 3 und PySide6, dazu Oberflächen-Rauchtests im Simulator, in Tag und Nacht
-und bei 1280 × 800. Stand der Freigabe: 633 Tests bestanden, 1 übersprungen.
+und bei 1280 × 800. Stand der Freigabe: 646 Tests bestanden, 1 übersprungen.
 
 Der Stand 1.4.1 liegt unter dem Tag `v1.4.1`.

@@ -80,6 +80,11 @@ def write_side_events(folder: str, t0: float, events) -> Tuple[int, int]:
     return len(marks), len(other)
 
 
+def _zeit_iso(t: float) -> str:
+    """PC-Zeit -> ISO-Text fuer lauf.json ("" = keine)."""
+    return _dt.datetime.fromtimestamp(t).isoformat(timespec="seconds") if t and t > 1e9 else ""
+
+
 def default_dir() -> str:
     from .db import base_dir
     return os.path.join(base_dir(), "messungen")
@@ -128,6 +133,11 @@ def save_run(ctrl, vehicle: str = "", firmware: str = "", base_dir: str = "") ->
         "port": ctrl.link.port,
         "parameter": asdict(p),
         "klima": ctrl.climate,
+        # woher T/p kommen: "Sensor 14:30:05" (frisch nach START gelesen) bzw. "eingetragen (…)"
+        "klima_quelle": getattr(ctrl, "klima_quelle", ""),
+        "klima_zeit": _zeit_iso(getattr(ctrl, "klima_zeit", 0.0)),
+        # Laufbeginn: Drehzahl stieg start_anstieg_s lang, die Daten beginnen am Anfang dieses Fensters
+        "laufbeginn": _zeit_iso(getattr(ctrl, "run_start_t", 0.0)),
         "com_verloren": ctrl.link.lost,
         "telegramme": len(ctrl.frames),
         "rusefi": None if not ecu else {

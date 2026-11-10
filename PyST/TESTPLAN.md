@@ -57,7 +57,8 @@ Ein simulierter Lauf dauert ca. 15 s.
 
 1. Motor warmfahren, gleicher Gang, gleiche Reifentemperatur wie bei den anderen Tests.
 2. Klimadaten: automatisch (Sensor) – in allen Tests gleich lassen.
-3. Pro Lauf: Drehzahl ~3000 halten (unter n vom Gas!) → START → bei GO Vollgas → bei 8000 Gas weg.
+3. Pro Lauf: Drehzahl ~3000 halten (unter n vom Gas!) → START → „Klima wird gemessen …“ abwarten → bei GO Vollgas
+   (die Messung beginnt, sobald die Drehzahl 1 s lang steigt) → bei 8000 Gas weg.
 4. **Auto-Speichern an** (LabVIEW legt `JJMMTT_HHMMSS_PS_n.xml` ab, PyST einen Ordner
    in `~/PyST/messungen/`).
 5. Notieren: Pmax, n(Pmax), COM-Fehlerrate, Auffälligkeiten (Aussetzer, springende Drehzahl).

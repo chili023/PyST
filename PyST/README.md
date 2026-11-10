@@ -7,7 +7,7 @@ PC-Software für den Leistungsprüfstand: misst, rechnet und wertet aus mit der 
 Läuft auf **Mac**, **Linux/Raspberry Pi** (und Windows).
 
 - steuert die Messelektronik: Klima lesen (`e`), Messung starten (`m`) und stoppen (`s`)
-- Lauf mit **fester Übersetzung**, Start bei *n vom Gas*, Ende bei **n Stop** (z.B. 8000 1/min) oder beim Gaswegnehmen
+- Lauf mit **fester Übersetzung**, Start, sobald die Drehzahl nach GO 1 s lang steigt, Ende bei **n Stop** (z.B. 8000 1/min) oder beim Gaswegnehmen (ab *n vom Gas*)
 - Prüfstandsdaten: Rollengeber, Rollenumfang, Trägheit, Zündimpulse, Filter, Verlustmoment
 - **Ausrollversuch** (Einstellungen › Rolle/Lauf, Gruppe „Verluste – Ausrollversuch“): nach dem Lauf Kupplung ziehen,
   aus dem Ausrollen der Rolle das Verlustmoment bestimmen – Ergebnis Radleistung und Motorleistung getrennt; dazu
@@ -39,7 +39,7 @@ Ausführliche Anleitung zu jeder Funktion: **[PyST-Wiki](https://github.com/chil
 
 | Reiter | Inhalt |
 |---|---|
-| **Messen** | Kopfzeile Fahrzeug · Setup · Notiz · Auto-Speichern · Status · **Verbinden/Trennen** · **Lauf-Einstellungen …** (Übersetzung, Filter, Laufgrenzen, Ø automatisch mitteln) · **START (F1)** (im Lauf rot: Abbrechen (Esc)). Zeile **SETUP-WERTE** (bis 8 Felder, ändern → als neues Setup speichern oder nur für diesen Lauf; bei unverändertem Setup fragt START „Setup unverändert – Änderungen eintragen?“). Leistungsdiagramm mit unterem Diagramm, „Kurven ▾“, Achsgrenzen, Fähnchen am Cursor je Kurve, große Anweisungen (GO bis *n vom Gas*, in der Messung nichts, am Ende GAS WEG bzw. GAS WEG – KUPPLUNG ZIEHEN) und großes Ergebnis Pmax/Mmax, Legende (Option). Rechts Umgebung (BME280) in einer Zeile, Drehzahl groß, 0 bis 12 **LIVE**-Kacheln je Fahrzeug (ab 5 zweispaltig; Kanal und Balkengrenzen wählbar; mit der Maus im Diagramm die Werte des letzten Laufs am Cursor), Ergebnis. Seitenleiste **Läufe** (Breite am Rand ziehbar, auch nicht angepinnt): 5 Plätze, gesperrt (Schloss) oder rollierend, **＋** holt alte Läufe und Mittelwerte gesperrt ins Diagramm, **Ø automatisch mitteln** unter Lauf-Einstellungen (Mittelwert der Läufe im Diagramm mit gleichem Setup, mit Band, nach jedem Lauf neu, belegt keinen Platz, **speichern** legt einen Mittelwert-Lauf an) |
+| **Messen** | Kopfzeile Fahrzeug · Setup · Notiz · Auto-Speichern · Status · **Verbinden/Trennen** · **Lauf-Einstellungen …** (Übersetzung, Filter, Laufgrenzen, Ø automatisch mitteln) · **START (F1)** (im Lauf rot: Abbrechen (Esc)). Zeile **SETUP-WERTE** (bis 8 Felder, ändern → als neues Setup speichern oder nur für diesen Lauf; bei unverändertem Setup fragt START „Setup unverändert – Änderungen eintragen?“). Leistungsdiagramm mit unterem Diagramm, „Kurven ▾“, Achsgrenzen, Fähnchen am Cursor je Kurve, große Anweisungen (Klima wird gemessen …, GO bis zum Drehzahlanstieg, in der Messung nichts, am Ende GAS WEG bzw. GAS WEG – KUPPLUNG ZIEHEN) und großes Ergebnis Pmax/Mmax, Legende (Option). Rechts Umgebung (BME280) in einer Zeile, Drehzahl groß, 0 bis 12 **LIVE**-Kacheln je Fahrzeug (ab 5 zweispaltig; Kanal und Balkengrenzen wählbar; mit der Maus im Diagramm die Werte des letzten Laufs am Cursor), Ergebnis. Seitenleiste **Läufe** (Breite am Rand ziehbar, auch nicht angepinnt): 5 Plätze, gesperrt (Schloss) oder rollierend, **＋** holt alte Läufe und Mittelwerte gesperrt ins Diagramm, **Ø automatisch mitteln** unter Lauf-Einstellungen (Mittelwert der Läufe im Diagramm mit gleichem Setup, mit Band, nach jedem Lauf neu, belegt keinen Platz, **speichern** legt einen Mittelwert-Lauf an) |
 | **Fahrzeuge & Setups** | Fahrzeuge (Hersteller, Modell, Gemischaufbereitung, Motor …) und Setups (Motor, Vergaser, Einspritzung/ECU, Zündung, Antrieb, Ein-/Auslass, Kraftstoff). Kopieren, „Für neue Läufe verwenden“ |
 | **Auswertung** | Läufe überlagern wie MegaLogViewer: bis 4 Felder, X-Achse Zeit oder Drehzahl, Cursor mit Maus und ←/→. Laufleiste **ANGEZEIGTE LÄUFE** mit Setup-Spalten (Änderungen gelb), **Mittelwert bilden …**, rechts **Werte am Cursor** und **Setup-Vergleich**. Import, PDF-Bericht, CSV |
 | **Oszi / Dauermessung** | Fehlersuche an Zündung und Rolle: Dauermessung mit Markern (F2), Linienschreiber, Software-Trigger, Ereignisliste, Flanken-Ansicht (PST-Diag 1), Geräte-Einstellungen |
@@ -579,18 +579,22 @@ Alle Prüfstandsparameter lassen sich überschreiben, z.B. `--ratio 6.85 --inert
 3. Drehzahl unter *n vom Gas* halten → **START (F1)** (bei unverändertem Setup erst die kurze Nachfrage „Setup
    unverändert – Änderungen eintragen?“: **Unverändert starten** mit Enter/F1, **Übernehmen und starten** nach einer
    Änderung, **Abbrechen**; abschaltbar unter Einstellungen › Rolle/Lauf, die Zangentaste „Neuer Lauf“ fragt nie)
-   → Klima wird gelesen → Statusfeld in der Kopfzeile **GO – Vollgas!** (grün)
-4. Über *n vom Gas* beginnt die Messung (Statusfeld „Messung …“, gelb), ab *n Stop* steht **GAS WEG!** (rot) im
-   Statusfeld. Mit „Anweisungen groß“ (Standard) steht zusätzlich groß über dem Diagramm: **GO – Vollgas!** bis
-   *n vom Gas*, während der Messung nichts, am Laufende **GAS WEG!** (mindestens 2 s) bzw. mit Ausrollversuch
-   **GAS WEG – KUPPLUNG ZIEHEN!** bis das Ausrollen fertig ist. Ohne die Option nur GAS WEG.
+   → **Klima wird gemessen …** (frischer Wert vom BME280/BMP280, höchstens 3 s, sonst gilt der eingetragene Wert;
+   entfällt, wenn „vor jedem Lauf vom Sensor lesen“ aus ist) → Statusfeld in der Kopfzeile **GO – Vollgas!** (grün)
+4. Vollgas: Sobald die Motordrehzahl **1 s lang steigt** (mindestens 150 1/min, beides unter Lauf-Einstellungen …
+   einstellbar), beginnt die Messung am Anfang dieser Sekunde (Statusfeld „Messung …“, gelb). Kommt nach GO 60 s kein
+   Anstieg, bricht PyST ab. Ab *n vom Gas* wird auf das Laufende (fallende Drehzahl) geprüft, ab *n Stop* steht
+   **GAS WEG!** (rot) im Statusfeld. Mit „Anweisungen groß“ (Standard) steht zusätzlich groß über dem Diagramm:
+   **Klima wird gemessen …**, **GO – Vollgas!** bis zum Laufbeginn, während der Messung nichts, am Laufende
+   **GAS WEG!** (mindestens 2 s) bzw. mit Ausrollversuch **GAS WEG – KUPPLUNG ZIEHEN!** bis das Ausrollen fertig
+   ist. Ohne die Option nur GAS WEG.
 5. Danach wird das Ergebnis angezeigt (mit „Ergebnis groß“ Pmax/Mmax groß über dem Diagramm, weg mit Klick, START oder Esc) und
    (Auto-Speichern) unter `~/PyST/messungen/` abgelegt.
 6. **Abbrechen (Esc)** jederzeit (der START-Knopf wird im Lauf dazu rot). Mit Ausrollversuch: nach dem Laufende Kupplung ziehen (siehe „Ausrollversuch“);
    Esc beendet dann nur das Ausrollen, der Lauf bleibt.
 
-*n vom Gas* muss über der Haltedrehzahl liegen. Sonst erkennt die Auswertung (wie LabVIEW) schon
-beim Halten ein „Laufende“, weil die Drehzahl dort schwankt.
+*n vom Gas* startet den Lauf nicht mehr (seit 1.4.2), es muss aber weiter über der Haltedrehzahl liegen: Sonst
+erkennt die Auswertung (wie LabVIEW) bei schwankender Drehzahl zu früh ein „Laufende“.
 
 ## Rechenweg (aus LabVIEW 3.2.1 übernommen)
 
@@ -602,6 +606,9 @@ beim Halten ein „Laufende“, weil die Drehzahl dort schwankt.
 - *n vom Gas* ist nur die Schwelle für die Ende-Erkennung: Der Lauf endet bei der ersten fallenden Drehzahl
   oberhalb von *n vom Gas* (oder bei *n Stop*). Unter der Schwelle wird nichts abgeschnitten. Entfernt wird nur
   der Vorlauf bis zur letzten fallenden Drehzahl unterhalb der Schwelle (das Halten vor dem Gasgeben).
+- Laufbeginn (PyST): aufgezeichnet wird ab dem Anfang des Fensters, in dem die Drehzahl 1 s lang robust steigt
+  (Theil-Sen-Steigung ≥ 150 1/min pro Fenster, 5 Standardfehler über dem Rauschen, jede Fünftel-Teilstrecke höher als
+  die vorige; `runner.anstieg_beginn`).
 
 Details und Quellenhinweise stehen in `pyst/physics.py`.
 

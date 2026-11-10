@@ -23,7 +23,10 @@ def add_param_args(ap, defaults: physics.DynoParams):
     for name, help_ in [("inkr", "Rollengeber Inkr/U"), ("roll_circ", "Rollenumfang [m]"),
                         ("inertia", "Rollentraegheit [kgm2]"), ("imp", "Zuendimpulse/U"),
                         ("ratio", "Uebersetzung nKW/nRolle"), ("ma", "Gleitender Mittelwert"),
-                        ("dq", "Differenzenquotient"), ("n_min", "n vom Gas / Startschwelle [1/min]"),
+                        ("dq", "Differenzenquotient"),
+                        ("start_anstieg_s", "Laufbeginn: Drehzahl steigt so lange [s]"),
+                        ("start_anstieg_min", "Laufbeginn: Anstieg mindestens [1/min]"),
+                        ("n_min", "n vom Gas: ab hier Laufende pruefen [1/min]"),
                         ("n_stop", "n Stop [1/min], 0 = aus"), ("m0", "Verlustmoment M0 [Nm]"),
                         ("m1", "Verlustmoment M1 [Nm]"), ("n1", "Rollendrehzahl n1 [1/min]"),
                         ("temp_c", "Lufttemperatur [degC]"), ("p_mbar", "Luftdruck [mbar]")]:
@@ -45,7 +48,7 @@ def cmd_ports(_args):
 
 
 def cmd_run(args):
-    from .runner import DONE, ABORTED, RunController
+    from .runner import ABORTED, DONE, KLIMA, RUN, WAIT, RunController
     port = args.port or guess_port()
     if not port:
         sys.exit("Kein Port gefunden. --port angeben oder --port SIM fuer den Simulator.")
@@ -58,12 +61,23 @@ def cmd_run(args):
     print(link.info() or "(keine Info-Antwort)")
     ctrl = RunController(link, p, auto_climate=not args.no_climate)
     ctrl.start()
-    print(ctrl.message)
-    print("GO – Vollgas, sobald bereit. Strg+C bricht ab.")
+    # Ablauf wie in der Oberflaeche: Klima wird gemessen … -> GO – Vollgas! -> Messung ab Drehzahlanstieg
+    zustand = None
     last_print = 0.0
     try:
         while ctrl.state not in (DONE, ABORTED):
             ctrl.poll()
+            if ctrl.state != zustand:
+                zustand = ctrl.state
+                if zustand == KLIMA:
+                    print("Klima wird gemessen …")
+                elif zustand == WAIT:
+                    if ctrl.message:
+                        print(ctrl.message)
+                    print(f"GO – Vollgas! Die Messung beginnt, sobald die Drehzahl {p.start_anstieg_s:g} s lang "
+                          f"steigt (mind. {p.start_anstieg_min:.0f} 1/min). Strg+C bricht ab.")
+                elif zustand == RUN:
+                    print("Laufbeginn erkannt – Messung läuft")
             if time.time() - last_print > 0.5:
                 last_print = time.time()
                 lv = ctrl.live

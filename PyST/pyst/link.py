@@ -833,13 +833,14 @@ class DynoLink(BasisCommands):
             self.drain_frames()
             self.last_frame_t = 0.0              # sonst gilt er noch 0,5 s als "sendet"
 
-    def climate(self) -> Optional[Tuple[float, float, float]]:
-        """Klimadaten wie LabVIEW ('e'); stoppt eine laufende Ausgabe. -> (degC, mbar, %)"""
+    def climate(self, timeout: float = 0.7) -> Optional[Tuple[float, float, float]]:
+        """Klimadaten wie LabVIEW ('e', die Firmware liest den Sensor dabei neu); stoppt eine laufende Ausgabe.
+        -> (degC, mbar, %), None = keine Antwort binnen timeout [s]."""
         with self._cmd_lock:
             self.ensure_stopped()
             self._flush()
             self.send("e")
-            end = time.time() + 0.7
+            end = time.time() + timeout
             while time.time() < end:                  # zurueck, sobald die Antwort da ist
                 try:
                     line = self.text_lines.get(timeout=0.02)
