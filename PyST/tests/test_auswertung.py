@@ -21,6 +21,7 @@ from pyst import mittelwert as mw  # noqa: E402
 from pyst import theme  # noqa: E402
 from pyst.channels import Channel  # noqa: E402
 from pyst.cursorwerte import bereich_runden, dez_fuer, wert_bei  # noqa: E402
+from pyst.kacheln import zahl  # noqa: E402
 from pyst.lauf_dialog import LaufSetupDialog, geaenderte_felder, schnappschuss_nachfuehren  # noqa: E402
 from pyst.laufleiste import (SCHWELLE_CHIPS, Zelle, chips_modus, datum_text, kurz_titel, reihenfolge,  # noqa: E402
                              schnellwert_zellen, zeit_text)
@@ -307,6 +308,31 @@ class Auswertung(unittest.TestCase):
         p = DynoPlot()
         self.assertEqual(p.viewportUpdateMode(), QtWidgets.QGraphicsView.FullViewportUpdate)
         p.deleteLater()
+
+    def test_cursor_werte_sofort_wie_in_messen(self):
+        """Jede Mausbewegung schreibt die Werte rechts sofort (kein Timer, der bei laufender Maus nie feuert) und tauscht
+        nur die Zahlen; Bereiche und Kanalauswahl bleiben, bis sich Laeufe oder Felder aendern."""
+        import time as _t
+        v = self.v
+        v.add_runs(self.ids[:2])
+        pump(0.1)
+        k = next(k for k in v.cursor.kacheln if k.isVisible() and k.laeufe)
+        plan = v._cursor_plan
+        self.assertIsNotNone(plan)
+        dauer = []
+        for n in range(4000, 8600, 150):                                  # Maus faehrt durch, ohne Ereignisschleife
+            t0 = _t.perf_counter()
+            v._set_cursor_x(float(n), frei=True)
+            dauer.append(_t.perf_counter() - t0)
+            self.assertEqual(v.cursor.x_kachel.wert.text(), zahl(float(n)))
+            erwartet = [zahl(w, k.dez) for _f, _b, w in v._laufwerte(k.kanal, v._runs_shown(), v._primary(), n)]
+            self.assertEqual([t for _b, t in k.lauf_texte()], erwartet)
+        self.assertIs(v._cursor_plan, plan)                               # nichts neu aufgebaut
+        self.assertLess(sorted(dauer)[len(dauer) // 2], 0.02)             # Median unter 20 ms
+        v.leiste.zeilen[self.ids[1]]["anzeigen"].setChecked(False)        # anderer Lauf weg -> neu aufbauen
+        pump()
+        v._set_cursor_x(5000.0, frei=True)
+        self.assertEqual(len(k.laeufe), 1)
 
     def test_cursor_folgt_maus_ueber_den_ersten_lauf_hinaus(self):
         """Zwei Laeufe, der zweite dreht hoeher: der Cursor geht bis ans Ende des zweiten; der erste zeigt dort „–“,

@@ -172,10 +172,11 @@ class LogViewer(QtWidgets.QWidget):
 
         self.plots: List[pg.PlotItem] = []
         self.lines: List[pg.InfiniteLine] = []
-        self._cursor_timer = QtCore.QTimer(self)
-        self._cursor_timer.setSingleShot(True)
-        self._cursor_timer.setInterval(25)
-        self._cursor_timer.timeout.connect(self._update_cursor)
+        # rechte Spalte „Werte am Cursor“ wie in Messen: bei jeder Mausbewegung sofort nur die Zahlen tauschen
+        # (_cursor_werte). Bereiche, Kanalauswahl und Maxima baut _update_cursor nur, wenn sich Laeufe/Felder aendern.
+        # Frueher startete jede Bewegung einen 25-ms-Timer neu: bei laufender Maus blieb rechts alles stehen und
+        # sprang erst beim Anhalten (Testrueckmeldung 10.11.2026).
+        self._cursor_plan: Optional[dict] = None
         theme.bei_wechsel(self, self._thema, sofort=False)
         self.glw.scene().sigMouseMoved.connect(self._mouse_moved)
         for sig in (self.xaxis.currentIndexChanged, self.only_seg.toggled, self.panes_spin.valueChanged):
@@ -1001,6 +1002,7 @@ class LogViewer(QtWidgets.QWidget):
         self.glw.clear()
         self.plots, self.lines = [], []
         self._bereiche, self._live = {}, None
+        self._cursor_plan = None
         runs = self._runs_shown()
         multi = len(runs) > 1
         colors = {rid: self._farbe(rid) for rid in runs}
@@ -1156,7 +1158,10 @@ class LogViewer(QtWidgets.QWidget):
             if getattr(self, "cursor_fahne", None) is not None:
                 zeit = self._x_key() == "Zeit"
                 self.cursor_fahne.setText(f"{zahl(x, 2)} s" if zeit else f"{zahl(x)} 1/min")
-        self._cursor_timer.start()
+        if self._cursor_plan is None:
+            self._update_cursor()
+        else:
+            self._cursor_werte()
 
     def keyPressEvent(self, ev: QtGui.QKeyEvent):
         if ev.key() in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Right):
@@ -1225,21 +1230,13 @@ class LogViewer(QtWidgets.QWidget):
                           lo, hi, 2 if zeit else 0)
         # Kanaele
         daten = []
-        for _std, name in self._kachel_kanaele():
+        plan_kacheln = []
+        for i, (_std, name) in enumerate(self._kachel_kanaele()):
             if not name:
                 daten.append(KachelDaten(""))
                 continue
-            laeufe = []
-            for rid in runs:
-                c = self.data[rid][0].get(name)
-                x = self._x(rid)
-                y = None if c is None else c.values[self._slice(rid)]
-                if rid == prim and self._cursor_frei is None and y is not None and len(y) and x_at is not None:
-                    v = float(y[min(self.cursor_idx, len(y) - 1)])
-                    laeufe.append((self._basis(self.rows[rid]), self.bez.get(rid, ""), v if np.isfinite(v) else None))
-                else:
-                    laeufe += laufwerte_am_cursor([(self._basis(self.rows[rid]), self.bez.get(rid, ""), x, y,
-                                                    self._ist_mw(rid))], x_at)
+            laeufe = self._laufwerte(name, runs, prim, x_at)
+            plan_kacheln.append((i, name))
             unit = self._unit(name)
             blo, bhi, zonen = self._balken(name, runs)
             daten.append(KachelDaten(name, unit, dez_fuer(unit, bhi - blo), blo, bhi, zonen, laeufe))
@@ -1256,6 +1253,39 @@ class LogViewer(QtWidgets.QWidget):
                 v = getattr(row, k)
                 maxima[k].append((self._basis(row), self.bez.get(rid, ""), None if dauer or not v else float(v)))
         self.cursor.set_maxima(maxima)
+        self._cursor_plan = {"runs": list(runs), "dez": 2 if zeit else 0, "kacheln": plan_kacheln}
+
+    def _laufwerte(self, name: str, runs: Sequence[int], prim: Optional[int],
+                   x_at: Optional[float]) -> List[Tuple[str, str, Optional[float]]]:
+        """[(Basisfarbe, Bezeichnung, Wert am Cursor)] eines Kanals fuer die angezeigten Laeufe."""
+        laeufe = []
+        for rid in runs:
+            c = self.data[rid][0].get(name)
+            x = self._x(rid)
+            y = None if c is None else c.values[self._slice(rid)]
+            if rid == prim and self._cursor_frei is None and y is not None and len(y) and x_at is not None:
+                v = float(y[min(self.cursor_idx, len(y) - 1)])
+                laeufe.append((self._basis(self.rows[rid]), self.bez.get(rid, ""), v if np.isfinite(v) else None))
+            else:
+                laeufe += laufwerte_am_cursor([(self._basis(self.rows[rid]), self.bez.get(rid, ""), x, y,
+                                                self._ist_mw(rid))], x_at)
+        return laeufe
+
+    def _cursor_werte(self):
+        """Bei jeder Mausbewegung (wie Messen): nur die Zahlen am Cursor – X-Kachel und Laufzeilen der Kacheln."""
+        plan = self._cursor_plan
+        runs = self._runs_shown()
+        if plan is None or plan["runs"] != runs:
+            self._update_cursor()
+            return
+        x_at = self.cursor_x()
+        k = self.cursor.x_kachel
+        k.wert.setText(zahl(x_at, plan["dez"]))
+        k.balken.set_marken([(x_at, "@cursor")] if x_at is not None else [])
+        prim = self._primary()
+        for i, name in plan["kacheln"]:
+            if i < len(self.cursor.kacheln):
+                self.cursor.kacheln[i].set_laeufe(self._laufwerte(name, runs, prim, x_at))
 
     # ------------------------------------------------------------ Setup-Vergleich
     def _fill_setup_table(self):
