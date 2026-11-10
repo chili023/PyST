@@ -79,7 +79,7 @@ SIM_VARIANTS = [
     (SIM_PORT + ":stoerung", "Simulator: synthetischer Motor mit Störungen (Zündung/Rolle, PST-Diag 1)"),
     (SIM_PORT + ":ausrollen", "Simulator: synthetischer Motor, nach dem Lauf Kupplung gezogen (Ausrollversuch)"),
     (SIM_PORT + ":rolle", "Simulator: Rad wird abgehoben, Rolle läuft frei aus (Rollen-Kalibrierung)"),
-    (SIM_PORT + ":mega", "Simulator: Arduino-Mega-Sketch 3.1.0 (PST-Diag 1)"),
+    (SIM_PORT + ":mega", "Simulator: Arduino-Mega-Sketch 3.2.0 (PST-Diag 1)"),
     (SIM_PORT + ":mega300", "Simulator: alter Arduino-Mega-Sketch 3.0.0 (ohne Diagnose)"),
     (SIM_PORT + ":mega300:stoerung", "Simulator: alter Mega 3.0.0 mit Störungen (ohne Diagnose)"),
     (SIM_PORT + ":basis", "Simulator: PyST-Basis mit gekoppelter Funk-Zange und Steckdosen"),
@@ -423,6 +423,7 @@ class DynoLink(BasisCommands):
         self.analog: Dict[str, float] = {}                    # letzte Analogwerte (Eingang -> V bzw. mA)
         self.analog_einheit: Dict[str, str] = {}              # Einheit je Eingang, wenn das Geraet sie nennt
         self.analog_t = 0.0                                   # PC-Zeit dieser Werte
+        self.ai_hz = 0                                        # mit '#AI <hz>' eingeschaltet (0 = aus)
         self.is_stm = True      # nach info(): False = Arduino-Mega-Sketch ('m' schaltet um, kein 's')
         self._last_cycle: Optional[int] = None
         self._stop = False
@@ -482,6 +483,10 @@ class DynoLink(BasisCommands):
                 self.ensure_stopped()
                 if self.has_diag and self.mode != "N":
                     self.command("#MODE N", timeout=0.3)
+                if self.has_diag and self.ai_hz:
+                    # F446 startet beim Oeffnen des Ports nicht neu: A-Zeilen aus, bevor LabVIEW den Port bekommt
+                    self.command("#AI 0", timeout=0.3)
+                    self.ai_hz = 0
             except Exception:
                 pass
             finally:
@@ -600,7 +605,10 @@ class DynoLink(BasisCommands):
         """Vorschlag PST-Diag 1: A-Zeilen mit hz einschalten (0 = aus). Nur wenn '#CAP' 'ai=' nennt."""
         if not analog.caps_eingaenge(self.caps):
             return False
-        return self.ok(self.command(f"#AI {int(hz)}", timeout=0.5))
+        ok = self.ok(self.command(f"#AI {int(hz)}", timeout=0.5))
+        if ok:
+            self.ai_hz = int(hz)
+        return ok
 
     def analog_stat(self) -> Dict[str, float]:
         """PyST-Basis: AI1/AI2 aus '#STAT' lesen und uebernehmen; {} ohne Antwort."""

@@ -2,7 +2,8 @@
 //                               #Open Source Pruefstandssoftware auf Basis von Arduino Mega und LabVIEW                            //
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 //
-// PST-Mega 3.1.0 vom 26.10.2026 - mit Oszi-/Diagnosemodus "PST-Diag 1" (docs/04_PST_Diag_1.md)
+// PST-Mega 3.2.0 vom 10.11.2026 - mit Oszi-/Diagnosemodus "PST-Diag 1" (docs/04_PST_Diag_1.md)
+// und Analogeingaengen A0..A15 (#AI, docs/04_PST_Diag_1.md §11)
 //
 // benoetigt die Bibliotheken SparkFunBME280, Adafruit_MAX31855 (+ Adafruit_BusIO), alle als ZIP in
 // firmware/arduino-mega/libraries/. Die Dateien pst_core.h/.cpp gehoeren zum Sketch (gleicher Ordner).
@@ -14,6 +15,16 @@
 //
 // Anschluss: Zuendung ICP4 = PL0 = Pin 49 (Timer4), Rolle ICP5 = PL1 = Pin 48 (Timer5),
 //            BME280 + Spartan2 (AFR) an I2C (Pin 20/21), MAX31855 CS Pin 53, Pin 2 = high waehrend Telegramm.
+//
+// ---------------------------------- Changelog 3.2.0 gegenueber 3.1.0 ----------------------------------
+//  - Analogeingaenge A0..A15: "#CAP" nennt zusaetzlich "ai=A0,...,A15". "#AI <hz>" (0..50) -> "#OK;AI;<hz>"
+//    schaltet Zeilen "A;<t_ms>;A0=1.234;...;A15=0.004" (Spannung an der Klemme in V, AVcc = 5 V, nan = noch kein
+//    Wert) in Modus N und D ein, "#AI 0" aus. Nach dem Start aus: ohne "#AI" ist die Ausgabe byte-identisch zu
+//    3.1.0 (LabVIEW merkt nichts). Waehrend einer Burst-Ausgabe pausieren die A-Zeilen.
+//  - ADC ohne Interrupt und ohne Warten: loop() holt je Durchgang hoechstens ein fertiges Ergebnis und startet die
+//    naechste Wandlung (je Kanal 1 verworfen + 4 gemittelt, 16 Kanaele in ca. 8,3 ms). Die Capture-ISRs bleiben
+//    unveraendert, es kommt kein Interrupt dazu. A-Zeilen nur, wenn danach noch die Reserve fuer Telegramm und
+//    Antwort im Sendepuffer frei ist (Telegramme haben Vorrang).
 //
 // ---------------------------------- Changelog 3.1.0 gegenueber 3.0.0 ----------------------------------
 // Protokoll:
@@ -49,6 +60,11 @@
 //    ein anderer Interrupt, bis ca. 15 us), sonst wird die Gegenflanke verpasst (Burst: lost).
 //  - RAM: Burst-Puffer 800 Flanken = 3,4 KB (4 Byte Zeitstempel + 2 Bit Kanal/Pegel), gesamt statisch
 //    ca. 6,2 KB von 8 KB.
+//  - A-Zeile mit 16 Kanaelen bis 164 Byte: bei 10 Hz 1,6 KB/s von 11,5 KB/s (115200 Bd). Mit D-Telegrammen
+//    (ca. 90 Byte bei 61 Hz = 5,5 KB/s) zusammen ca. 62 %, mit normalen (ca. 30 Byte) ca. 30 %. Im Modus D
+//    passen mehr als ca. 30 Hz nicht, dann fallen A-Zeilen aus (nie Telegramme); im Modus N gehen 50 Hz.
+//  - loop(): Ergebnis uebernehmen ca. 130 Takte (8 us), A-Zeile formatieren ca. 18 000 Takte (1,1 ms,
+//    bei 10 Hz 1,1 % der Rechenzeit). Interrupts bleiben dabei frei, die Messung merkt nichts.
 ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #include <stdint.h>
@@ -138,6 +154,11 @@ static uint8_t  g_bout_active = 0;
 static int16_t  g_bout_idx = 0;
 static uint16_t g_bmon_total = 0;
 static uint32_t g_bmon_ms = 0;
+
+// Analogeingaenge (#AI)
+static PstAdc     g_adc;
+static PstAiClock g_aiclk;
+static uint8_t    g_adc_on = 0;
 
 Adafruit_MAX31855 thermocouple(MAXCS);
 BME280 mySensor;
@@ -362,6 +383,38 @@ void setup() {
 }
 
 //////////////////////////////////////////////////////////////////
+//------------------- Analogeingaenge ---------------------------//
+//////////////////////////////////////////////////////////////////
+// ADC wie analogRead (AVcc als Referenz, Vorteiler 128 aus init() -> 104 us je Wandlung), aber ohne Warten:
+// Wandlung starten, in loop() nachsehen. Kanal 8..15 ueber MUX5 in ADCSRB.
+static void adc_start(uint8_t ch)
+{
+  ADCSRB = (ADCSRB & ~_BV(MUX5)) | ((ch & 8) ? _BV(MUX5) : 0);
+  ADMUX = _BV(REFS0) | (ch & 7);
+  ADCSRA |= _BV(ADSC);                         // laeuft noch eine Wandlung, wirkt erst die naechste
+}
+
+static void adc_begin()
+{
+  pst_adc_reset(&g_adc);                       // alle Kanaele nan, bis sie einmal gewandelt sind
+  adc_start(g_adc.ch);
+}
+
+static void analog_job()
+{
+  if (!g_adc_on) return;
+  if (!(ADCSRA & _BV(ADSC))) {                 // fertig: Ergebnis holen, naechste Wandlung starten
+    uint16_t raw = ADC;
+    adc_start(pst_adc_result(&g_adc, raw));
+  }
+  if (!pst_ai_due(&g_aiclk, g_cmd.ai_hz, millis())) return;
+  if (g_bout_active) return;                   // Burst-Ausgabe: Zeile auslassen wie ein Telegramm
+  char buf[PST_AI_LINE_MAX];
+  size_t n = pst_fmt_analog(buf, sizeof(buf), millis(), &g_adc);
+  if (out_free() >= n + OUT_RESERVE) out_put(buf, n);   // sonst auslassen, Telegramme haben Vorrang
+}
+
+//////////////////////////////////////////////////////////////////
 //------------------- Befehle -----------------------------------//
 //////////////////////////////////////////////////////////////////
 static void handle_requests()
@@ -375,6 +428,12 @@ static void handle_requests()
     g_save_active = 1;
     g_save_pos = 0;
     k.req_save = 0;
+  }
+  if (k.req_ai) {
+    pst_ai_start(&g_aiclk, millis());
+    if (k.ai_hz && !g_adc_on) adc_begin();
+    g_adc_on = k.ai_hz ? 1 : 0;
+    k.req_ai = 0;
   }
   if (k.req_burst_stop) {
     ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
@@ -425,7 +484,7 @@ static void serial_in()
     if (r == PST_P_CHAR) {
       handle_char(ch);
     } else if (r == PST_P_LINE) {
-      char reply[96];
+      char reply[144];                         // #CAP mit ai=A0..A15: 134 Zeichen
       uint8_t mode_before = g_cmd.mode;
       g_cmd.burst_busy = g_bout_active;
       g_cmd.burst_active = (g_burst.state != PST_B_IDLE) || g_bout_active;
@@ -597,6 +656,7 @@ void loop() {
 
   jobs();
   telegram();
+  analog_job();
   out_drain();
 }
 

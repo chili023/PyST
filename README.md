@@ -19,12 +19,13 @@ Open-Source-Leistungsprüfstand (Rollenprüfstand):
 - **PST-STM32-Firmware** – neue Firmware für die Messelektronik auf **STM32F446RE (Nucleo-64)**.
   Spricht das Protokoll des Arduino-Mega-Sketches → läuft mit **LabVIEW 3.2.1**, mit der
   **STM-LabVIEW 0.2.0** (automatisch erkannt) und mit **PyST**.
-- **Oszi-/Diagnosemodus [PST-Diag 1](docs/04_PST_Diag_1.md)** (Mega 3.1.0, PST-STM32 1.1.0, PyST 1.3):
+- **Oszi-/Diagnosemodus [PST-Diag 1](docs/04_PST_Diag_1.md)** (Mega ab 3.1.0, PST-STM32 ab 1.1.0, PyST 1.3):
   Dauermessung, Linienschreiber, Ereignis-Trigger, Flanken-Ansicht und Geräte-Einstellungen – per Befehl
   umschaltbar, ohne Neu-Flashen; nach jedem Neustart wieder LabVIEW-kompatibel.
 - **Läufe weitergeben**: als `.pyst`-Datei oder als einzelne HTML-Datei, die offline in jedem Browser läuft.
-- **Arduino-Mega-Sketch 3.1.0** – der bisherige Mega-Aufbau läuft ebenfalls mit PyST; 3.1.0 misst jede
+- **Arduino-Mega-Sketch 3.2.0** – der bisherige Mega-Aufbau läuft ebenfalls mit PyST; ab 3.1.0 misst er jede
   Periode, meldet 0 Hz nach Signalausfall und hat den Oszi-/Diagnosemodus [PST-Diag 1](docs/04_PST_Diag_1.md).
+  Ab 3.2.0 (Mega) bzw. PST-STM32 1.2.0 (F446) kommen auch die Analogeingänge zu PyST (`#AI`).
 
 ![PyST 1.4.2 – Messen während eines Laufs](docs/bilder/v142_messen_lauf.png)
 
@@ -41,9 +42,9 @@ Open-Source-Leistungsprüfstand (Rollenprüfstand):
 | Messelektronik | LabVIEW 3.2.1 | STM-LabVIEW 0.2.0 | PyST |
 |---|---|---|---|
 | STM32 + PST-STM32-Firmware 1.0 | ✅ am Prüfstand | ✅ Protokoll geprüft¹ | ✅ am Prüfstand |
-| STM32 + PST-STM32-Firmware 1.1 | ✅ Format byte-identisch⁴ | ✅ Format byte-identisch⁴ | ✅ + PST-Diag 1 (ab PyST 1.3) |
+| STM32 + PST-STM32-Firmware 1.1 / 1.2 | ✅ Format byte-identisch⁴ | ✅ Format byte-identisch⁴ | ✅ + PST-Diag 1 (ab PyST 1.3), Analogeingänge ab 1.2 |
 | Arduino Mega + Sketch 3.0.0 | ✅ (Original) | Arduino-Modus² | ✅ im Simulator geprüft³ |
-| Arduino Mega + Sketch 3.1.0 | ✅ Format byte-identisch⁴ | Arduino-Modus² | ✅ + PST-Diag 1 (ab PyST 1.3) |
+| Arduino Mega + Sketch 3.1.0 / 3.2.0 | ✅ Format byte-identisch⁴ | Arduino-Modus² | ✅ + PST-Diag 1 (ab PyST 1.3), Analogeingänge ab 3.2.0 |
 | PyST-Basis + Funk-Zange (Firmware 0.3.x) | – | – | ✅ ab PyST 1.4, am Prüfstand |
 | PyST-Basis + Funk-Zange (Firmware 0.4.0, signierte Updates) | – | – | ✅ ab PyST 1.4.1, im Simulator geprüft⁵ |
 
@@ -78,7 +79,7 @@ cd PyST
 ./start_mac.command --sim    # ohne Hardware: Simulator spielt einen echten Lauf ab
 ```
 
-STM32 flashen: `firmware/stm32/bin/PST-STM32_v1.1.0.bin` (bisher `PST-STM32_v1.0.0.bin`) auf das Laufwerk **NODE_F446RE** ziehen,
+STM32 flashen: `firmware/stm32/bin/PST-STM32_v1.2.0.bin` (bisher `PST-STM32_v1.1.0.bin`) auf das Laufwerk **NODE_F446RE** ziehen,
 oder ab PyST 1.4.1 aus PyST heraus unter **Einstellungen › Software & Firmware** (auch den Arduino Mega per avrdude).
 
 ## Inhalt
@@ -86,7 +87,7 @@ oder ab PyST 1.4.1 aus PyST heraus unter **Einstellungen › Software & Firmware
 ```
 PyST/            PC-Software (Python 3.9+, PySide6, pyqtgraph)
 firmware/stm32/        Firmware STM32F446RE (PlatformIO), fertige .bin in firmware/stm32/bin/
-firmware/arduino-mega/ Arduino-Mega-Sketch 3.1.0 (PlatformIO/Arduino IDE), 3.0.0 + Bibliotheken
+firmware/arduino-mega/ Arduino-Mega-Sketch 3.2.0 (PlatformIO/Arduino IDE), 3.0.0 + Bibliotheken
 docs/                  Roadmap, Zündsignal-Diagnose, Firmware-Messung, Protokoll v2, PST-Diag 1
 ```
 

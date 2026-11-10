@@ -1,4 +1,4 @@
-// pst_core.h - Hardwareunabhaengiger Kern des PST-Mega-Sketches 3.1.0
+// pst_core.h - Hardwareunabhaengiger Kern des PST-Mega-Sketches 3.2.0
 //
 // Enthaelt alles, was ohne AVR-Header testbar ist:
 //   - Zeitstempel aus ICR + Ueberlaufzaehler
@@ -8,6 +8,7 @@
 //   - Einstellungen (#GET/#SET, EEPROM-Abbild mit Version und CRC)
 //   - Kommando-Parser (Einzelzeichen v/e/m und #-Zeilen) mit festem Puffer
 //   - Telegramm-Formatierung N und D (Gleitkomma wie Arduino Print::printFloat)
+//   - Analogeingaenge A0..A15 (ab 3.2.0): Mittelung, Takt und Zeile A;... (#AI)
 //
 // Host-Tests: test/ (g++ nativ, siehe test/Makefile).
 // Spezifikation: docs/04_PST_Diag_1.md
@@ -17,8 +18,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define PST_FW_NAME      "PST-Mega 3.1.0"
-#define PST_VERSION_STR  "Version 3.1.0 vom 26.10.26"   // Antwort auf 'v'
+#define PST_FW_NAME      "PST-Mega 3.2.0"
+#define PST_VERSION_STR  "Version 3.2.0 vom 10.11.26"   // Antwort auf 'v'
 #define PST_F_CPU        16000000UL      // Timer4/5 ohne Vorteiler: 1 Tick = 62,5 ns
 #define PST_TICKS_PER_MS 16000UL
 #define PST_TICKS_PER_US 16UL
@@ -28,6 +29,10 @@
 #define PST_LINE_MAX     63      // max. Laenge einer #-Zeile (inkl. '#')
 #define PST_TRIG_HIST    8       // Trigger: Mittel der 8 vorherigen Perioden
 #define PST_PERIOD_CLAMP 0x04000000UL  // Perioden fuer Trigger-Mittel begrenzen (4,2 s)
+#define PST_AI_N         16      // Analogeingaenge A0..A15
+#define PST_AI_AVG       4       // Wandlungen je Kanal und Durchgang (nach einer verworfenen)
+#define PST_AI_HZ_MAX    50      // #AI <hz>: 0..50
+#define PST_AI_LINE_MAX  168     // laengste A-Zeile: "A;4294967295;A0=4.995;...;A15=4.995\r\n" = 164
 
 // ISR-Pfad immer einbetten (Arduino baut mit -Os, Funktionsaufrufe kosten Takte)
 #if defined(__GNUC__)
@@ -348,6 +353,8 @@ struct PstCmd {
   uint8_t req_burst_stop;
   uint8_t b_chmask, b_edge, b_trig;
   uint16_t b_n, b_pre;
+  uint8_t ai_hz;            // #AI <hz>: Takt der A-Zeilen, 0 = aus (nach dem Start)
+  uint8_t req_ai;           // #AI empfangen: Takt neu beginnen, ADC ggf. starten
   struct PstSettings set;
 };
 
@@ -402,5 +409,35 @@ size_t pst_fmt_burst_end(char *out, size_t cap, const struct PstBurst *b);
 // Antwort auf 'v' (wie 3.0.0, nur neue Versionsnummer) und 'e'
 size_t pst_fmt_version(char *out, size_t cap, const struct PstSettings *s);
 size_t pst_fmt_env(char *out, size_t cap, float temp, float press, float hum);
+
+// --------------------------------------------------------------------------
+// Analogeingaenge (ab 3.2.0, docs/04_PST_Diag_1.md §11)
+//
+// Der Sketch betreibt den ADC ohne Interrupt: Wandlung starten, in loop() nachsehen, ob sie fertig ist
+// (ADSC = 0), Ergebnis an pst_adc_result geben, naechste Wandlung auf dem gelieferten Kanal starten.
+// Je Kanal wird die erste Wandlung nach dem Kanalwechsel verworfen (Abtastkondensator), die naechsten
+// PST_AI_AVG werden summiert. Ein Durchgang ueber 16 Kanaele dauert 16 * 5 * 104 us = 8,3 ms.
+
+struct PstAdc {
+  uint8_t  ch;              // Kanal der laufenden Wandlung
+  uint8_t  step;            // 0 = verwerfen, 1..PST_AI_AVG = summieren
+  uint16_t acc;
+  uint16_t valid;           // Bit je Kanal: sum[] gueltig
+  uint16_t sum[PST_AI_N];   // Summe von PST_AI_AVG Wandlungen (0..4092)
+};
+void pst_adc_reset(struct PstAdc *a);
+// Ergebnis (0..1023) der Wandlung auf a->ch uebernehmen; liefert den Kanal der naechsten Wandlung
+uint8_t pst_adc_result(struct PstAdc *a, uint16_t raw);
+// Summe -> mV an der Klemme (Referenz AVcc = 5,000 V, ohne Teiler), gerundet
+uint16_t pst_adc_mv(uint16_t sum);
+
+// Takt der A-Zeilen: hz Zeilen je Sekunde, ohne Drift (Bezug alle 1000 ms neu)
+struct PstAiClock { uint32_t t0; uint8_t n; };
+void pst_ai_start(struct PstAiClock *k, uint32_t now_ms);
+// 1 = jetzt eine Zeile; hz = 0 -> nie. Liegt der Takt > 1 s zurueck, beginnt er neu (ohne Nachholen).
+uint8_t pst_ai_due(struct PstAiClock *k, uint8_t hz, uint32_t now_ms);
+
+// "A;<t_ms>;A0=1.234;...;A15=0.004\r\n", nan fuer Kanaele ohne Wert
+size_t pst_fmt_analog(char *out, size_t cap, uint32_t t_ms, const struct PstAdc *a);
 
 #endif

@@ -106,9 +106,9 @@ Ausführliche Anleitung zu jeder Funktion: **[PyST-Wiki](https://github.com/chil
   - Beim Speichern eines Laufs: Rohwerte in `roh.csv` (Spalten `analog_<Eingang>`, V bzw. mA), die zum Lauf gültige
     Konfiguration in `lauf.json` (`"analog"`). Alte Läufe zeigen ihre damalige Umrechnung; Haken „Gespeicherte Läufe
     mit der aktuellen Umrechnung zeigen“ rechnet neu.
-  - Werte: Die Basis meldet AI1/AI2 in `#STAT`, PyST fragt etwa jede Sekunde. Vorschlag für alle Firmwares:
-    `#CAP;…;ai=<Eingänge>`, `#AI <hz>` → Zeilen `A;<t_ms>;AI1=1.234;…` (PyST schickt `#AI 10`). Mega 3.1.0 und
-    F446 1.1.0 senden noch keine Analogwerte; der Simulator (`SIM:mega`, `SIM`, `SIM:basis`) schon.
+  - Werte: Die Basis meldet AI1/AI2 in `#STAT`, PyST fragt etwa jede Sekunde. Mega ab 3.2.0 und F446 ab 1.2.0:
+    `#CAP;…;ai=<Eingänge>`, `#AI <hz>` → Zeilen `A;<t_ms>;A0=1.234;…` (PyST schickt `#AI 10`, beim Trennen `#AI 0`).
+    Mega 3.1.0 und F446 1.1.0 senden keine Analogwerte; der Simulator (`SIM:mega`, `SIM`, `SIM:basis`) schon.
 - Weitere Messkanäle (später WSB) sind zusätzliche Spalten in `roh.csv` und
   erscheinen automatisch im Auswerter und im CSV-Export.
 
@@ -261,9 +261,9 @@ nur die normalen Telegramme. Zeilenende `\n`, `\r` oder `\r\n`; unbekannte Zeile
 
 | Port | verhält sich wie |
 |---|---|
-| `SIM` | F446 1.1.0 mit PST-Diag 1, synthetischer Motor |
+| `SIM` | F446 1.2.0 mit PST-Diag 1 und Analogeingängen, synthetischer Motor |
 | `SIM:stoerung` | dasselbe mit Störungen: Doppelimpuls und Aussetzer der Zündung, Rollensprünge, Wackelkontakt |
-| `SIM:mega` | Mega-Sketch 3.1.0 mit PST-Diag 1 |
+| `SIM:mega` | Mega-Sketch 3.2.0 mit PST-Diag 1 und Analogeingängen |
 | `SIM:mega300`, `SIM:mega300:stoerung` | alter Mega 3.0.0 ohne `#CAP` (nur Software-Trigger), optional mit Störungen |
 
 Die Störungen sind im Simulator Geräte-Einstellungen (`sim_doppel`, `sim_aussetzer`, `sim_rollensprung`,

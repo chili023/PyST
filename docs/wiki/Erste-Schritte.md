@@ -84,11 +84,11 @@ Weiter: [Messen](Messen.md) · [Auswertung](Auswertung.md)
 | Port | Verhalten |
 |---|---|
 | `SIM:161802` | echter Lauf 26.05.26 16:18 (Standard für `--sim`) |
-| `SIM` | synthetischer Motor, F446 1.1.0 mit PST-Diag 1 |
+| `SIM` | synthetischer Motor, F446 1.2.0 mit PST-Diag 1 und Analogeingängen |
 | `SIM:stoerung` | dasselbe mit Störungen an Zündung und Rolle |
 | `SIM:ausrollen` | nach dem Lauf Kupplung gezogen (für den [Ausrollversuch](Ausrollversuch.md)) |
 | `SIM:rolle` | Rad wird abgehoben, Rolle läuft frei aus (für die Rollen-Kalibrierung im [Ausrollversuch](Ausrollversuch.md)) |
-| `SIM:mega` | Arduino-Mega-Sketch 3.1.0 mit PST-Diag 1 |
+| `SIM:mega` | Arduino-Mega-Sketch 3.2.0 mit PST-Diag 1 und Analogeingängen |
 | `SIM:mega300`, `SIM:mega300:stoerung` | alter Mega 3.0.0 ohne Diagnose, optional mit Störungen |
 | `SIM:basis` | PyST-Basis mit gekoppelter Funk-Zange und Steckdosen |
 | `SIM:basis:stoerung` | Basis mit Paketverlust und Zangen-Abbrüchen |

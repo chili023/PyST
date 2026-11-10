@@ -111,12 +111,12 @@ static void test_fmt_version_env()
   char b[200];
   size_t n = pst_fmt_version(b, sizeof(b), &st);
   CHECK_STR(std::string(b, n),
-            "Version 3.1.0 vom 26.10.26;\r\nRingspeicher Zuendsignal:5;\r\nRingspeicher Rolle:50;\r\n"
+            "Version 3.2.0 vom 10.11.26;\r\nRingspeicher Zuendsignal:5;\r\nRingspeicher Rolle:50;\r\n"
             "Adresse BME280:76;\r\nThermoelement (1=ja 0=nein):0;\r\n");
   st.bme_addr = 0x77; st.thermo = 1; st.ring_roll = 30;
   n = pst_fmt_version(b, sizeof(b), &st);
   CHECK_STR(std::string(b, n),
-            "Version 3.1.0 vom 26.10.26;\r\nRingspeicher Zuendsignal:5;\r\nRingspeicher Rolle:30;\r\n"
+            "Version 3.2.0 vom 10.11.26;\r\nRingspeicher Zuendsignal:5;\r\nRingspeicher Rolle:30;\r\n"
             "Adresse BME280:77;\r\nThermoelement (1=ja 0=nein):1;\r\n");
   n = pst_fmt_env(b, sizeof(b), 22.5f, 96788.0f, 52.5f);
   CHECK_STR(std::string(b, n), "22.5;96788;52.5\r\n");
@@ -211,7 +211,9 @@ static void test_cmd_chars()
 static void test_cmd_lines()
 {
   PstCmd c; pst_cmd_init(&c);
-  CHECK_STR(cmd(&c, "#?"), "#CAP;proto=1;fw=PST-Mega 3.1.0;tick_ns=62.5;ch=I,R;burst_max=800;modes=N,D;set=1\r\n");
+  CHECK_STR(cmd(&c, "#?"), "#CAP;proto=1;fw=PST-Mega 3.2.0;tick_ns=62.5;ch=I,R;burst_max=800;modes=N,D;set=1;"
+                           "ai=A0,A1,A2,A3,A4,A5,A6,A7,A8,A9,A10,A11,A12,A13,A14,A15\r\n");
+  CHECK(cmd(&c, "#?").size() <= 143);    // passt in reply[144] des Sketches
   CHECK(c.mode == 'N');
   CHECK_STR(cmd(&c, "#MODE D"), "#OK;MODE;D\r\n");
   CHECK(c.mode == 'D');
@@ -277,6 +279,141 @@ static void test_cmd_lines()
   CHECK(c.req_burst_stop);
   c.burst_busy = 1;
   CHECK_STR(cmd(&c, "#BURST I 10 F"), "#ERR;BURST;Ausgabe laeuft\r\n");
+}
+
+static void test_cmd_ai()
+{
+  PstCmd c; pst_cmd_init(&c);
+  CHECK(c.ai_hz == 0 && !c.req_ai);                 // nach dem Start aus
+  CHECK_STR(cmd(&c, "#AI 10"), "#OK;AI;10\r\n");
+  CHECK(c.ai_hz == 10 && c.req_ai);
+  c.req_ai = 0;
+  CHECK_STR(cmd(&c, "#ai 50"), "#OK;AI;50\r\n");
+  CHECK(c.ai_hz == 50 && c.req_ai);
+  CHECK_STR(cmd(&c, "#AI 0"), "#OK;AI;0\r\n");
+  CHECK(c.ai_hz == 0);
+  CHECK_STR(cmd(&c, "#AI 1"), "#OK;AI;1\r\n");
+  c.req_ai = 0;
+  CHECK_STR(cmd(&c, "#AI 51"), "#ERR;AI;bereich 0-50\r\n");
+  CHECK_STR(cmd(&c, "#AI -1"), "#ERR;AI;bereich 0-50\r\n");
+  CHECK_STR(cmd(&c, "#AI x"), "#ERR;AI;bereich 0-50\r\n");
+  CHECK_STR(cmd(&c, "#AI 2.5"), "#ERR;AI;bereich 0-50\r\n");
+  CHECK_STR(cmd(&c, "#AI"), "#ERR;AI;bereich 0-50\r\n");
+  CHECK_STR(cmd(&c, "#AI 1 2"), "#ERR;AI;bereich 0-50\r\n");
+  CHECK(c.ai_hz == 1 && !c.req_ai);                 // Fehler aendern nichts
+  CHECK_STR(cmd(&c, "#AIX 1"), "#ERR;?;unbekannt\r\n");
+  // #AI aendert Modus, Messung und Einstellungen nicht
+  CHECK(c.mode == 'N' && !c.mess && !c.req_apply && !c.req_cycle_reset);
+  // Parser: "#AI 10\r\n" ist eine Zeile, keine Einzelzeichen
+  PstParser p; pst_parser_init(&p);
+  std::vector<Ev> ev = feed(&p, "#AI 10\r\nm");
+  CHECK(ev.size() == 2 && ev[0].type == PST_P_LINE && ev[0].line == "#AI 10" && ev[1].type == PST_P_CHAR && ev[1].ch == 'm');
+}
+
+static void test_adc()
+{
+  PstAdc a; pst_adc_reset(&a);
+  CHECK(a.ch == 0 && a.valid == 0);
+  // Kanal 0: 1. Wandlung verworfen, dann 4 gemittelt
+  CHECK(pst_adc_result(&a, 999) == 0);              // verworfen
+  CHECK(pst_adc_result(&a, 100) == 0);
+  CHECK(pst_adc_result(&a, 101) == 0);
+  CHECK(pst_adc_result(&a, 102) == 0);
+  CHECK(a.valid == 0);
+  CHECK(pst_adc_result(&a, 103) == 1);              // fertig -> Kanal 1
+  CHECK(a.sum[0] == 406 && a.valid == 1);
+  // ganzer Durchgang: Kanal k misst k*64
+  for (int k = 1; k < PST_AI_N; k++)
+    for (int j = 0; j < 1 + PST_AI_AVG; j++) pst_adc_result(&a, (uint16_t)(j ? k * 64 : 1023));
+  CHECK(a.ch == 0 && a.valid == 0xFFFF);
+  CHECK(a.sum[15] == 15 * 64 * 4);
+  // Wandlungen je Durchgang
+  int conv = 0, wrap = 0; uint16_t v0 = a.valid;
+  for (; conv < PST_AI_N * (1 + PST_AI_AVG); conv++)
+    if (pst_adc_result(&a, 5) == 0 && conv < PST_AI_N * (1 + PST_AI_AVG) - 1) wrap++;
+  CHECK(a.ch == 0 && wrap == PST_AI_AVG && v0 == a.valid && a.sum[3] == 20);   // Kanal 0 nur am Anfang
+
+  // Umrechnung: AVcc 5 V, 10 bit, Summe von 4
+  CHECK(pst_adc_mv(0) == 0);
+  CHECK(pst_adc_mv(4 * 1023) == 4995);              // 1023 * 5 / 1024 = 4,995 V
+  CHECK(pst_adc_mv(4 * 512) == 2500);
+  CHECK(pst_adc_mv(4 * 1) == 5);                    // 4,88 mV
+  CHECK(pst_adc_mv(4 * 205) == 1001);               // 1,0010 V
+  CHECK(pst_adc_mv(4 * 102 + 2) == 500);            // Mittel 102,5 -> 500,5 mV -> 500
+  for (uint32_t s = 0; s <= 4 * 1023; s++) {        // gegen Gleitkomma, hoechstens 0,5 mV daneben
+    double v = s / 4.0 * 5000.0 / 1024.0;
+    if (fabs(pst_adc_mv((uint16_t)s) - v) > 0.5 + 1e-9) { CHECK(!"pst_adc_mv"); break; }
+  }
+
+  // Zeile
+  char b[PST_AI_LINE_MAX];
+  pst_adc_reset(&a);
+  size_t n = pst_fmt_analog(b, sizeof(b), 12345, &a);
+  CHECK_STR(std::string(b, n), "A;12345;A0=nan;A1=nan;A2=nan;A3=nan;A4=nan;A5=nan;A6=nan;A7=nan;A8=nan;"
+                               "A9=nan;A10=nan;A11=nan;A12=nan;A13=nan;A14=nan;A15=nan\r\n");
+  a.valid = 0xFFFF;
+  for (int k = 0; k < PST_AI_N; k++) a.sum[k] = 4 * 1023;
+  n = pst_fmt_analog(b, sizeof(b), 4294967295UL, &a);
+  CHECK(n == 164 && n < sizeof(b));                 // laengste Zeile
+  CHECK(std::string(b, n).find("A;4294967295;A0=4.995;A1=4.995;") == 0);
+  CHECK(std::string(b, n).find(";A15=4.995\r\n") == n - 12);
+  a.valid = 0x0005; a.sum[0] = 4 * 253; a.sum[2] = 4; a.sum[1] = 4 * 1000;
+  n = pst_fmt_analog(b, sizeof(b), 0, &a);
+  CHECK(std::string(b, n).find("A;0;A0=1.235;A1=nan;A2=0.005;A3=nan;") == 0);
+  a.valid = 0xFFFF; for (int k = 0; k < PST_AI_N; k++) a.sum[k] = (uint16_t)(k * 273);
+  n = pst_fmt_analog(b, sizeof(b), 77, &a);
+  CHECK(std::string(b, n).find("A;77;A0=0.000;A1=0.333;A2=0.667;A3=1.000;") == 0);
+  // Zeitstempel ohne Division: Stellen und fuehrende Nullen
+  for (uint32_t t : {0UL, 7UL, 10UL, 99UL, 100UL, 1000000000UL, 1234567890UL, 4000000000UL, 4294967295UL}) {
+    n = pst_fmt_analog(b, sizeof(b), t, &a);
+    std::string want = "A;" + std::to_string(t) + ";A0=";
+    CHECK(std::string(b, n).compare(0, want.size(), want) == 0);
+  }
+  // zu kleiner Puffer: abgeschnitten, nie ueberschrieben
+  char small[20]; memset(small, 'x', sizeof(small));
+  n = pst_fmt_analog(small, 10, 1, &a);
+  CHECK(n == 9 && small[9] == 0 && small[10] == 'x');
+}
+
+static void test_ai_clock()
+{
+  PstAiClock k;
+  // aus: nie faellig
+  pst_ai_start(&k, 0);
+  int cnt = 0;
+  for (uint32_t t = 0; t < 5000; t++) cnt += pst_ai_due(&k, 0, t);
+  CHECK(cnt == 0);
+  // 10 Hz: erste Zeile nach 100 ms, dann alle 100 ms, ohne Drift
+  for (int hz : {1, 3, 7, 10, 33, 50}) {
+    pst_ai_start(&k, 1000);
+    std::vector<uint32_t> at;
+    for (uint32_t t = 1000; t < 1000 + 10000; t++) if (pst_ai_due(&k, (uint8_t)hz, t)) at.push_back(t - 1000);
+    CHECK((int)at.size() == hz * 10 - 1);           // die Zeile bei 10 000 ms liegt ausserhalb
+    CHECK(!at.empty() && at[0] == (uint32_t)((1000 + hz - 1) / hz));
+    bool even = true;
+    for (size_t i = 0; i < at.size(); i++) {
+      uint32_t soll = (uint32_t)(((i + 1) * 1000 + hz - 1) / hz);     // (i+1)*1000/hz, aufgerundet
+      if (at[i] != soll) even = false;
+    }
+    CHECK(even);
+  }
+  // Ueberlauf von millis()
+  pst_ai_start(&k, 0xFFFFFF00UL);
+  cnt = 0;
+  for (uint32_t i = 0; i < 3000; i++) cnt += pst_ai_due(&k, 10, 0xFFFFFF00UL + i);
+  CHECK(cnt == 29);
+  // loop() haengt 5 s: kein Nachholen, danach wieder im Takt
+  pst_ai_start(&k, 0);
+  cnt = 0;
+  CHECK(pst_ai_due(&k, 10, 100) == 1);
+  CHECK(pst_ai_due(&k, 10, 5100) == 0);             // neu begonnen
+  for (uint32_t t = 5101; t <= 6100; t++) cnt += pst_ai_due(&k, 10, t);
+  CHECK(cnt == 10);
+  // selten nachgesehen (alle 30 ms bei 50 Hz): hoechstens eine Zeile je Aufruf, keine Zeile verloren
+  pst_ai_start(&k, 0);
+  cnt = 0;
+  for (uint32_t t = 0; t <= 999; t += 30) cnt += pst_ai_due(&k, 50, t);
+  CHECK(cnt == 33);
 }
 
 static void test_settings()
@@ -710,6 +847,9 @@ int main()
   test_parser();
   test_cmd_chars();
   test_cmd_lines();
+  test_cmd_ai();
+  test_adc();
+  test_ai_clock();
   test_settings();
   test_timestamp();
   test_every_period();

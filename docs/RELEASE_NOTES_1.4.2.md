@@ -134,11 +134,25 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 - Läufe: `roh.csv` behält die Rohwerte (`analog_AI1` …, V bzw. mA), `lauf.json` die Umrechnung, die beim Lauf galt
   (`"analog"`). Alte Läufe zeigen ihre damalige Umrechnung; mit dem Haken **Gespeicherte Läufe mit der aktuellen
   Umrechnung zeigen** rechnet PyST sie neu. Läufe ohne Analogwerte laden wie bisher.
-- Die Basis meldet AI1/AI2 heute in `#STAT`; PyST fragt etwa jede Sekunde. Für Mega und F446 (und schnellere Werte der
-  Basis) schlägt PyST eine Erweiterung von PST-Diag 1 vor: `#CAP;…;ai=<Eingänge>` und `#AI <hz>` für Zeilen
-  `A;<t_ms>;AI1=1.234;…`. Der Simulator kann das (`SIM:mega`, `SIM`), die Firmwares noch nicht.
+- Die Basis meldet AI1/AI2 heute in `#STAT`; PyST fragt etwa jede Sekunde. Mega und F446 bekommen dafür eine
+  Erweiterung von PST-Diag 1 (§11): `#CAP;…;ai=<Eingänge>` und `#AI <hz>` für Zeilen `A;<t_ms>;A0=1.234;…`. PyST
+  schickt `#AI 10`, sobald `#CAP` die Eingänge nennt, und beim Trennen `#AI 0`. Das können der **Mega-Sketch 3.2.0**,
+  die **PST-STM32-Firmware 1.2.0** (siehe unten) und der Simulator (`SIM:mega`, `SIM`).
 
 ![Einstellungen › Analogeingänge](bilder/v142_einst_analog.png)
+
+**Firmware für die Analogeingänge: Mega 3.2.0 und PST-STM32 1.2.0**
+
+- **Arduino Mega 3.2.0** (`firmware/arduino-mega/PST_V3.2.0`): A0 … A15, Spannung an der Klemme (Referenz 5 V,
+  10 bit, je Kanal 4 Wandlungen gemittelt). Der ADC läuft ohne Interrupt aus der Hauptschleife, die Messung von
+  Zündung und Rolle bleibt unverändert (Capture-ISR gleich, im Simulator gleiche Taktzahlen).
+- **PST-STM32 1.2.0** (`firmware/stm32`, `bin/PST-STM32_v1.2.0.bin`): ADC1 (PB0) und ADC2 (PA1), 0–3,3 V. Der ADC
+  tastet beide Eingänge per DMA dauernd ab; AFR-Eingang (`afr_src`), STM-LabVIEW und `#AI` lesen dieselben Werte, die
+  AFR-Abfrage wartet nicht mehr auf den ADC.
+- Ohne `#AI` ist die Ausgabe beider Firmwares byte-identisch zur Vorversion, LabVIEW merkt nichts. A-Zeilen fallen
+  aus, bevor ein Telegramm verloren geht.
+- PyST erkennt die Fähigkeit an `ai=` in `#CAP`, nicht an der Versionsnummer. Mit Mega 3.1.0 und F446 1.1.0 bleibt
+  alles wie bisher.
 
 **11. Neuer Ablauf beim Laufstart: Klima → GO → Drehzahlanstieg**
 - Nach **START** (und der START-Nachfrage) bzw. der Zangentaste **Neuer Lauf**: **Klima wird gemessen …** (Statusfeld
@@ -218,8 +232,10 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 - **Ø automatisch mitteln:** „Dasselbe Setup“ heißt gleiches Fahrzeug, gleiches Setup und gleiche Setup-Werte; ein
   Lauf mit Werten „nur für diesen Lauf“ zählt als anderes Setup. Ein Lauf ohne Auto-Speichern zählt erst nach dem
   Speichern. Gemittelt wird wie in Auswertung › Mittelwert bilden (Raster 50 1/min, oben 300 1/min weg).
-- **Analogeingänge:** Mega 3.1.0 und F446 1.1.0 senden noch keine Analogwerte; die Seite und die Umrechnung gehen
-  trotzdem, die Werte kommen erst mit einer Firmware, die `#AI` kann. Die Basis liefert sie heute nur etwa einmal je
+- **Analogeingänge:** Werte von Mega und F446 kommen erst ab Mega 3.2.0 bzw. F446 1.2.0; mit 3.1.0 bzw. 1.1.0
+  gehen die Seite und die Umrechnung trotzdem, nur ohne Live-Werte. Mega: Referenz ist die Versorgung (nominell 5 V),
+  an USB oft 4,7–5,1 V, also bis zu einige Prozent daneben; bei Bedarf mit Faktor/Offset abgleichen. F446: höchstens
+  3,3 V am Pin. Die Basis liefert die Werte heute nur etwa einmal je
   Sekunde (`#STAT`), im Lauf gilt der letzte Wert bis zum nächsten. Den Bereich der Basis (0–5 V, 0–10 V, 4–20 mA)
   legen Lötbrücke und `ai1_mode`/`ai2_mode` fest, PyST rechnet mit dem Wert, den die Basis meldet.
 - **Ordner-Import, „schon vorhanden“:** gleicher Name und gleiche Quelle (LabVIEW, PyST, Terminal), Datum höchstens
@@ -244,6 +260,8 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 
 - Rollen-Kalibrierung mit abgehobenem Rad und die Aufteilung der Verluste.
 - Analogeingänge der Basis (`#STAT`) mit echtem Sensor.
+- Mega 3.2.0 und PST-STM32 1.2.0 (Analogeingänge): nur mit Host-Tests, im AVR-Simulator und gebaut geprüft, noch auf
+  keinem Gerät geflasht.
 - Laufbeginn am Drehzahlanstieg und die Klima-Phase nach START (nur Simulator und Tests).
 - Aus 1.4.1: Mega und F446 aus PyST flashen, Übersetzungsart **Funkenmessung**, Zangentasten im Abgleichfenster,
   Updates im Format 2 und Firmware 0.4.0 von Basis, Zange und Basis-ESP.
