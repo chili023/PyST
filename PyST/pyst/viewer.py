@@ -146,6 +146,8 @@ class LogViewer(QtWidgets.QWidget):
         self.seitenleiste.set_zustand(self._meta_json("viewer_seitenleiste", {}))
         self.seitenleiste.angepinnt_geaendert.connect(
             lambda _an: self.db.set_meta("viewer_seitenleiste", json.dumps(self.seitenleiste.zustand())))
+        self.seitenleiste.breite_geaendert.connect(
+            lambda _b: self.db.set_meta("viewer_seitenleiste", json.dumps(self.seitenleiste.zustand())))
 
         self.right_tabs = QtWidgets.QTabWidget()
         self.cursor = CursorSpalte()

@@ -45,7 +45,7 @@ Weitere Seiten: [Installation](Installation.md) · [Erste Schritte](Erste-Schrit
 - **Messen, Läufe hinzufügen:** Der Knopf **＋** oben in der Seitenleiste Läufe öffnet ein Auswahlfenster für alte
   Läufe und Mittelwerte (auch anderer Fahrzeuge). Sie liegen danach gesperrt auf Plätzen im Diagramm. Der Knopf
   „Referenz laden …“ ist weg. Siehe [Messen](Messen.md#läufe-hinzufügen).
-- **Ø automatisch mitteln:** Haken neben **＋** (auch im Menü Ansicht). PyST mittelt die Läufe im Diagramm mit dem
+- **Ø automatisch mitteln:** Haken unter **Lauf-Einstellungen …** (auch im Menü Ansicht). PyST mittelt die Läufe im Diagramm mit dem
   Setup des neuesten Laufs, zeichnet den Mittelwert mit Band und rechnet ihn nach jedem Lauf neu, ohne einen Platz zu
   belegen. **speichern** macht daraus einen Mittelwert-Lauf. Siehe [Messen](Messen.md#ø-automatisch-mitteln).
 - **START-Nachfrage:** Ist das Setup unverändert, fragt START kurz „Setup unverändert – Änderungen eintragen?“ – mit den

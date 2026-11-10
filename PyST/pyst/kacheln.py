@@ -575,6 +575,55 @@ class _Streifen(QtWidgets.QAbstractButton):
         p.end()
 
 
+class _Griff(QtWidgets.QWidget):
+    """Griff am rechten Rand der aufgeklappten Seitenleiste (Overlay): mit der Maus ziehen = Breite aendern.
+    Meldet die Maus-x (global) beim Ziehen und das Ende; ein kleiner Steg zeigt ihn (Hover/Ziehen: Akzentfarbe)."""
+    BREITE = 8
+    gezogen = QtCore.Signal(int)                   # globale x-Position der Maus
+    losgelassen = QtCore.Signal()
+
+    def __init__(self, parent: QtWidgets.QWidget):
+        super().__init__(parent)
+        self.setCursor(QtCore.Qt.SizeHorCursor)
+        self.setToolTip("Ziehen: Breite der Liste ändern")
+        self.setAttribute(QtCore.Qt.WA_Hover)
+        self.aktiv = False
+
+    def mousePressEvent(self, ev):
+        if ev.button() == QtCore.Qt.LeftButton:
+            self.aktiv = True
+            ev.accept()
+            self.update()
+
+    def mouseMoveEvent(self, ev):
+        if self.aktiv:
+            self.gezogen.emit(int(ev.globalPosition().x()))
+            ev.accept()
+
+    def mouseReleaseEvent(self, ev):
+        if self.aktiv and ev.button() == QtCore.Qt.LeftButton:
+            self.aktiv = False
+            self.update()
+            self.losgelassen.emit()
+            ev.accept()
+
+    def paintEvent(self, _ev):
+        """Kleiner Steg in der Mitte (zeigt, dass man ziehen kann); beim Zeigen/Ziehen in der Akzentfarbe."""
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        p.setPen(QtCore.Qt.NoPen)
+        an = self.aktiv or self.underMouse()
+        p.setBrush(QtGui.QColor(theme.farbe("accent_border" if an else "border_strong")))
+        h = 56 if an else 40
+        p.drawRoundedRect(QtCore.QRectF(1, (self.height() - h) / 2, 3, h), 1.5, 1.5)
+        p.end()
+
+    def event(self, ev):
+        if ev.type() in (QtCore.QEvent.HoverEnter, QtCore.QEvent.HoverLeave):
+            self.update()
+        return super().event(ev)
+
+
 class SeitenLeiste(QtWidgets.QWidget):
     """Linke Leiste mit Nachbar (z.B. Diagramm). Aufbau beim Aufrufer:
         leiste = SeitenLeiste("Läufe", inhalt=liste_widget, nachbar=diagramm, breite=372)
@@ -583,9 +632,14 @@ class SeitenLeiste(QtWidgets.QWidget):
         layout.addWidget(leiste)                 # statt des Nachbarn
         leiste.set_streifen_text("Läufe (3 von 6 sichtbar)"); leiste.set_streifen_farben([...])
     Nicht angepinnt: nur der Streifen; Maus 300 ms darauf -> Inhalt als Overlay ueber dem Nachbarn (verdeckt, schiebt
-    nicht). Maus weg oder Klick daneben -> zu. Angepinnt: Inhalt links neben dem Nachbarn (Teiler verschiebbar)."""
+    nicht). Maus weg oder Klick daneben -> zu. Angepinnt: Inhalt links neben dem Nachbarn (Teiler verschiebbar).
+    Breite: aufgeklappt am Griff rechts (_Griff), angepinnt am Teiler ziehen; eine Breite fuer beide Zustaende
+    (BREITE_MIN … BREITE_MAX), gemeldet mit breite_geaendert (zum Speichern, z.B. zustand()). Solange gezogen wird,
+    klappt das Overlay nicht zu."""
     angepinnt_geaendert = QtCore.Signal(bool)
     offen_geaendert = QtCore.Signal(bool)          # Overlay auf/zu (nicht beim Anpinnen)
+    breite_geaendert = QtCore.Signal(int)          # nach dem Ziehen (Griff losgelassen bzw. Teiler kurz still)
+    BREITE_MIN, BREITE_MAX = 240, 900              # gezogene Breite der Liste [px]
     VERZOEGERUNG_MS = 300                          # Verweilen auf dem Streifen bis zum Aufklappen
     ZU_MS = 300                                    # Maus ausserhalb, bis es zuklappt
 
@@ -593,7 +647,8 @@ class SeitenLeiste(QtWidgets.QWidget):
                  angepinnt: bool = False, parent: Optional[QtWidgets.QWidget] = None):
         super().__init__(parent)
         self.titel_text = titel
-        self.breite = breite
+        self.breite = self._begrenzt(breite)
+        self._ziehen = False                       # Griff wird gerade gezogen (Overlay bleibt offen)
         self.inhalt = inhalt
         self.nachbar = nachbar
         self._angepinnt = False
@@ -631,8 +686,16 @@ class SeitenLeiste(QtWidgets.QWidget):
         fl.addWidget(inhalt, 1)
         self.schatten = None
         self.splitter.addWidget(nachbar)
+        self.splitter.splitterMoved.connect(self._teiler_bewegt)
         self.feld.setParent(self)
         self.feld.hide()
+        self.griff = _Griff(self.feld)             # Breite im Overlay (angepinnt: der Teiler)
+        self.griff.gezogen.connect(self._griff_gezogen)
+        self.griff.losgelassen.connect(self._griff_los)
+        self._melde_timer = QtCore.QTimer(self)    # Teiler: Breite erst melden, wenn er kurz still steht
+        self._melde_timer.setSingleShot(True)
+        self._melde_timer.setInterval(400)
+        self._melde_timer.timeout.connect(lambda: self.breite_geaendert.emit(self.breite))
         self.auf_timer = QtCore.QTimer(self)
         self.auf_timer.setSingleShot(True)
         self.auf_timer.setInterval(self.VERZOEGERUNG_MS)
@@ -702,8 +765,46 @@ class SeitenLeiste(QtWidgets.QWidget):
     def set_zustand(self, d: Optional[dict]):
         d = d or {}
         if d.get("breite"):
-            self.breite = int(d["breite"])
+            self.breite = self._begrenzt(d["breite"])
         self.set_angepinnt(bool(d.get("angepinnt", False)))
+
+    # ------------------------------------------------------------ Breite
+    def _begrenzt(self, b) -> int:
+        return int(max(self.BREITE_MIN, min(self.BREITE_MAX, int(b))))
+
+    def ist_beim_ziehen(self) -> bool:
+        return self._ziehen
+
+    def _griff_gezogen(self, x_global: int):
+        """Overlay: rechter Rand folgt der Maus (BREITE_MIN … BREITE_MAX, hoechstens bis kurz vor den Rand)."""
+        if self._angepinnt or not self._offen:
+            return
+        self._ziehen = True
+        self.zu_timer.stop()
+        links = self.feld.mapToGlobal(QtCore.QPoint(0, 0)).x()
+        self.breite = self._begrenzt(min(x_global - links, max(self.BREITE_MIN, self.width() - 40)))
+        self._platzieren()
+
+    def _griff_los(self):
+        war = self._ziehen
+        self._ziehen = False
+        if war:
+            self.breite_geaendert.emit(self.breite)
+        if self._offen and not self._maus_drin():
+            self.zu_timer.start()                  # losgelassen ausserhalb: wie Maus weg
+
+    def _teiler_bewegt(self, *_a):
+        if self._angepinnt:
+            sizes = self.splitter.sizes()
+            if sizes and sizes[0] > 50:
+                self.breite = self._begrenzt(sizes[0])
+                self._melde_timer.start()
+
+    def _griff_platzieren(self):
+        g = self.griff
+        g.setGeometry(self.feld.width() - g.BREITE, 0, g.BREITE, self.feld.height())
+        g.setVisible(not self._angepinnt)
+        g.raise_()
 
     def set_angepinnt(self, an: bool):
         an = bool(an)
@@ -716,18 +817,26 @@ class SeitenLeiste(QtWidgets.QWidget):
             self._schliessen(still=True)
             self.feld.setGraphicsEffect(None)
             self.schatten = None
+            self.feld.setMinimumWidth(self.BREITE_MIN)
+            self.feld.setMaximumWidth(self.BREITE_MAX)
             self.splitter.insertWidget(0, self.feld)
+            self.splitter.setStretchFactor(0, 0)   # mehr Platz (Streifen weg, Fenster breiter) bekommt der Nachbar
+            self.splitter.setStretchFactor(1, 1)
             self.feld.show()
-            self.splitter.setSizes([self.breite, max(1, self.splitter.width() - self.breite)])
             self.streifen.hide()
+            gesamt = self.width() if self.width() > self.breite else self.splitter.width() + _Streifen.BREITE
+            self.splitter.setSizes([self.breite, max(1, gesamt - self.breite)])
         else:
             sizes = self.splitter.sizes()
             if sizes and sizes[0] > 50:
-                self.breite = sizes[0]
+                self.breite = self._begrenzt(sizes[0])
             self.feld.hide()
             self.feld.setParent(self)              # aus dem Teiler: Nachbar bekommt die volle Breite
+            self.feld.setMinimumWidth(0)           # Overlay begrenzt selbst (_platzieren)
+            self.feld.setMaximumWidth(16777215)
             self.streifen.show()
         self._angepinnt = an
+        self._griff_platzieren()
         self._pin_anzeigen()
         self.angepinnt_geaendert.emit(an)
 
@@ -759,6 +868,7 @@ class SeitenLeiste(QtWidgets.QWidget):
         if not self._offen:
             return
         self._offen = False
+        self._ziehen = self.griff.aktiv = False
         app = QtWidgets.QApplication.instance()
         if app is not None:
             app.removeEventFilter(self)
@@ -770,6 +880,7 @@ class SeitenLeiste(QtWidgets.QWidget):
     def _platzieren(self):
         w = min(self.breite, max(120, self.width() - 40))
         self.feld.setGeometry(0, 0, w, self.height())
+        self._griff_platzieren()
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
@@ -782,7 +893,7 @@ class SeitenLeiste(QtWidgets.QWidget):
 
     def _zu_wenn_draussen(self):
         """Maus weg: zu, ausser die Maus ist (wieder) drin oder ein Menue/Dialog aus der Liste ist offen."""
-        if not self._offen or self._angepinnt:
+        if not self._offen or self._angepinnt or self._ziehen:
             return
         app = QtWidgets.QApplication.instance()
         if self._maus_drin() or app.activePopupWidget() is not None or app.activeModalWidget() is not None:
@@ -797,10 +908,12 @@ class SeitenLeiste(QtWidgets.QWidget):
                 self.auf_timer.start()
             elif t == QtCore.QEvent.Leave and not self._offen:
                 self.auf_timer.stop()
+        elif obj is self.feld and t == QtCore.QEvent.Resize:
+            self._griff_platzieren()
         elif obj is self.feld and self._offen:
             if t == QtCore.QEvent.Enter:
                 self.zu_timer.stop()
-            elif t == QtCore.QEvent.Leave:
+            elif t == QtCore.QEvent.Leave and not self._ziehen:
                 self.zu_timer.start()
         if self._offen and not self._angepinnt and t == QtCore.QEvent.MouseButtonPress and isinstance(obj, QtWidgets.QWidget):
             app = QtWidgets.QApplication.instance()

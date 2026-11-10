@@ -39,7 +39,7 @@ Unter der Gruppe Prüfstand. Dieselben Schalter stehen im Menü **Ansicht**.
 | Schalter | Standard | Wirkung |
 |---|---|---|
 | **Ergebnis groß nach dem Lauf** | an | nach dem Lauf Pmax und Mmax groß über dem Diagramm (weg mit START, Klick oder Esc) |
-| **Anweisungen groß (GO, GAS WEG …)** | an | Laufzustand für den Fahrer groß über dem Diagramm: GO – Vollgas!, GAS WEG, KUPPLUNG ZIEHEN … Aus: nur das große „GAS WEG“ |
+| **Anweisungen groß (GO, GAS WEG …)** | an | Anweisung für den Fahrer groß über dem Diagramm: GO – Vollgas! bis *n vom Gas*, während der Messung nichts, am Laufende GAS WEG! bzw. GAS WEG – KUPPLUNG ZIEHEN! (Ausrollversuch), danach das Ergebnis. Aus: nur das große „GAS WEG“ |
 | **Legende im Diagramm** | aus | Legende aller Läufe (Farbe, Datum/Zeit, Setup bzw. Notiz). Mittelwerte stehen immer in der Legende |
 
 Bilder und Einzelheiten: [Messen](Messen.md#statusfeld).

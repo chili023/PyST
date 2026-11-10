@@ -16,7 +16,7 @@ Der Reiter **Messen** ist der Arbeitsplatz am Prüfstand: Lauf starten, Kurve li
 | **Auto-Speichern** | Lauf nach dem Ende sofort in die Datenbank schreiben |
 | Statusfeld | Zustand und Anweisung an den Fahrer (Tabelle unten) |
 | **Verbinden / Trennen** | Messboard verbinden oder trennen |
-| **Lauf-Einstellungen …** | kleines Fenster mit Übersetzung, Filter und Laufgrenzen. Darunter steht kurz, was gilt, z. B. „i 6,850 (Hand) · Filter 35 / 15 Pkt.“ |
+| **Lauf-Einstellungen …** | kleines Fenster mit Übersetzung, Filter, Laufgrenzen und **Ø automatisch mitteln**. Darunter steht kurz, was gilt, z. B. „i 6,850 (Hand) · Filter 35 / 15 Pkt.“ |
 | **START  (F1)** | Lauf starten, bei unverändertem Setup erst mit kurzer [Nachfrage](#start-nachfrage). Im Lauf wird der Knopf rot: **Abbrechen  (Esc)**, beim Ausrollen **Ausrollen beenden (Esc)** |
 
 ### Statusfeld
@@ -26,24 +26,32 @@ Der Reiter **Messen** ist der Arbeitsplatz am Prüfstand: Lauf starten, Kurve li
 | Nicht verbunden – „Verbinden“ drücken | kein Messboard |
 | Verbunden – START drücken (F1) | bereit |
 | GO – Vollgas! | Lauf gestartet, Motor noch unter *n vom Gas* |
-| Messung … 1/min | Kurve wird aufgenommen |
+| Messung · 9.500 1/min | Kurve wird aufgenommen. Ist das Feld schmal (1280 px), steht nur „Messung …“ |
 | GAS WEG! | *n Stop* erreicht oder Laufende erkannt |
 | GAS WEG – KUPPLUNG ZIEHEN! | dasselbe, wenn danach der Ausrollversuch läuft |
-| KUPPLUNG ZIEHEN – ausrollen lassen … | Ausrollversuch läuft |
+| KUPPLUNG ZIEHEN · ausrollen lassen · … 1/min | Ausrollversuch läuft (schmal: „KUPPLUNG ZIEHEN …“) |
 | „32.0 PS bei 10000 1/min“ | Ergebnis. Mit Verlusten: „Motor … PS bei … 1/min · Rad … PS“ |
 
 ![Große Anweisung GAS WEG](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_gas_weg.png)
 
-**Anweisungen groß** (Standard an): Die Texte des Statusfelds stehen im Lauf zusätzlich sehr groß über dem Diagramm,
-in derselben Farbe (GO grün, Messung gelb, GAS WEG rot, KUPPLUNG ZIEHEN gelb), darunter der Grund
-(„n Stop … 1/min erreicht – Lauf wird ausgewertet“). GAS WEG bleibt mindestens 2 s stehen. Ist die Option aus,
-erscheint wie bisher nur das große **GAS WEG**. Findet PyST nach 120 s kein Laufende, bricht es ab
+**Anweisungen groß** (Standard an): Was der Fahrer gerade tun muss, steht sehr groß über dem Diagramm, darunter der
+Grund. Die Schrift ist immer gleich groß (sie richtet sich nur nach der Breite des Diagramms); ein längerer Text bricht
+um.
+
+| Zeitpunkt | groß über dem Diagramm |
+|---|---|
+| START bis *n vom Gas* | **GO – Vollgas!** (grün) |
+| Messung (über *n vom Gas*) | nichts – die Kurve bleibt frei. Das Statusfeld oben zeigt „Messung …“ |
+| Laufende, ohne Ausrollversuch | **GAS WEG!** (rot), „n Stop … 1/min erreicht – Lauf wird ausgewertet“. Steht mindestens 2 s, danach gleich das große Ergebnis |
+| Laufende, mit [Ausrollversuch](Ausrollversuch.md) | **GAS WEG – KUPPLUNG ZIEHEN!** (rot), darunter „ausrollen lassen … 1/min“, bis das Ausrollen fertig ist. Dann das große Ergebnis |
+
+Ist die Option aus, erscheint wie bisher nur das große **GAS WEG**. Findet PyST nach 120 s kein Laufende, bricht es ab
 („Kein Laufende nach 120 s – abgebrochen“).
 
 ![Großes Ergebnis nach dem Lauf](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_ergebnis_gross.png)
 
-**Ergebnis groß** (Standard an): Nach dem Lauf stehen **Pmax** und **Mmax** mit Drehzahl groß über dem Diagramm,
-mit Farbe, Uhrzeit und Setup des Laufs. Weg mit START, Klick darauf oder Esc.
+**Ergebnis groß** (Standard an): Nach dem Lauf (nach GAS WEG bzw. nach dem Ausrollen) stehen **Pmax** und **Mmax**
+mit Drehzahl groß über dem Diagramm, mit Farbe, Uhrzeit und Setup des Laufs. Weg mit START, Klick darauf oder Esc.
 
 Beide Optionen und **Legende im Diagramm** (Standard aus) schaltet man unter Einstellungen › Rolle/Lauf ›
 **Anzeige beim Messen** oder im Menü **Ansicht**.
@@ -53,7 +61,7 @@ Zündimpulse, Trägheit und Filter müssen größer als 0 sein. Sonst kommt eine
 
 ## Lauf-Einstellungen …
 
-![Lauf-Einstellungen](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_lauf_einstellungen.png)
+![Lauf-Einstellungen](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_lauf_einstellungen.png)
 
 Ein kleines Fenster mit den Werten, die man zwischen zwei Läufen am häufigsten ändert. Es zeigt dieselben Felder wie
 **Einstellungen › Rolle/Lauf** und ist im Lauf gesperrt.
@@ -63,6 +71,7 @@ Ein kleines Fenster mit den Werten, die man zwischen zwei Läufen am häufigsten
 | **ÜBERSETZUNG  nKW/nRolle** | Auswahl **von Hand (Wert eintragen oder einmessen)** oder **Funkenmessung (aus Zündung/Rolle jedes Laufs)**. Feld **Übersetzung** (bei Funkenmessung heißt es **Startwert**). Knöpfe **Übersetzung einmessen …** und **Live abgleichen …**. Siehe [Übersetzung](Übersetzung.md) |
 | **FILTER** | **Filter in** Sekunden oder Messpunkte (wie LabVIEW), die zwei Filterwerte, Knopf **Standard** (1,75 s / 0,75 s) |
 | **LAUFGRENZEN** | **n vom Gas [1/min]** und **n Stop [1/min] (0 = aus)** |
+| **DIAGRAMM** | Haken **Ø automatisch mitteln** (Standard aus, wirkt sofort, auch im Menü **Ansicht**), siehe [unten](#ø-automatisch-mitteln) |
 | Link | **Alle Einstellungen › Rolle/Lauf …** |
 
 ## SETUP-WERTE
@@ -168,6 +177,10 @@ bzw. des automatischen Mittelwerts, wenn seine Zeile markiert ist.
 Am linken Rand des Diagramms steht eine schmale Leiste „Läufe · 5 Plätze: x gesperrt, y rollierend“. Mit der Maus
 darauf (300 ms) klappt die Liste auf. **Anpinnen** hält sie offen.
 
+**Breite:** Aufgeklappt zieht man am rechten Rand der Liste (Mauszeiger ↔, kleiner Steg in der Mitte), angepinnt am
+Teiler zwischen Liste und Diagramm. Beim Ziehen klappt die Liste nicht zu. Es gilt eine Breite für beide Zustände
+(240 bis 900 px), PyST merkt sie sich.
+
 ![Seitenleiste Läufe mit „＋“, ein Mittelwert und ein älterer Lauf gesperrt](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_laeufe.png)
 
 **Die 5 Plätze:** Im Diagramm stehen höchstens 5 Läufe je Fahrzeug. Gesperrte Plätze (Schloss) bleiben. Die übrigen
@@ -176,9 +189,8 @@ Plätze rollieren: der neueste Lauf verdrängt den ältesten nicht gesperrten.
 | Element | Funktion |
 |---|---|
 | **＋** (oben neben „Läufe“) | **Läufe hinzufügen …**: alte Läufe oder Mittelwerte gesperrt ins Diagramm legen (siehe [unten](#läufe-hinzufügen)) |
-| **Ø automatisch mitteln** (neben **＋**) | Mittelwert der Läufe im Diagramm mit gleichem Setup, ohne Platz zu belegen (siehe [unten](#ø-automatisch-mitteln)). Standard aus, auch im Menü **Ansicht** |
 | Filter | **alle**, **aktuelles Fahrzeug**, **aktuelles Setup** |
-| Gruppen | **Ø AUTOMATISCH** (nur mit Haken), **GESPERRT**, **ROLLIEREND** (die letzten n), **ÄLTERE LÄUFE** |
+| Gruppen | **Ø AUTOMATISCH** (nur mit Haken [Ø automatisch mitteln](#ø-automatisch-mitteln) unter **Lauf-Einstellungen …**), **GESPERRT**, **ROLLIEREND** (die letzten n), **ÄLTERE LÄUFE** |
 | Spalten | Schloss, Lauf, PS, bei, Nm, Fehler |
 | Schloss anklicken | Platz sperren bzw. lösen. Ältere Läufe holt man mit dem Schloss ins Diagramm |
 | Häkchen | Lauf im Diagramm zeigen oder ausblenden |
@@ -220,7 +232,8 @@ Linie mit Streuband und steht immer in der Legende („gesperrt, Referenz · Ban
 
 ![Ø automatisch mitteln: Mittelwert aus 4 Läufen mit Band, oben in der Liste mit „speichern“](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_auto_mittel.png)
 
-Mit dem Haken **Ø automatisch mitteln** oben in der Seitenleiste (oder im Menü **Ansicht**) mittelt PyST selbst:
+Mit dem Haken **Ø automatisch mitteln** im Fenster **Lauf-Einstellungen …** (Knopf oben rechts, Abschnitt
+**DIAGRAMM**) oder im Menü **Ansicht** mittelt PyST selbst. Der Haken wirkt sofort:
 
 - **Welche Läufe:** alle Läufe, die gerade im Diagramm stehen (Häkchen an) und **dasselbe Setup** haben wie der
   neueste davon. Gleiches Setup heißt: gleiches Fahrzeug, gleiches Setup und gleiche Setup-Werte. Ein Lauf mit Werten

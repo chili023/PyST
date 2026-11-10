@@ -32,15 +32,20 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 ![START-Nachfrage](bilder/v142_start_nachfrage_geaendert.png)
 
 **3. Groß über dem Diagramm**
-- **Anweisungen groß** (Standard an): GO – Vollgas!, Messung …, GAS WEG, KUPPLUNG ZIEHEN groß und farbig über dem
-  Diagramm, mit dem Grund darunter. Aus: nur das große „GAS WEG“ wie bisher.
+- **Anweisungen groß** (Standard an): groß und farbig über dem Diagramm, mit dem Grund darunter, immer in derselben
+  Schriftgröße (lange Texte brechen um):
+  - **GO – Vollgas!** (grün) bis die Messung beginnt (*n vom Gas*), dann ist sie weg.
+  - **Während der Messung steht nichts Großes über der Kurve.** Nur das Statusfeld oben zeigt „Messung …“.
+  - Am Laufende ohne Ausrollversuch **GAS WEG!** (rot, mindestens 2 s), danach gleich das große Ergebnis.
+  - Mit Ausrollversuch **GAS WEG – KUPPLUNG ZIEHEN!** (rot), bis das Ausrollen fertig ist, dann das große Ergebnis.
+  - Aus: nur das große „GAS WEG“ wie bisher.
 - **Ergebnis groß** (Standard an): nach dem Lauf Pmax und Mmax groß in der Mitte, mit Farbe, Uhrzeit und Setup des
   Laufs. Weg mit START, Klick oder Esc.
 - **Legende im Diagramm** (Standard aus): Farbe, Datum/Zeit und Setup bzw. Notiz aller Läufe. Mittelwerte stehen
   immer in der Legende.
 - Alle drei unter Einstellungen › Rolle/Lauf › **Anzeige beim Messen** und im Menü **Ansicht**.
 
-| GAS WEG | Ergebnis nach dem Lauf |
+| Laufende: GAS WEG | danach das Ergebnis |
 |---|---|
 | ![GAS WEG](bilder/v142_messen_gas_weg.png) | ![Ergebnis groß](bilder/v142_messen_ergebnis_gross.png) |
 
@@ -86,19 +91,28 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 
 ![Software & Firmware](bilder/v142_einst_firmware.png)
 
-**8. Ø automatisch mitteln (Messen › Seitenleiste Läufe)**
-- Neuer Haken **Ø automatisch mitteln** neben „＋“ (auch im Menü **Ansicht**, Standard aus). Ist er an, mittelt PyST
+**8. Ø automatisch mitteln (Messen › Lauf-Einstellungen …)**
+- Neuer Haken **Ø automatisch mitteln** im Fenster **Lauf-Einstellungen …** (Knopf oben rechts), Abschnitt
+  **DIAGRAMM** (auch im Menü **Ansicht**, Standard aus). Er wirkt sofort. Ist er an, mittelt PyST
   die Läufe im Diagramm, die dasselbe Setup haben wie der neueste (mindestens 2, Mittelwerte zählen nicht), und
   zeichnet den Mittelwert dick mit Band min–max, z. B. „Ø 3 Läufe · Serie HD 135 (automatisch)“.
 - Er belegt keinen der 5 Plätze, wird nach jedem Lauf, beim Sperren, Ein-/Ausblenden und Löschen von Läufen und beim
   Setup-Wechsel neu gerechnet und nicht von selbst gespeichert. Fähnchen am Cursor und ERGEBNIS (Zeile anklicken)
   zeigen ihn wie andere Kurven.
-- **speichern** an seiner Zeile legt einen echten Mittelwert-Lauf an (wie Auswertung › Mittelwert bilden), der dann
-  über „＋“ wählbar ist.
+- Er steht oben in der Seitenleiste Läufe unter **Ø AUTOMATISCH**. **speichern** an seiner Zeile legt einen echten
+  Mittelwert-Lauf an (wie Auswertung › Mittelwert bilden), der dann über „＋“ wählbar ist.
 - Der wirkungslose Haken „im Messfenster als Referenz anbieten“ im Fenster **Mittelwert bilden** ist weg: jeder
   gespeicherte Mittelwert steht im Fenster „Läufe hinzufügen“.
 
-![Ø automatisch mitteln](bilder/v142_messen_auto_mittel.png)
+| Lauf-Einstellungen mit „Ø automatisch mitteln“ | Ø automatisch im Diagramm |
+|---|---|
+| ![Lauf-Einstellungen](bilder/v142_lauf_einstellungen.png) | ![Ø automatisch mitteln](bilder/v142_messen_auto_mittel.png) |
+
+**9. Seitenleiste Läufe: Breite ziehen**
+- Die Breite der Seitenleiste **Läufe** lässt sich jetzt auch aufgeklappt (nicht angepinnt) ändern: am rechten Rand
+  ziehen (Mauszeiger ↔, kleiner Steg in der Mitte). Beim Ziehen klappt die Liste nicht zu.
+- Angepinnt zieht man wie bisher am Teiler. Es gibt eine Breite für beide Zustände (240 bis 900 px), PyST merkt sie
+  sich (`"laeufe_leiste"` in `einstellungen.json`). Dasselbe gilt für die Seitenleiste „Läufe & Kanäle“ der Auswertung.
 
 ## Hinweise und Annahmen
 
@@ -138,6 +152,6 @@ Bitte Rückmeldungen über die [Issues](https://github.com/chili023/PyST/issues)
 ## Tests
 
 Automatische Tests unter Linux mit Python 3 und PySide6, dazu Oberflächen-Rauchtests im Simulator, in Tag und Nacht
-und bei 1280 × 800. Stand der Freigabe: 630 Tests bestanden, 1 übersprungen.
+und bei 1280 × 800. Stand der Freigabe: 633 Tests bestanden, 1 übersprungen.
 
 Der Stand 1.4.1 liegt unter dem Tag `v1.4.1`.

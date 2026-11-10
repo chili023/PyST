@@ -417,6 +417,64 @@ class Leiste(unittest.TestCase):
         L.set_streifen_farben(["#d62728", "#2ca02c"])
         self.assertEqual(L.streifen.text(), "Läufe (3 von 6 sichtbar)")
 
+    def test_breite_ziehen_ungepinnt(self):
+        """Aufgeklappt (nicht angepinnt): Griff am rechten Rand (SizeHor) aendert die Breite in BREITE_MIN … MAX;
+        waehrend des Ziehens klappt nichts zu, losgelassen meldet breite_geaendert; angepinnt gilt dieselbe Breite."""
+        from PySide6 import QtTest
+        L = self.leiste
+        L._maus_drin = lambda: True
+        gemeldet = []
+        L.breite_geaendert.connect(gemeldet.append)
+        L.oeffnen()
+        g = L.griff
+        self.assertTrue(g.isVisible())
+        self.assertEqual(g.cursor().shape(), QtCore.Qt.SizeHorCursor)
+        self.assertEqual(g.geometry().right(), L.feld.width() - 1)          # am rechten Rand
+        links = L.feld.mapToGlobal(QtCore.QPoint(0, 0))
+        # echtes Ziehen mit der Maus (Druecken, Bewegen, Loslassen auf dem Griff)
+        start = QtCore.QPointF(g.width() / 2, 50)
+        QtTest.QTest.mousePress(g, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, start.toPoint())
+        ziel = QtCore.QPointF(g.mapFromGlobal(links + QtCore.QPoint(420, 50)))
+        ev = QtGui.QMouseEvent(QtCore.QEvent.MouseMove, ziel, g.mapToGlobal(ziel), QtCore.Qt.LeftButton,
+                               QtCore.Qt.LeftButton, QtCore.Qt.NoModifier)
+        QtWidgets.QApplication.sendEvent(g, ev)
+        self.assertTrue(L.ist_beim_ziehen())
+        self.assertEqual(L.feld.width(), 420)
+        # Maus verlaesst beim Ziehen das Feld: bleibt offen
+        L._maus_drin = lambda: False
+        QtWidgets.QApplication.sendEvent(L.feld, QtCore.QEvent(QtCore.QEvent.Leave))
+        L._zu_wenn_draussen()
+        self.assertTrue(L.ist_offen())
+        L._maus_drin = lambda: True
+        QtTest.QTest.mouseRelease(g, QtCore.Qt.LeftButton, QtCore.Qt.NoModifier, ziel.toPoint())
+        self.assertFalse(L.ist_beim_ziehen())
+        self.assertEqual(gemeldet, [420])
+        self.assertEqual(L.zustand()["breite"], 420)
+        pump(0.5)
+        self.assertTrue(L.ist_offen())
+        # Grenzen
+        g.aktiv = True
+        L._griff_gezogen(links.x() + 50)
+        self.assertEqual(L.feld.width(), L.BREITE_MIN)
+        L._griff_gezogen(links.x() + 5000)
+        self.assertEqual(L.feld.width(), min(L.BREITE_MAX, L.width() - 40))
+        L._griff_los()
+        g.aktiv = False
+        L._griff_gezogen(links.x() + 420)
+        L._griff_los()
+        # angepinnt: kein Griff, dieselbe Breite im Teiler; Teiler ziehen aendert die Breite
+        L.set_angepinnt(True)
+        pump(0.05)
+        self.assertFalse(L.griff.isVisible())
+        self.assertEqual(L.splitter.sizes()[0], 420)
+        L.splitter.moveSplitter(360, 1)
+        pump(0.6)
+        self.assertEqual(L.breite, 360)
+        self.assertEqual(gemeldet[-1], 360)
+        L.set_angepinnt(False)
+        L.oeffnen()
+        self.assertEqual(L.feld.width(), 360)
+
 
 # ============================================================================================== Hauptfenster
 class Hauptfenster(unittest.TestCase):

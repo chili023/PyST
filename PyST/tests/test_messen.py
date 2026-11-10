@@ -746,9 +746,11 @@ class Messen(unittest.TestCase):
         self.assertNotEqual(lam.quelle.text(), "Lauf")
 
     def test_anweisung_gross(self):
-        """Laufzustaende gross ueber dem Diagramm; GAS WEG haelt seine Zeit; Option aus: nur GAS WEG."""
+        """GO gross bis die Messung beginnt, waehrend der Messung nichts gross (nur das Feld neben START), am
+        Laufende GAS WEG! bzw. GAS WEG – KUPPLUNG ZIEHEN! bis das Ausrollen fertig ist; feste Schrift; Option aus:
+        nur GAS WEG."""
         from types import SimpleNamespace
-        from pyst.runner import COAST, RUN, WAIT
+        from pyst.runner import COAST, DONE, RUN, WAIT
         w = self.w
         gas = {"weg": False}
         ctrl = SimpleNamespace(state=WAIT, gas_off=lambda: gas["weg"], ausrollen=False,
@@ -756,45 +758,152 @@ class Messen(unittest.TestCase):
         lv = SimpleNamespace(n_calc=9500.0)
         alt = w.ctrl
         w.ctrl = ctrl
+        a = w.anweisung
         try:
             self.assertTrue(w.anzeige_an(mp.ANWEISUNG_GROSS))       # Standard an
             w._laufzustand_zeigen(WAIT, lv)
-            self.assertTrue(w.anweisung.isVisible())
-            self.assertEqual(w.anweisung.text(), "GO – Vollgas!")
-            self.assertEqual(w.anweisung.stufe, theme.GUT)
-            ctrl.state = RUN
+            self.assertTrue(a.isVisible())
+            self.assertEqual(a.text(), "GO – Vollgas!")
+            self.assertEqual(a.stufe, theme.GUT)
+            px_go = a.schrift_px()
+            ctrl.state = RUN                                        # n vom Gas: Messung beginnt -> GO sofort weg
             w._laufzustand_zeigen(RUN, lv)
-            self.assertEqual(w.anweisung.text(), "Messung … 9.500 1/min")
+            self.assertFalse(a.isVisible())
+            self.assertEqual(w.zustand.text(), "Messung · 9.500 1/min")   # nur klein neben START
+            lv.n_calc = 10500.0
+            w._laufzustand_zeigen(RUN, lv)
+            self.assertFalse(a.isVisible())                         # waehrend der Messung nichts gross
+            self.assertEqual(w.zustand.text(), "Messung · 10.500 1/min")
             gas["weg"] = True
             w._laufzustand_zeigen(RUN, lv)
-            self.assertEqual(w.anweisung.text(), "GAS WEG!")
-            self.assertIn("n Stop 10.800", w.anweisung.unter.text())
-            self.assertEqual(w.anweisung.stufe, theme.FEHLER)
+            self.assertEqual(a.text(), "GAS WEG!")
+            self.assertIn("n Stop 10.800", a.unter.text())
+            self.assertEqual(a.stufe, theme.FEHLER)
+            self.assertEqual(a.schrift_px(), px_go)                 # feste Schrift, unabhaengig vom Text
             gas["weg"] = False
             w._laufzustand_zeigen(RUN, lv)                          # GAS WEG bleibt seine Zeit stehen
-            self.assertEqual(w.anweisung.text(), "GAS WEG!")
+            self.assertEqual(a.text(), "GAS WEG!")
+            self.assertEqual(w.zustand.text(), "GAS WEG!")                # auch im Feld neben START
+            # mit Ausrollversuch: GAS WEG – KUPPLUNG ZIEHEN! bis das Ausrollen fertig ist
+            a.verbergen()
             ctrl.ausrollen, gas["weg"] = True, True
             w._laufzustand_zeigen(RUN, lv)
-            self.assertEqual(w.anweisung.text(), "GAS WEG – KUPPLUNG ZIEHEN!")
+            self.assertEqual(a.text(), "GAS WEG – KUPPLUNG ZIEHEN!")
             ctrl.state = COAST
-            w._laufzustand_zeigen(COAST, lv)
-            self.assertEqual(w.anweisung.text(), "KUPPLUNG ZIEHEN")
-            self.assertIn("ausrollen lassen", w.anweisung.unter.text())
-            # passt in die Breite des Diagramms
-            self.assertLessEqual(w.anweisung.geometry().right(), w.plot.width())
+            for n in (8000.0, 6000.0, 4000.0):
+                lv.n_calc = n
+                w._laufzustand_zeigen(COAST, lv)
+                self.assertEqual(a.text(), "GAS WEG – KUPPLUNG ZIEHEN!")
+                self.assertIn("ausrollen lassen", a.unter.text())
+                self.assertEqual(a.schrift_px(), px_go)
+            self.assertIn("KUPPLUNG ZIEHEN", w.zustand.text())
+            # passt in die Breite des Diagramms, lange Texte brechen um (Schrift bleibt)
+            self.assertLessEqual(a.geometry().right(), w.plot.width())
+            a.zeige("BITTE GANZ LANGSAM UND VORSICHTIG DIE KUPPLUNG ZIEHEN", "", theme.FEHLER)
+            self.assertEqual(a.schrift_px(), px_go)
+            self.assertGreater(a.gross.height(), 2 * px_go)
+            self.assertTrue(a.gross.wordWrap())
+            a.verbergen()
             # Option aus: nur noch GAS WEG wie frueher
             w.anzeige_setzen(mp.ANWEISUNG_GROSS, False)
-            self.assertFalse(w.anweisung.isVisible())
+            self.assertFalse(a.isVisible())
             ctrl.state = WAIT
             w._laufzustand_zeigen(WAIT, lv)
-            self.assertFalse(w.anweisung.isVisible())
+            self.assertFalse(a.isVisible())
             ctrl.state = RUN
+            gas["weg"] = False
             w._laufzustand_zeigen(RUN, lv)
-            self.assertEqual(w.anweisung.text(), "GAS WEG")
+            self.assertFalse(a.isVisible())
+            gas["weg"] = True
+            w._laufzustand_zeigen(RUN, lv)
+            self.assertEqual(a.text(), "GAS WEG")
+            a.verbergen()
+            gas["weg"] = False
+            w._laufzustand_zeigen(RUN, lv)
+            ctrl.state = COAST                                      # Laufende mit Ausrollen: einmal GAS WEG
+            w._laufzustand_zeigen(COAST, lv)
+            self.assertEqual(a.text(), "GAS WEG")
             w._gross_verbergen()                                    # START: weg
-            self.assertFalse(w.anweisung.isVisible())
+            self.assertFalse(a.isVisible())
+            ctrl.state = DONE
+            w._laufzustand_zeigen(DONE, lv)
+            self.assertFalse(a.isVisible())
         finally:
             w.ctrl = alt
+
+    def test_laufende_gas_weg_dann_ergebnis(self):
+        """Ohne Ausrollversuch: am Laufende GAS WEG! (mind. die Haltezeit), danach das Ergebnis gross; mit
+        Ausrollversuch kommt das Ergebnis sofort (Ausrollen fertig). START verwirft ein wartendes Ergebnis."""
+        from types import SimpleNamespace
+        w = self.w
+        ids = self._laeufe(1)
+        r = SimpleNamespace(p_max=31.6, n_pmax=9850.0, m_max=22.7, n_mmax=8900.0)
+        a, e = w.anweisung, w.ergebnis_gross
+        w._laufende_gas_weg()
+        self.assertTrue(a.isVisible())
+        self.assertEqual(a.text(), "GAS WEG!")
+        self.assertEqual(a.stufe, theme.FEHLER)
+        self.assertGreater(a.rest_s(), mp.GAS_WEG_HALTEN_S - 0.5)
+        w._ergebnis_gross_zeigen(r, ids[0], warten=True)
+        self.assertFalse(e.isVisible())                             # GAS WEG steht noch
+        self.assertTrue(w._ergebnis_timer.isActive())
+        end = time.time() + mp.GAS_WEG_HALTEN_S + 1.5
+        while not e.isVisible() and time.time() < end:
+            pump(0.05)
+        self.assertTrue(e.isVisible())                              # danach das Ergebnis
+        self.assertFalse(a.isVisible())
+        self.assertIn("31,6 PS", e.werte_text())
+        # steht GAS WEG schon seit n Stop: nicht verlaengern
+        e.hide()
+        a.zeige("GAS WEG!", "n Stop erreicht", theme.FEHLER, 0.3)
+        w._laufende_gas_weg()
+        self.assertLess(a.rest_s(), 0.35)
+        # START waehrend GAS WEG: kein Ergebnis hinterher
+        w._ergebnis_gross_zeigen(r, ids[0], warten=True)
+        w._gross_verbergen()
+        pump(0.5)
+        self.assertFalse(e.isVisible())
+        self.assertFalse(w._ergebnis_timer.isActive())
+        # mit Ausrollversuch (warten=False): sofort, Anweisung weg
+        a.zeige("GAS WEG –\nKUPPLUNG ZIEHEN!", "ausrollen lassen", theme.FEHLER)
+        w._ergebnis_gross_zeigen(r, ids[0])
+        self.assertTrue(e.isVisible())
+        self.assertFalse(a.isVisible())
+        # Option Anweisungen aus: trotzdem „GAS WEG“ am Laufende
+        e.hide()
+        w.anzeige_setzen(mp.ANWEISUNG_GROSS, False)
+        w._laufende_gas_weg()
+        self.assertEqual(a.text(), "GAS WEG")
+        w._gross_verbergen()
+
+    def test_seitenleiste_breite_gespeichert(self):
+        """Breite der Seitenleiste Läufe: aufgeklappt (nicht angepinnt) am Griff ziehen, gespeichert in
+        settings["laeufe_leiste"], gilt auch angepinnt und nach dem Neustart."""
+        w = self.w
+        L = w.laeufe_leiste
+        L._maus_drin = lambda: True                                # offscreen gibt es keinen Mauszeiger
+        L.oeffnen()
+        self.assertTrue(L.ist_offen() and not L.ist_angepinnt())
+        self.assertTrue(L.griff.isVisible())
+        links = L.feld.mapToGlobal(QtCore.QPoint(0, 0)).x()
+        L.griff.aktiv = True
+        L.griff.gezogen.emit(links + 520)
+        self.assertTrue(L.ist_beim_ziehen())
+        self.assertEqual(L.feld.width(), 520)
+        L.griff.aktiv = False
+        L.griff.losgelassen.emit()
+        self.assertEqual(w.settings["laeufe_leiste"]["breite"], 520)
+        from pyst import gui
+        self.assertEqual(gui.load_settings()["laeufe_leiste"]["breite"], 520)
+        L.set_angepinnt(True)                                      # angepinnt: dieselbe Breite
+        pump(0.05)
+        self.assertEqual(L.splitter.sizes()[0], 520)
+        L.set_angepinnt(False)
+        from conftest import close_window
+        close_window(self.w, APP)
+        self.w = gui.MainWindow()                                  # Neustart
+        pump(0.05)
+        self.assertEqual(self.w.laeufe_leiste.breite, 520)
 
     def test_ergebnis_gross(self):
         from types import SimpleNamespace
@@ -870,17 +979,33 @@ class Messen(unittest.TestCase):
                 if t.topLevelItem(i).data(0, mp.AUTO_ROLLE)}
 
     def test_auto_mittel_haken_und_neustart(self):
-        """Haken im Kopf der Seitenleiste neben „＋“ und im Menue Ansicht, Standard aus, gespeichert in settings und
-        nach dem Neustart wieder da."""
+        """Haken unter „Lauf-Einstellungen …“ › DIAGRAMM (nicht mehr in der Seitenleiste) und im Menue Ansicht,
+        Standard aus, wirkt sofort, gespeichert in settings und nach dem Neustart wieder da."""
         w = self.w
+        ids = self._laeufe(3)
         self.assertFalse(w.auto_mittel_an())
-        self.assertEqual(w.laufliste.auto.text(), "Ø automatisch mitteln")
-        self.assertFalse(w.laufliste.auto.isChecked())
-        self.assertEqual(w.laeufe_leiste.kopf.indexOf(w.laufliste.auto), 2)      # gleich neben „＋“
+        self.assertFalse(hasattr(w.laufliste, "auto"))                         # nicht mehr in der Seitenleiste
+        kopf = w.laeufe_leiste.kopf
+        self.assertFalse(any(isinstance(kopf.itemAt(i).widget(), QtWidgets.QCheckBox) for i in range(kopf.count())))
+        w._lauf_popup_zeigen()
+        p = w.lauf_popup
+        self.assertEqual(p.auto.text(), "Ø automatisch mitteln")
+        self.assertFalse(p.auto.isChecked())
+        texte = [lbl.text() for lbl in p.findChildren(QtWidgets.QLabel)]
+        self.assertIn("DIAGRAMM", texte)
+        p.auto.setChecked(True)                                                # wirkt sofort
+        self.assertTrue(w.settings[mp.AUTO_MITTEL])
+        self.assertIn(mp.AUTO_KEY, w.plot.data)
+        self.assertEqual(set(w._auto["ids"]), set(ids))
+        self.assertTrue(w.auto_aktion.isChecked())                             # Menue Ansicht gleich
+        w.auto_aktion.setChecked(False)
+        self.assertFalse(p.auto.isChecked())
+        self.assertNotIn(mp.AUTO_KEY, w.plot.data)
+        p.hide()
         texte = [a.text() for a in w.menuBar().actions()[0].menu().actions()]
         self.assertIn("Ø automatisch mitteln", texte)
         w.auto_aktion.setChecked(True)                                         # Menue Ansicht
-        self.assertTrue(w.laufliste.auto.isChecked())
+        self.assertTrue(p.auto.isChecked())
         self.assertTrue(w.settings[mp.AUTO_MITTEL])
         from pyst import gui
         self.assertTrue(gui.load_settings()[mp.AUTO_MITTEL])
@@ -889,9 +1014,11 @@ class Messen(unittest.TestCase):
         self.w = gui.MainWindow()                                              # Neustart
         pump(0.05)
         self.assertTrue(self.w.auto_mittel_an())
-        self.assertTrue(self.w.laufliste.auto.isChecked())
         self.assertTrue(self.w.auto_aktion.isChecked())
-        self.w.laufliste.auto.setChecked(False)
+        self.w._lauf_popup_zeigen()
+        self.assertTrue(self.w.lauf_popup.auto.isChecked())
+        self.w.lauf_popup.auto.setChecked(False)
+        self.w.lauf_popup.hide()
         self.assertFalse(self.w.auto_aktion.isChecked())
         self.assertFalse(gui.load_settings()[mp.AUTO_MITTEL])
 
@@ -902,7 +1029,7 @@ class Messen(unittest.TestCase):
         ids = self._laeufe(6)
         self.assertNotIn(mp.AUTO_KEY, w.plot.data)                               # Standard aus
         self.assertEqual(self._auto_zeilen(), {})
-        w.laufliste.auto.setChecked(True)
+        w.auto_mittel_setzen(True)
         roll = w._plaetze[1]
         self.assertEqual(len(roll), mp.MESSPLAETZE)
         self.assertEqual(set(w._auto["ids"]), set(roll))                         # alle im Diagramm, gleiches Setup
@@ -982,7 +1109,7 @@ class Messen(unittest.TestCase):
         self.assertNotIn(neu, w.diagramm_laeufe())
         self.assertEqual(w._auto["sid"], self.sid)
         # Haken aus: weg
-        w.laufliste.auto.setChecked(False)
+        w.auto_mittel_setzen(False)
         self.assertNotIn(mp.AUTO_KEY, w.plot.data)
         self.assertEqual(self._auto_zeilen(), {})
 
@@ -990,7 +1117,7 @@ class Messen(unittest.TestCase):
         """„speichern“ an der Zeile: echter Mittelwert-Lauf (wie Auswertung › Mittelwert bilden), über „＋“ wählbar."""
         w = self.w
         ids = self._laeufe(4)
-        w.laufliste.auto.setChecked(True)
+        w.auto_mittel_setzen(True)
         quellen = list(w._auto["ids"])
         self.assertEqual(len(quellen), 4)
         def mittelwerte():
@@ -1016,7 +1143,7 @@ class Messen(unittest.TestCase):
         dlg.deleteLater()
         self.assertEqual(w.laeufe_hinzufuegen([row.id]), 1)
         self.assertNotIn(row.id, w._auto["ids"])                                 # gespeicherter Mittelwert zaehlt nicht
-        w.laufliste.auto.setChecked(False)
+        w.auto_mittel_setzen(False)
         self.assertIsNone(w.auto_mittel_speichern())                             # ohne Mittelwert nichts
         self.assertEqual(len(mittelwerte()), 1)
         self.assertEqual(sorted(ids), sorted(quellen))

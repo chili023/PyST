@@ -61,7 +61,8 @@ Siehe [Fahrzeuge und Setups](Fahrzeuge-und-Setups.md).
    nichts umgebaut → **Unverändert starten** (Enter oder F1), sonst die neuen Werte eintragen und **Übernehmen und
    starten**. Abschaltbar, siehe [Messen](Messen.md#start-nachfrage).
 3. PyST liest das Klima (wenn eingeschaltet) und zeigt **„GO – Vollgas!“** (grün), auch groß über dem Diagramm.
-4. Vollgas. Über *n vom Gas* steht **„Messung … 1/min“** (gelb), die Live-Kurve wächst schwarz bzw. weiß mit.
+4. Vollgas. Über *n vom Gas* verschwindet das große GO, im Statusfeld steht **„Messung …“** (gelb), die Live-Kurve
+   wächst schwarz bzw. weiß mit.
 5. Bei *n Stop* erscheint **GAS WEG** (rot), groß über dem Diagramm. Gas weg.
 6. PyST wertet aus. Pmax und Mmax stehen groß über dem Diagramm (weg mit Klick oder Esc), außerdem im Feld oben
    (z. B. „32.0 PS bei 10000 1/min“), unter dem Diagramm und rechts unten unter **ERGEBNIS**. Mit **Auto-Speichern**

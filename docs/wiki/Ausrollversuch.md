@@ -51,9 +51,10 @@ frei) wird verworfen. Solange das Fenster offen ist, startet kein Lauf; während
 ## Ausrollversuch nach dem Lauf
 
 1. **Ausrollversuch nach jedem Lauf** anhaken.
-2. Lauf wie immer. Bei *n Stop* zeigt PyST **GAS WEG – KUPPLUNG ZIEHEN!**.
+2. Lauf wie immer. Bei *n Stop* zeigt PyST **GAS WEG – KUPPLUNG ZIEHEN!** (mit „Anweisungen groß“ groß über dem
+   Diagramm, bis das Ausrollen fertig ist; danach kommt das große Ergebnis).
 3. Sofort die **Kupplung ziehen** und gezogen halten, bis die Rolle ausgerollt ist. Anzeige:
-   **„KUPPLUNG ZIEHEN – ausrollen lassen …“**. Nicht bremsen, nicht schalten.
+   **„KUPPLUNG ZIEHEN · ausrollen lassen · … 1/min“**. Nicht bremsen, nicht schalten.
 4. Die Aufzeichnung endet von selbst:
    - bei der eingestellten Drehzahl („ausgerollt bis … 1/min“),
    - wenn die Rolle steht,

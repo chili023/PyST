@@ -39,7 +39,7 @@ Ausführliche Anleitung zu jeder Funktion: **[PyST-Wiki](https://github.com/chil
 
 | Reiter | Inhalt |
 |---|---|
-| **Messen** | Kopfzeile Fahrzeug · Setup · Notiz · Auto-Speichern · Status · **Verbinden/Trennen** · **Lauf-Einstellungen …** (Übersetzung, Filter, Laufgrenzen) · **START (F1)** (im Lauf rot: Abbrechen (Esc)). Zeile **SETUP-WERTE** (bis 8 Felder, ändern → als neues Setup speichern oder nur für diesen Lauf; bei unverändertem Setup fragt START „Setup unverändert – Änderungen eintragen?“). Leistungsdiagramm mit unterem Diagramm, „Kurven ▾“, Achsgrenzen, Fähnchen am Cursor je Kurve, große Anweisungen (GO, GAS WEG, KUPPLUNG ZIEHEN) und großes Ergebnis Pmax/Mmax, Legende (Option). Rechts Umgebung (BME280) in einer Zeile, Drehzahl groß, 0 bis 12 **LIVE**-Kacheln je Fahrzeug (ab 5 zweispaltig; Kanal und Balkengrenzen wählbar; mit der Maus im Diagramm die Werte des letzten Laufs am Cursor), Ergebnis. Seitenleiste **Läufe**: 5 Plätze, gesperrt (Schloss) oder rollierend, **＋** holt alte Läufe und Mittelwerte gesperrt ins Diagramm, Haken **Ø automatisch mitteln** (Mittelwert der Läufe im Diagramm mit gleichem Setup, mit Band, nach jedem Lauf neu, belegt keinen Platz, **speichern** legt einen Mittelwert-Lauf an) |
+| **Messen** | Kopfzeile Fahrzeug · Setup · Notiz · Auto-Speichern · Status · **Verbinden/Trennen** · **Lauf-Einstellungen …** (Übersetzung, Filter, Laufgrenzen, Ø automatisch mitteln) · **START (F1)** (im Lauf rot: Abbrechen (Esc)). Zeile **SETUP-WERTE** (bis 8 Felder, ändern → als neues Setup speichern oder nur für diesen Lauf; bei unverändertem Setup fragt START „Setup unverändert – Änderungen eintragen?“). Leistungsdiagramm mit unterem Diagramm, „Kurven ▾“, Achsgrenzen, Fähnchen am Cursor je Kurve, große Anweisungen (GO bis *n vom Gas*, in der Messung nichts, am Ende GAS WEG bzw. GAS WEG – KUPPLUNG ZIEHEN) und großes Ergebnis Pmax/Mmax, Legende (Option). Rechts Umgebung (BME280) in einer Zeile, Drehzahl groß, 0 bis 12 **LIVE**-Kacheln je Fahrzeug (ab 5 zweispaltig; Kanal und Balkengrenzen wählbar; mit der Maus im Diagramm die Werte des letzten Laufs am Cursor), Ergebnis. Seitenleiste **Läufe** (Breite am Rand ziehbar, auch nicht angepinnt): 5 Plätze, gesperrt (Schloss) oder rollierend, **＋** holt alte Läufe und Mittelwerte gesperrt ins Diagramm, **Ø automatisch mitteln** unter Lauf-Einstellungen (Mittelwert der Läufe im Diagramm mit gleichem Setup, mit Band, nach jedem Lauf neu, belegt keinen Platz, **speichern** legt einen Mittelwert-Lauf an) |
 | **Fahrzeuge & Setups** | Fahrzeuge (Hersteller, Modell, Gemischaufbereitung, Motor …) und Setups (Motor, Vergaser, Einspritzung/ECU, Zündung, Antrieb, Ein-/Auslass, Kraftstoff). Kopieren, „Für neue Läufe verwenden“ |
 | **Auswertung** | Läufe überlagern wie MegaLogViewer: bis 4 Felder, X-Achse Zeit oder Drehzahl, Cursor mit Maus und ←/→. Laufleiste **ANGEZEIGTE LÄUFE** mit Setup-Spalten (Änderungen gelb), **Mittelwert bilden …**, rechts **Werte am Cursor** und **Setup-Vergleich**. Import, PDF-Bericht, CSV |
 | **Oszi / Dauermessung** | Fehlersuche an Zündung und Rolle: Dauermessung mit Markern (F2), Linienschreiber, Software-Trigger, Ereignisliste, Flanken-Ansicht (PST-Diag 1), Geräte-Einstellungen |
@@ -147,7 +147,8 @@ Laufs lässt er sich nicht öffnen.
    läuft alles exakt wie bisher.
 2. Lauf wie immer. Bei *n Stop* zeigt das Statusfeld in der Kopfzeile **GAS WEG – KUPPLUNG ZIEHEN!**
 3. Gas weg und **gleich die Kupplung ziehen**, gezogen halten, nicht bremsen, nicht schalten. Nach dem Laufende
-   steht **KUPPLUNG ZIEHEN – ausrollen lassen** (blau), die Aufzeichnung läuft weiter.
+   steht **KUPPLUNG ZIEHEN · ausrollen lassen** (blau) im Statusfeld und mit „Anweisungen groß“ **GAS WEG –
+   KUPPLUNG ZIEHEN!** groß über dem Diagramm, bis das Ausrollen fertig ist; die Aufzeichnung läuft weiter.
 4. Das Ausrollen endet bei der eingestellten Motordrehzahl (Rolle × i, Vorgabe 3000 1/min, 0 = bis Stillstand),
    nach der Höchstdauer (Vorgabe 120 s), wenn die Drehzahl wieder steigt, keine Daten mehr kommen oder mit
    **Ausrollen beenden (Esc)**. Der Lauf ist dann schon fertig und wird wie immer ausgewertet und gespeichert
@@ -580,9 +581,10 @@ Alle Prüfstandsparameter lassen sich überschreiben, z.B. `--ratio 6.85 --inert
    Änderung, **Abbrechen**; abschaltbar unter Einstellungen › Rolle/Lauf, die Zangentaste „Neuer Lauf“ fragt nie)
    → Klima wird gelesen → Statusfeld in der Kopfzeile **GO – Vollgas!** (grün)
 4. Über *n vom Gas* beginnt die Messung (Statusfeld „Messung …“, gelb), ab *n Stop* steht **GAS WEG!** (rot) im
-   Statusfeld. Mit „Anweisungen groß“ (Standard) stehen GO, Messung, GAS WEG und KUPPLUNG ZIEHEN zusätzlich groß über
-   dem Diagramm, sonst nur GAS WEG.
-5. Ergebnis wird angezeigt (mit „Ergebnis groß“ Pmax/Mmax groß über dem Diagramm, weg mit Klick, START oder Esc) und
+   Statusfeld. Mit „Anweisungen groß“ (Standard) steht zusätzlich groß über dem Diagramm: **GO – Vollgas!** bis
+   *n vom Gas*, während der Messung nichts, am Laufende **GAS WEG!** (mindestens 2 s) bzw. mit Ausrollversuch
+   **GAS WEG – KUPPLUNG ZIEHEN!** bis das Ausrollen fertig ist. Ohne die Option nur GAS WEG.
+5. Danach wird das Ergebnis angezeigt (mit „Ergebnis groß“ Pmax/Mmax groß über dem Diagramm, weg mit Klick, START oder Esc) und
    (Auto-Speichern) unter `~/PyST/messungen/` abgelegt.
 6. **Abbrechen (Esc)** jederzeit (der START-Knopf wird im Lauf dazu rot). Mit Ausrollversuch: nach dem Laufende Kupplung ziehen (siehe „Ausrollversuch“);
    Esc beendet dann nur das Ausrollen, der Lauf bleibt.

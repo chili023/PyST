@@ -1444,6 +1444,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         r = self.ctrl.result
         self.plot.freeze(False)
         coast = self.ctrl.coast
+        if coast is None:
+            self._laufende_gas_weg()                       # ohne Ausrollversuch: GAS WEG groß, dann das Ergebnis
         ratio_text = self._ratio_aus_funken_uebernehmen()
         if r is None:
             self._set_status("Fertig – keine Auswertung möglich", farben.BALKEN_FEHLER)
@@ -1466,7 +1468,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             self._draw_live(final=True)
             self.plot.auto_scale()
             self._legende_zeigen()
-        self._ergebnis_gross_zeigen(r, rid)                # Option „Ergebnis groß nach dem Lauf“
+        self._ergebnis_gross_zeigen(r, rid, warten=coast is None)   # Option „Ergebnis groß nach dem Lauf“
         if coast is not None:
             self.page_kalib.show_result(coast, self._coast_label(rid), rid, n_pmax=r.n_pmax)
             self.statusBar().showMessage(self.ctrl.coast_text(), 10000)

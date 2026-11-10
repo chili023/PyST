@@ -112,7 +112,7 @@ Seitenleiste Läufe (Art „nur Mittelwerte“) gesperrt ins Diagramm. Dort steh
 als Referenz für jeden neuen Lauf. Das gilt für jeden gespeicherten Mittelwert; den früheren Haken „im Messfenster als
 Referenz anbieten“ gibt es seit 1.4.2 nicht mehr.
 
-**Schneller in Messen:** Der Haken [Ø automatisch mitteln](Messen.md#ø-automatisch-mitteln) in der Seitenleiste Läufe
+**Schneller in Messen:** Der Haken [Ø automatisch mitteln](Messen.md#ø-automatisch-mitteln) unter Messen › Lauf-Einstellungen …
 mittelt die Läufe im Diagramm mit gleichem Setup selbst, nach jedem Lauf neu. **speichern** an seiner Zeile legt
 denselben Mittelwert-Lauf an wie dieser Dialog (Band min–max, Raster 50 1/min, oben 300 1/min weg).
 

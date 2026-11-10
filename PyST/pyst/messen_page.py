@@ -6,7 +6,7 @@ Aufbau von oben nach unten:
   Kopfzeile    Fahrzeug | Setup | Notiz | Auto-Speichern | Laufzustand (StatusFeld) | Trennen/Verbinden |
                Lauf-Einstellungen … (Unterzeile: Übersetzung, Filter; Popup LaufEinstellungen mit Übersetzungsart von
                Hand/Funkenmessung, Einmessen, Live abgleichen (abgleich_dialog), Filter, n vom Gas/n Stop – dieselben
-               Felder wie Einstellungen › Rolle/Lauf) |
+               Felder wie Einstellungen › Rolle/Lauf – und Diagramm: Ø automatisch mitteln) |
                START (F1), im Lauf derselbe Knopf rot: Abbrechen (Esc) bzw. Ausrollen beenden (Esc)
   Setup-Werte  Schnellwerte (db.schnellwert_plaetze je Fahrzeug, 0 … SCHNELLWERT_MAX Plaetze: „＋“ fuegt an, Titel-Menue
                waehlt das Feld oder entfernt den Platz), direkt editierbar;
@@ -22,8 +22,10 @@ Aufbau von oben nach unten:
 Diagramm: 5 Plaetze (db.messplaetze) = gesperrte Laeufe (Schloss, auch Mittelwert-Referenzen mit Band min–max)
 und die neuesten Laeufe (rollierend). Das Haekchen blendet einen Platz aus, aeltere Laeufe kommen per Schloss hinein.
 „＋“ im Kopf der Seitenleiste Läufe oeffnet LaeufeDialog („Läufe hinzufügen“): gespeicherte Laeufe und Mittelwerte (Ø)
-aller Fahrzeuge waehlen, sie kommen gesperrt auf freie Plaetze (laeufe_hinzufuegen).
-Daneben der Haken „Ø automatisch mitteln“ (Einstellung AUTO_MITTEL, Standard aus, auch im Menue Ansicht): aus den
+aller Fahrzeuge waehlen, sie kommen gesperrt auf freie Plaetze (laeufe_hinzufuegen). Die Breite der Seitenleiste
+laesst sich aufgeklappt am rechten Rand und angepinnt am Teiler ziehen (eine Breite, gespeichert in laeufe_leiste).
+Unter „Lauf-Einstellungen …“ › DIAGRAMM der Haken „Ø automatisch mitteln“ (Einstellung AUTO_MITTEL, Standard aus, auch
+im Menue Ansicht): aus den
 Laeufen im Diagramm mit demselben Setup wie der neueste (auto_mittel_quellen, mind. 2, ohne Mittelwerte) rechnet
 mittelwert.mitteln einen Mittelwert, gezeichnet wie ein Mittelwert-Lauf (dick, Band min–max) unter AUTO_KEY. Er belegt
 keinen der Plaetze, steht oben in der Liste („Ø AUTOMATISCH“, AUTO_ROLLE) und wird bei jedem Neuzeichnen nachgefuehrt
@@ -39,7 +41,9 @@ die Zangentaste „Neuer Lauf“ fragt nie. Schalter: Einstellungen › Rolle/La
 
 Anzeige beim Messen (Einstellungen › Rolle/Lauf und Menue Ansicht, ANZEIGE_OPTIONEN):
   ERGEBNIS_GROSS   (Standard an)  nach dem Lauf Pmax/Mmax gross ueber dem Diagramm (weg mit START, Klick, Esc)
-  ANWEISUNG_GROSS  (Standard an)  Laufzustand gross fuer den Fahrer (GO – Vollgas!, GAS WEG …); aus: nur „GAS WEG“
+  ANWEISUNG_GROSS  (Standard an)  Anweisung gross fuer den Fahrer: GO – Vollgas! bis n vom Gas, waehrend der Messung
+                                  nichts, am Laufende GAS WEG! bzw. GAS WEG – KUPPLUNG ZIEHEN! (Ausrollversuch),
+                                  danach das Ergebnis; aus: nur „GAS WEG“
   ANZEIGE_LEGENDE  (Standard aus) Legende aller Läufe im Diagramm (Farbe, Datum/Zeit, Setup bzw. Notiz)
 """
 import html
@@ -833,11 +837,14 @@ class SetupZeile(QtWidgets.QFrame):
 # =============================================================================================== Diagramm-Zubehoer
 class AnweisungGross(QtWidgets.QWidget):
     """Anweisung fuer den Fahrer gross mittig ueber dem Diagramm (aus Entfernung lesbar): „GO – Vollgas!“,
-    „Messung … 9.500 1/min“, „GAS WEG“, „KUPPLUNG ZIEHEN“ … in der Farbe der Stufe (theme.status_farben), darunter
-    der Grund. Ersetzt das fruehere GAS-WEG-Band (Option ANWEISUNG_GROSS aus: nur noch „GAS WEG“ wie bisher).
+    „GAS WEG!“, „GAS WEG – KUPPLUNG ZIEHEN!“ in der Farbe der Stufe (theme.status_farben), darunter der Grund.
+    Ersetzt das fruehere GAS-WEG-Band (Option ANWEISUNG_GROSS aus: nur noch „GAS WEG“ wie bisher).
+    Schrift: fest je Breite des Diagramms (REFERENZ passt in eine Zeile), nicht je Text – laengere Texte brechen um.
     zeige() haelt die Anzeige `halten` Sekunden, takt() (regelmaessig aufrufen) blendet danach aus. Die Maus geht
     hindurch."""
-    GROSS_MAX, GROSS_MIN = 104, 34              # Schriftgroesse der Anweisung (passt sich der Breite an)
+    GROSS_MAX, GROSS_MIN = 96, 34               # Schriftgroesse der Anweisung (nur von der Breite abhaengig)
+    REFERENZ = "KUPPLUNG ZIEHEN!"                # laengste Zeile der Anweisungen: bestimmt die Schriftgroesse
+    RAND = 48                                    # Innenabstand + Rahmen links und rechts zusammen [px]
 
     def __init__(self, parent: QtWidgets.QWidget):
         super().__init__(parent)
@@ -847,6 +854,7 @@ class AnweisungGross(QtWidgets.QWidget):
         lay.setSpacing(6)
         self.gross = QtWidgets.QLabel("")
         self.gross.setAlignment(QtCore.Qt.AlignCenter)
+        self.gross.setWordWrap(True)
         self.unter = QtWidgets.QLabel("")
         self.unter.setAlignment(QtCore.Qt.AlignCenter)
         self.unter.setFixedHeight(36)
@@ -889,8 +897,15 @@ class AnweisungGross(QtWidgets.QWidget):
         self.raise_()
 
     def haelt(self, stufe: str) -> bool:
-        """True, solange eine Anweisung dieser Stufe noch steht (z.B. GAS WEG nicht von „Messung …“ ueberschreiben)."""
+        """True, solange eine Anweisung dieser Stufe noch steht (z.B. GAS WEG seine Haltezeit)."""
         return self.isVisible() and self.stufe == stufe and time.time() <= self._bis
+
+    def rest_s(self) -> float:
+        """So lange steht die Anweisung noch (0 = verborgen bzw. abgelaufen)."""
+        return max(0.0, self._bis - time.time()) if self.isVisible() else 0.0
+
+    def schrift_px(self) -> int:
+        return self._px
 
     def takt(self):
         if self.isVisible() and time.time() > self._bis:
@@ -900,22 +915,28 @@ class AnweisungGross(QtWidgets.QWidget):
         self._bis = 0.0
         self.hide()
 
+    def _font(self, px: int) -> QtGui.QFont:
+        f = QtGui.QFont(self.gross.font())
+        f.setWeight(QtGui.QFont.Black)
+        f.setPixelSize(px)
+        f.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 2)
+        return f
+
     def _platzieren(self):
         p = self.parentWidget()
         w = min(980, max(240, p.width() - 40))
-        zeilen = self.gross.text().split("\n") or [""]
-        f = QtGui.QFont(self.gross.font())
-        f.setWeight(QtGui.QFont.Black)
         px = self.GROSS_MAX
-        while px > self.GROSS_MIN:                     # groesste Schrift, bei der die laengste Zeile passt
-            f.setPixelSize(px)
-            fm = QtGui.QFontMetrics(f)
-            if max(fm.horizontalAdvance(z) + 2 * len(z) for z in zeilen) + 48 <= w:
+        while px > self.GROSS_MIN:                     # groesste Schrift, bei der REFERENZ in die Breite passt
+            if QtGui.QFontMetrics(self._font(px)).horizontalAdvance(self.REFERENZ) + self.RAND <= w:
                 break
             px -= 4
         self._px = px
         self._stil()
-        h_gross = int(px * 1.25 * len(zeilen)) + 16
+        # Hoehe mit Umbruch (laengere Texte brechen um, die Schrift bleibt)
+        fm = QtGui.QFontMetrics(self._font(px))
+        br = fm.boundingRect(QtCore.QRect(0, 0, w - self.RAND, 10000),
+                             int(QtCore.Qt.AlignCenter | QtCore.Qt.TextWordWrap), self.gross.text() or " ")
+        h_gross = max(br.height(), fm.height()) + 22
         self.gross.setFixedHeight(h_gross)
         h = h_gross + (42 if self.unter.text() else 0)
         self.setGeometry((p.width() - w) // 2, max(8, int(p.height() * 0.16)), w, h)
@@ -1087,8 +1108,6 @@ class LaufListe(QtWidgets.QWidget):
         theme.rolle(self.b_hinzu, "primaer")
         self.b_hinzu.setToolTip("Läufe hinzufügen … (gespeicherte Läufe oder Mittelwerte gesperrt ins Diagramm)")
         self.b_hinzu.setFixedSize(40, 28)
-        self.auto = QtWidgets.QCheckBox(AUTO_TEXT)          # sitzt im Kopf neben „＋“ (MessenMixin)
-        self.auto.setToolTip(AUTO_TIP + " Auch im Menü Ansicht.")
         self.info = QtWidgets.QLabel("")
         self.info.setWordWrap(True)
         lay.addWidget(self.info)
@@ -1108,7 +1127,8 @@ class LaufListe(QtWidgets.QWidget):
         self.run_tree = t
         lay.addWidget(t, 1)
         self.hinweis = QtWidgets.QLabel("Schloss = Platz bleibt im Diagramm stehen (auch ältere Läufe) · Haken = "
-                                        "Lauf zeigen/ausblenden · Maus weg = zuklappen, Klick in die Grafik = zu")
+                                        "Lauf zeigen/ausblenden · Maus weg = zuklappen, Klick in die Grafik = zu · "
+                                        "rechter Rand: Breite ziehen")
         self.hinweis.setWordWrap(True)
         theme.rolle(self.hinweis, "neben")
         lay.addWidget(self.hinweis)
@@ -1528,7 +1548,9 @@ class LaufKnopf(QtWidgets.QPushButton):
 class LaufEinstellungen(QtWidgets.QFrame):
     """Popup am Knopf „Lauf-Einstellungen …“: Übersetzung (Art von Hand / Funkenmessung, Wert, „Übersetzung
     einmessen …“), Filter und Laufgrenzen (n vom Gas, n Stop). Die Felder spiegeln die von Einstellungen › Rolle/Lauf
-    (seite = SettingsPage, dieselben Einstellungen): Aenderungen gelten sofort und stehen an beiden Orten."""
+    (seite = SettingsPage, dieselben Einstellungen): Aenderungen gelten sofort und stehen an beiden Orten.
+    Unter DIAGRAMM der Haken „Ø automatisch mitteln“ (self.auto, Einstellung AUTO_MITTEL; MessenMixin verbindet ihn
+    mit auto_mittel_setzen, gleich mit dem Eintrag im Menue Ansicht)."""
     einmessen = QtCore.Signal()
     live_abgleich = QtCore.Signal()
     alle_einstellungen = QtCore.Signal()
@@ -1604,6 +1626,16 @@ class LaufEinstellungen(QtWidgets.QFrame):
         for key in ("n_min", "n_stop"):
             grenzen.addRow(texte[key], self._spiegel(key))
         lay.addLayout(grenzen)
+
+        lay.addWidget(abschnitt("DIAGRAMM"))
+        self.auto = QtWidgets.QCheckBox(AUTO_TEXT)
+        self.auto.setToolTip(AUTO_TIP + " Auch im Menü Ansicht.")
+        lay.addWidget(self.auto)
+        self.auto_hinweis = QtWidgets.QLabel("Mittelwert der Läufe mit dem Setup des neuesten, steht oben in der "
+                                             "Liste Läufe („speichern“ macht daraus einen Mittelwert-Lauf).")
+        self.auto_hinweis.setWordWrap(True)
+        theme.rolle(self.auto_hinweis, "neben")
+        lay.addWidget(self.auto_hinweis)
         self.b_alle = QtWidgets.QPushButton("Alle Einstellungen › Rolle/Lauf …")
         self.b_alle.setCursor(QtCore.Qt.PointingHandCursor)
         self.b_alle.clicked.connect(self._alle)
@@ -1815,6 +1847,11 @@ class MessenMixin:
         self.anweisung = AnweisungGross(self.plot)
         self.gas_weg = self.anweisung              # frueher GasWegHinweis (zeige/verbergen wie bisher)
         self.ergebnis_gross = ErgebnisGross(self.plot)
+        self._ergebnis_wartet: Optional[tuple] = None   # Ergebnis nach GAS WEG (_ergebnis_gross_zeigen warten=True)
+        self._ergebnis_timer = QtCore.QTimer(self)
+        self._ergebnis_timer.setSingleShot(True)
+        self._ergebnis_timer.timeout.connect(self._ergebnis_nach_gas_weg)
+        self._lauf_st = None                       # Laufzustand beim letzten _laufzustand_zeigen
         self.result_label = ErgebnisText()
         self.result_label.setFixedHeight(18)
         self.result_label.setContentsMargins(6, 0, 6, 0)
@@ -1829,11 +1866,9 @@ class MessenMixin:
         self.run_filter.setCurrentIndex(self.settings.get("run_filter", 1))
         self.laeufe_leiste = SeitenLeiste("Läufe", ll, center, breite=LEISTE_BREITE)
         self.laeufe_leiste.kopf.insertWidget(1, self.b_hinzu)     # „＋“ oben im Kopf neben dem Titel
-        self.laeufe_leiste.kopf.insertWidget(2, ll.auto)          # daneben „Ø automatisch mitteln“
-        ll.auto.setChecked(self.auto_mittel_an())
-        ll.auto.toggled.connect(self.auto_mittel_setzen)
         self.laeufe_leiste.set_zustand(self.settings.get("laeufe_leiste"))
         self.laeufe_leiste.angepinnt_geaendert.connect(self._leiste_gemerkt)
+        self.laeufe_leiste.breite_geaendert.connect(self._leiste_gemerkt)   # gezogen (eine Breite fuer beide)
         self.run_tree.itemClicked.connect(self._lauf_geklickt)
         self.run_tree.itemSelectionChanged.connect(self._update_max_display)
         self.b_hinzu.clicked.connect(self._laeufe_dialog)
@@ -2036,6 +2071,8 @@ class MessenMixin:
             p.live_abgleich.connect(self.on_abgleich_live)
             p.alle_einstellungen.connect(lambda: self.show_page(self.page_settings))
             p.geschlossen.connect(self._persist)
+            p.auto.setChecked(self.auto_mittel_an())
+            p.auto.toggled.connect(self.auto_mittel_setzen)
         self.lauf_popup.zeigen_an(self.lauf_btn)
 
     def on_abgleich_live(self):
@@ -2126,14 +2163,19 @@ class MessenMixin:
 
     def _laufzustand_zeigen(self, st: str, lv):
         """Zustand des Laufs im Feld neben START und gross ueber dem Diagramm (Option ANWEISUNG_GROSS; aus: nur
-        „GAS WEG“). Dieselben Texte und Stufen; gross steht der Befehl oben, Einzelheiten darunter."""
+        „GAS WEG“). Gross: „GO – Vollgas!“ bis die Messung beginnt (n vom Gas), waehrend der Messung nichts (nur das
+        Feld neben START zeigt „Messung · 9.500 1/min“), am Laufende mit Ausrollversuch „GAS WEG – KUPPLUNG ZIEHEN!“ bis das
+        Ausrollen fertig ist, ohne „GAS WEG!“ (mind. GAS_WEG_HALTEN_S, siehe _laufende_gas_weg), danach das Ergebnis."""
         gross = self.anzeige_an(ANWEISUNG_GROSS)
         a = self.anweisung
+        vorher, self._lauf_st = self._lauf_st, st
         if st == WAIT:
             self._set_status("GO – Vollgas!", theme.GUT)
             if gross:
                 a.zeige("GO – Vollgas!", "", theme.GUT, ANWEISUNG_HALTEN_S)
         elif st == RUN:
+            if a.isVisible() and a.stufe == theme.GUT:
+                a.verbergen()                              # Messung beginnt: GO weg, waehrend der Messung nichts
             if self.ctrl.gas_off():
                 aus = self.ctrl.ausrollen
                 self._set_status("GAS WEG – KUPPLUNG ZIEHEN!" if aus else "GAS WEG!", theme.FEHLER)
@@ -2141,17 +2183,25 @@ class MessenMixin:
                     "Kupplung ziehen, ausrollen lassen" if aus else "Lauf wird ausgewertet")
                 titel = ("GAS WEG –\nKUPPLUNG ZIEHEN!" if aus else "GAS WEG!") if gross else "GAS WEG"
                 a.zeige(titel, grund, theme.FEHLER)
-            else:
-                text = f"Messung … {zahl(lv.n_calc)} 1/min"
-                self._set_status(text, theme.WARNUNG)
-                if gross and not a.haelt(theme.FEHLER):        # GAS WEG steht seine Zeit
-                    a.zeige(text, "", theme.WARNUNG, ANWEISUNG_HALTEN_S)
+            elif not a.haelt(theme.FEHLER):                # GAS WEG steht seine Zeit, auch im Feld
+                # „ · “: bei wenig Platz faellt die Drehzahl ganz weg („Messung …“, statusleiste.kurz_text)
+                self._set_status(f"Messung · {zahl(lv.n_calc)} 1/min", theme.WARNUNG)
         elif st == COAST:
-            self._set_status(f"KUPPLUNG ZIEHEN – ausrollen lassen … {zahl(lv.n_calc)} 1/min", "info")
+            self._set_status(f"KUPPLUNG ZIEHEN · ausrollen lassen · {zahl(lv.n_calc)} 1/min", "info")
             if gross:
-                a.zeige("KUPPLUNG ZIEHEN", f"ausrollen lassen … {zahl(lv.n_calc)} 1/min", theme.WARNUNG,
+                a.zeige("GAS WEG –\nKUPPLUNG ZIEHEN!", f"ausrollen lassen … {zahl(lv.n_calc)} 1/min", theme.FEHLER,
                         ANWEISUNG_HALTEN_S)
+            elif vorher in (WAIT, RUN) and not a.haelt(theme.FEHLER):
+                a.zeige("GAS WEG", "Laufende – Kupplung ziehen, ausrollen lassen", theme.FEHLER)
         a.takt()
+
+    def _laufende_gas_weg(self):
+        """Laufende ohne Ausrollversuch (gui._finish_run): „GAS WEG!“ gross (Option aus: „GAS WEG“), falls es nicht
+        schon seit n Stop steht; es haelt GAS_WEG_HALTEN_S, danach kommt das Ergebnis (_ergebnis_gross_zeigen mit
+        warten=True)."""
+        if not self.anweisung.haelt(theme.FEHLER):
+            titel = "GAS WEG!" if self.anzeige_an(ANWEISUNG_GROSS) else "GAS WEG"
+            self.anweisung.zeige(titel, "Laufende – Lauf wird ausgewertet", theme.FEHLER)
 
     # ------------------------------------------------------------------ Anzeige beim Messen (Optionen, gross)
     def anzeige_an(self, key: str) -> bool:
@@ -2192,7 +2242,7 @@ class MessenMixin:
             if box is not None:
                 box.setChecked(self.anzeige_an(key))
                 box.toggled.connect(lambda an, k=key: self.anzeige_setzen(k, an))
-        self.auto_aktion = menue.addAction(AUTO_TEXT)          # wie der Haken in der Seitenleiste Läufe
+        self.auto_aktion = menue.addAction(AUTO_TEXT)          # wie der Haken unter Lauf-Einstellungen …
         self.auto_aktion.setCheckable(True)
         self.auto_aktion.setChecked(self.auto_mittel_an())
         self.auto_aktion.setToolTip(AUTO_TIP)
@@ -2200,7 +2250,9 @@ class MessenMixin:
         menue.setToolTipsVisible(True)
 
     def _gross_verbergen(self):
-        """START: grosse Anzeigen weg (Ergebnis des letzten Laufs, Reste der Anweisung)."""
+        """START: grosse Anzeigen weg (Ergebnis des letzten Laufs, Reste der Anweisung, wartendes Ergebnis)."""
+        self._ergebnis_timer.stop()
+        self._ergebnis_wartet = None
         self.ergebnis_gross.hide()
         self.anweisung.verbergen()
 
@@ -2211,9 +2263,17 @@ class MessenMixin:
             return
         self.on_abort()
 
-    def _ergebnis_gross_zeigen(self, r, rid: Optional[int] = None):
+    def _ergebnis_gross_zeigen(self, r, rid: Optional[int] = None, warten: bool = False):
         """Nach dem Lauf (gui._finish_run): Pmax/Mmax gross, Farbe und Zeit des gespeicherten Laufs (rid) bzw. der
-        ungespeicherten Kurve."""
+        ungespeicherten Kurve. warten (Laufende ohne Ausrollversuch): erst wenn „GAS WEG“ seine Zeit gestanden hat
+        (_ergebnis_timer), sonst sofort (mit Ausrollversuch: das Ausrollen ist fertig)."""
+        self._ergebnis_timer.stop()
+        self._ergebnis_wartet = None
+        rest = self.anweisung.rest_s() if warten and self.anweisung.haelt(theme.FEHLER) else 0.0
+        if rest > 0:
+            self._ergebnis_wartet = (r, rid)
+            self._ergebnis_timer.start(max(1, int(rest * 1000)))
+            return
         self.anweisung.verbergen()
         if r is None or not self.anzeige_an(ERGEBNIS_GROSS):
             return
@@ -2225,6 +2285,11 @@ class MessenMixin:
         setup = ((self.db.setup(sid) or {}).get("name", "") if sid else "") or self.run_note.text().strip()
         kopf = f"Lauf {zeit}" + (f"  ·  {setup}" if setup else "")
         self.ergebnis_gross.zeige(farbe, kopf, r.p_max, r.n_pmax, r.m_max, r.n_mmax)
+
+    def _ergebnis_nach_gas_weg(self):
+        wartet, self._ergebnis_wartet = self._ergebnis_wartet, None
+        if wartet is not None and not self._lauf_aktiv():
+            self._ergebnis_gross_zeigen(*wartet)
 
     def _legende_zeigen(self):
         """Legende im Diagramm: Referenzen (Mittelwert mit Band) immer, mit ANZEIGE_LEGENDE alle Läufe
@@ -3021,12 +3086,14 @@ class MessenMixin:
         return bool(self.settings.get(AUTO_MITTEL, False))
 
     def auto_mittel_setzen(self, an: bool):
-        """Haken „Ø automatisch mitteln“ (Seitenleiste Läufe und Menue Ansicht) schalten, speichern, neu zeichnen."""
+        """Haken „Ø automatisch mitteln“ (Lauf-Einstellungen … › DIAGRAMM und Menue Ansicht) schalten, speichern,
+        neu zeichnen."""
         an = bool(an)
         if self.settings.get(AUTO_MITTEL) != an:
             self.settings[AUTO_MITTEL] = an
             _speichern(self.settings)
-        for w in (self.laufliste.auto, getattr(self, "auto_aktion", None)):
+        popup = getattr(self, "lauf_popup", None)
+        for w in (popup.auto if popup is not None else None, getattr(self, "auto_aktion", None)):
             if w is not None and w.isChecked() != an:
                 w.blockSignals(True)
                 w.setChecked(an)
