@@ -45,7 +45,7 @@ Weitere Seiten: [Installation](Installation.md) · [Erste Schritte](Erste-Schrit
 - **Messen, Läufe hinzufügen:** Der Knopf **＋** oben in der Seitenleiste Läufe öffnet ein Auswahlfenster für alte
   Läufe und Mittelwerte (auch anderer Fahrzeuge). Sie liegen danach gesperrt auf Plätzen im Diagramm. Der Knopf
   „Referenz laden …“ ist weg. Siehe [Messen](Messen.md#läufe-hinzufügen).
-- **Ø automatisch mitteln:** Haken unter **Lauf-Einstellungen …** (auch im Menü Ansicht). PyST mittelt die Läufe im Diagramm mit dem
+- **Ø automatisch mitteln:** Haken oben in der Seitenleiste Läufe neben **＋** (auch im Menü Ansicht). PyST mittelt die Läufe im Diagramm mit dem
   Setup des neuesten Laufs, zeichnet den Mittelwert mit Band und rechnet ihn nach jedem Lauf neu, ohne einen Platz zu
   belegen. **speichern** macht daraus einen Mittelwert-Lauf. Siehe [Messen](Messen.md#ø-automatisch-mitteln).
 - **START-Nachfrage:** Ist das Setup unverändert, fragt START kurz „Setup unverändert – Änderungen eintragen?“ – mit den
@@ -62,6 +62,12 @@ Weitere Seiten: [Installation](Installation.md) · [Erste Schritte](Erste-Schrit
   auf. Siehe [Ausrollversuch](Ausrollversuch.md#rollen-kalibrierung-ausrollen-ohne-rad).
 - **Software & Firmware:** neuer Name des Unterreiters, Kachel **PyST (Software)** mit installierter und verfügbarer
   Version. Nicht angeschlossene Geräte sind ausgegraut.
+- **PDF-Bericht unten rechts:** Der Knopf **PDF-Bericht** in der Statusleiste druckt, was gerade im Diagramm steht –
+  mit Referenzen, Ø automatisch, Achsgrenzen und Kurvenauswahl. Tag/Nacht/Automatisch sind jetzt die kleinen Knöpfe
+  **☀ ☾ ◐**. Siehe [Messen](Messen.md#pdf-bericht) und [Darstellung](Darstellung.md).
+- **Ordner importieren:** ganze Ordner mit Unterordnern voller alter Messungen (LabVIEW-XML der alten Software,
+  PyST-Laufordner, `.pyst`, Terminal-Mitschnitte) mit Vorschau, Duplikaterkennung und Zuordnung zu Fahrzeug/Setup.
+  Siehe [Auswertung](Auswertung.md#ordner-importieren).
 
 Alle Änderungen: [Release Notes 1.4.2](https://github.com/chili023/PyST/blob/main/docs/RELEASE_NOTES_1.4.2.md).
 

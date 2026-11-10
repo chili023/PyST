@@ -979,33 +979,32 @@ class Messen(unittest.TestCase):
                 if t.topLevelItem(i).data(0, mp.AUTO_ROLLE)}
 
     def test_auto_mittel_haken_und_neustart(self):
-        """Haken unter „Lauf-Einstellungen …“ › DIAGRAMM (nicht mehr in der Seitenleiste) und im Menue Ansicht,
-        Standard aus, wirkt sofort, gespeichert in settings und nach dem Neustart wieder da."""
+        """Haken im Kopf der Seitenleiste Läufe neben „＋“ (wieder links, nicht unter „Lauf-Einstellungen …“) und im
+        Menue Ansicht, Standard aus, wirkt sofort, gespeichert in settings und nach dem Neustart wieder da."""
         w = self.w
         ids = self._laeufe(3)
         self.assertFalse(w.auto_mittel_an())
-        self.assertFalse(hasattr(w.laufliste, "auto"))                         # nicht mehr in der Seitenleiste
-        kopf = w.laeufe_leiste.kopf
-        self.assertFalse(any(isinstance(kopf.itemAt(i).widget(), QtWidgets.QCheckBox) for i in range(kopf.count())))
-        w._lauf_popup_zeigen()
+        self.assertEqual(w.laufliste.auto.text(), "Ø automatisch mitteln")
+        self.assertFalse(w.laufliste.auto.isChecked())
+        self.assertEqual(w.laeufe_leiste.kopf.indexOf(w.laufliste.auto), 2)      # gleich neben „＋“
+        w._lauf_popup_zeigen()                                                 # nicht mehr in Lauf-Einstellungen
         p = w.lauf_popup
-        self.assertEqual(p.auto.text(), "Ø automatisch mitteln")
-        self.assertFalse(p.auto.isChecked())
-        texte = [lbl.text() for lbl in p.findChildren(QtWidgets.QLabel)]
-        self.assertIn("DIAGRAMM", texte)
-        p.auto.setChecked(True)                                                # wirkt sofort
+        self.assertFalse(hasattr(p, "auto"))
+        self.assertFalse([b for b in p.findChildren(QtWidgets.QCheckBox) if b.text() == mp.AUTO_TEXT])
+        self.assertNotIn("DIAGRAMM", [lbl.text() for lbl in p.findChildren(QtWidgets.QLabel)])
+        p.hide()
+        w.laufliste.auto.setChecked(True)                                      # wirkt sofort
         self.assertTrue(w.settings[mp.AUTO_MITTEL])
         self.assertIn(mp.AUTO_KEY, w.plot.data)
         self.assertEqual(set(w._auto["ids"]), set(ids))
         self.assertTrue(w.auto_aktion.isChecked())                             # Menue Ansicht gleich
         w.auto_aktion.setChecked(False)
-        self.assertFalse(p.auto.isChecked())
+        self.assertFalse(w.laufliste.auto.isChecked())
         self.assertNotIn(mp.AUTO_KEY, w.plot.data)
-        p.hide()
         texte = [a.text() for a in w.menuBar().actions()[0].menu().actions()]
         self.assertIn("Ø automatisch mitteln", texte)
         w.auto_aktion.setChecked(True)                                         # Menue Ansicht
-        self.assertTrue(p.auto.isChecked())
+        self.assertTrue(w.laufliste.auto.isChecked())
         self.assertTrue(w.settings[mp.AUTO_MITTEL])
         from pyst import gui
         self.assertTrue(gui.load_settings()[mp.AUTO_MITTEL])
@@ -1014,11 +1013,9 @@ class Messen(unittest.TestCase):
         self.w = gui.MainWindow()                                              # Neustart
         pump(0.05)
         self.assertTrue(self.w.auto_mittel_an())
+        self.assertTrue(self.w.laufliste.auto.isChecked())
         self.assertTrue(self.w.auto_aktion.isChecked())
-        self.w._lauf_popup_zeigen()
-        self.assertTrue(self.w.lauf_popup.auto.isChecked())
-        self.w.lauf_popup.auto.setChecked(False)
-        self.w.lauf_popup.hide()
+        self.w.laufliste.auto.setChecked(False)
         self.assertFalse(self.w.auto_aktion.isChecked())
         self.assertFalse(gui.load_settings()[mp.AUTO_MITTEL])
 

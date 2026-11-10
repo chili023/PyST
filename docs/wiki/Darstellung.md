@@ -13,7 +13,11 @@ PyST hat ein helles und ein dunkles Thema.
 Umschalten:
 
 - Menü **Ansicht › Darstellung**, oder
-- Umschalter **☀ Tag | ☾ Nacht | Auto** unten rechts in der Statusleiste.
+- die drei kleinen Knöpfe **☀ ☾ ◐** unten rechts in der Statusleiste: ☀ = Tag, ☾ = Nacht, ◐ = Automatisch. Die
+  gewählte Darstellung ist blau hinterlegt, der Tooltip nennt sie. Links daneben der Knopf **PDF-Bericht** (siehe
+  [Messen](Messen.md#pdf-bericht)).
+
+![Statusleiste unten rechts: PDF-Bericht und ☀ ☾ ◐](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_statusleiste.png)
 
 Der Wechsel wirkt sofort, auch auf Diagramme und Kacheln.
 

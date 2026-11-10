@@ -91,9 +91,9 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 
 ![Software & Firmware](bilder/v142_einst_firmware.png)
 
-**8. Ø automatisch mitteln (Messen › Lauf-Einstellungen …)**
-- Neuer Haken **Ø automatisch mitteln** im Fenster **Lauf-Einstellungen …** (Knopf oben rechts), Abschnitt
-  **DIAGRAMM** (auch im Menü **Ansicht**, Standard aus). Er wirkt sofort. Ist er an, mittelt PyST
+**8. Ø automatisch mitteln (Messen › Seitenleiste Läufe)**
+- Neuer Haken **Ø automatisch mitteln** oben in der Seitenleiste Läufe neben **＋** (auch im Menü **Ansicht**,
+  Standard aus). Er wirkt sofort. Ist er an, mittelt PyST
   die Läufe im Diagramm, die dasselbe Setup haben wie der neueste (mindestens 2, Mittelwerte zählen nicht), und
   zeichnet den Mittelwert dick mit Band min–max, z. B. „Ø 3 Läufe · Serie HD 135 (automatisch)“.
 - Er belegt keinen der 5 Plätze, wird nach jedem Lauf, beim Sperren, Ein-/Ausblenden und Löschen von Läufen und beim
@@ -104,15 +104,49 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 - Der wirkungslose Haken „im Messfenster als Referenz anbieten“ im Fenster **Mittelwert bilden** ist weg: jeder
   gespeicherte Mittelwert steht im Fenster „Läufe hinzufügen“.
 
-| Lauf-Einstellungen mit „Ø automatisch mitteln“ | Ø automatisch im Diagramm |
-|---|---|
-| ![Lauf-Einstellungen](bilder/v142_lauf_einstellungen.png) | ![Ø automatisch mitteln](bilder/v142_messen_auto_mittel.png) |
+- Im PDF-Bericht steht er wie im Diagramm (Kurve mit Band) und in der Tabelle mit Pmax/Mmax und den Quellläufen
+  (siehe Punkt 10).
+
+![Ø automatisch mitteln](bilder/v142_messen_auto_mittel.png)
 
 **9. Seitenleiste Läufe: Breite ziehen**
 - Die Breite der Seitenleiste **Läufe** lässt sich jetzt auch aufgeklappt (nicht angepinnt) ändern: am rechten Rand
   ziehen (Mauszeiger ↔, kleiner Steg in der Mitte). Beim Ziehen klappt die Liste nicht zu.
 - Angepinnt zieht man wie bisher am Teiler. Es gibt eine Breite für beide Zustände (240 bis 900 px), PyST merkt sie
   sich (`"laeufe_leiste"` in `einstellungen.json`). Dasselbe gilt für die Seitenleiste „Läufe & Kanäle“ der Auswertung.
+
+**10. PDF-Bericht unten rechts: was im Diagramm steht**
+- Neuer Knopf **PDF-Bericht** unten rechts in der Statusleiste. Er druckt genau das, was gerade im Diagramm zu sehen
+  ist: die angehakten Läufe auf den Plätzen (gesperrte mit „Platz gesperrt“), Referenzen (Mittelwerte) mit Band und
+  Quellläufen, den **automatischen Mittelwert** („Ø 4 Läufe · Serie HD 135 (automatisch)“ mit Pmax/Mmax und den
+  Quellläufen), eine noch nicht gespeicherte Kurve, die aktuellen Achsgrenzen und die Kurven oben/unten. Dazu wie
+  bisher Fahrzeug/Setup (jetzt mit den Setup-Werten des Laufs), Klima und Ergebnis.
+- Eine Kopfzeile sagt, woher das Diagramm kommt („Diagramm aus Messen · Drehzahl 4.000–12.000 1/min · oben: … ·
+  unten: … · Achsgrenzen …“). Passt die Tabelle nicht auf eine Seite, geht sie auf der nächsten weiter.
+- Ist der Reiter **Auswertung** offen, druckt der Knopf deren Felder mit den dort angezeigten Läufen („Diagramm aus der
+  Auswertung“). **Datei › PDF-Bericht …** und der Knopf **PDF-Bericht …** der Auswertung drucken wie bisher das
+  Diagramm aus Messen, jetzt ebenfalls mit Mittelwerten. Dateiname und Öffnen danach wie bisher.
+
+![PDF-Bericht aus Messen](bilder/v142_pdf_messen.png)
+
+**11. Tag/Nacht als kleine Knöpfe**
+- Der Umschalter unten rechts besteht jetzt aus drei kleinen Piktogramm-Knöpfen **☀** (Tag), **☾** (Nacht) und **◐**
+  (Automatisch). Die Wahl ist blau hinterlegt, der Tooltip nennt sie. Das spart Platz für die Zustandsfelder.
+
+![Statusleiste unten rechts](bilder/v142_statusleiste.png)
+
+**12. Ordner mit Unterordnern importieren**
+- **Datei › Ordner importieren (mit Unterordnern) …** (Ctrl+Umschalt+I) und in der Auswertung **Importieren ›
+  Ordner mit Unterordnern …** (daneben **Dateien …** wie bisher) holen ganze Sammlungen alter Messungen auf einmal:
+  LabVIEW-XML der alten Software (PST 3.x), PyST-Laufordner mit `lauf.json` (auch älterer PyST-Versionen, ein Ordner
+  = ein Lauf, `lauf.xml` darin zählt nicht extra), `.pyst`-Dateien und Terminal-Mitschnitte.
+- Vor dem Import eine **Vorschau**: Datei/Ordner, Datum, „erkannt als“ und Status. Läufe, die schon in der Datenbank
+  stehen oder im Ordner doppelt liegen, sind abgewählt; Unlesbares steht mit Grund da. Zuordnung zu Fahrzeug und Setup
+  (Standard: das aktuelle). Terminal-Mitschnitte fragen **einmal** nach den Prüfstandsdaten.
+- Fortschritt mit **Abbrechen**, am Ende ein Bericht: importiert, übersprungen, Fehler mit Grund.
+- Der Import nutzt dieselbe Logik wie der Datei-Import; einzelne Dateien und Drag & Drop bleiben wie bisher.
+
+![Ordner importieren: Vorschau](bilder/v142_import_ordner.png)
 
 ## Hinweise und Annahmen
 
@@ -124,6 +158,12 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 - **Ø automatisch mitteln:** „Dasselbe Setup“ heißt gleiches Fahrzeug, gleiches Setup und gleiche Setup-Werte; ein
   Lauf mit Werten „nur für diesen Lauf“ zählt als anderes Setup. Ein Lauf ohne Auto-Speichern zählt erst nach dem
   Speichern. Gemittelt wird wie in Auswertung › Mittelwert bilden (Raster 50 1/min, oben 300 1/min weg).
+- **Ordner-Import, „schon vorhanden“:** gleicher Name und gleiche Quelle (LabVIEW, PyST, Terminal), Datum höchstens
+  2 Minuten auseinander, derselbe Ordner wie ein Lauf der Datenbank oder eine Datei gleichen Inhalts (auch
+  umbenannt). „Doppelt im Ordner“: gleicher Inhalt mehrmals im Ordner. Mittelwert-Ordner werden erkannt, aber nicht
+  übernommen.
+- **Löschen in Messen:** Markierte Läufe (anklicken, Strg/Umschalt) löscht **Löschen** bzw. Rechtsklick ›
+  **Löschen …** nach Rückfrage samt Messdateien. Danach rückt ein älterer Lauf auf den freien Platz nach.
 - Die neuen Funktionen sind im Simulator und mit automatischen Tests geprüft, **an der Hardware noch nicht**.
 
 ## Update von 1.4.1
@@ -144,7 +184,8 @@ Bitte Rückmeldungen über die [Issues](https://github.com/chili023/PyST/issues)
 
 ## Bekannte Einschränkungen
 
-- Mittelwert-Läufe gehen noch nicht in `.pyst`-Dateien mit und stehen nicht in der PDF-Tabelle.
+- Mittelwert-Läufe gehen noch nicht in `.pyst`-Dateien mit; der Ordner-Import übernimmt keine Mittelwert-Ordner
+  (Quellläufe importieren und neu mitteln).
 - „Als Hauptzange“ und „Tasten prüfen“ sind ausgegraut, weil die Zangen-Firmware dafür noch keinen Befehl hat.
 - PyST steuert den Motor nicht. „n Stop“ und die große Anweisung zeigen nur **GAS WEG**.
 - Die Zange **nie am laufenden Motor per USB anschließen**: Sie ist dann galvanisch mit dem PC verbunden.

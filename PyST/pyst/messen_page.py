@@ -6,7 +6,7 @@ Aufbau von oben nach unten:
   Kopfzeile    Fahrzeug | Setup | Notiz | Auto-Speichern | Laufzustand (StatusFeld) | Trennen/Verbinden |
                Lauf-Einstellungen … (Unterzeile: Übersetzung, Filter; Popup LaufEinstellungen mit Übersetzungsart von
                Hand/Funkenmessung, Einmessen, Live abgleichen (abgleich_dialog), Filter, n vom Gas/n Stop – dieselben
-               Felder wie Einstellungen › Rolle/Lauf – und Diagramm: Ø automatisch mitteln) |
+               Felder wie Einstellungen › Rolle/Lauf) |
                START (F1), im Lauf derselbe Knopf rot: Abbrechen (Esc) bzw. Ausrollen beenden (Esc)
   Setup-Werte  Schnellwerte (db.schnellwert_plaetze je Fahrzeug, 0 … SCHNELLWERT_MAX Plaetze: „＋“ fuegt an, Titel-Menue
                waehlt das Feld oder entfernt den Platz), direkt editierbar;
@@ -24,8 +24,7 @@ und die neuesten Laeufe (rollierend). Das Haekchen blendet einen Platz aus, aelt
 „＋“ im Kopf der Seitenleiste Läufe oeffnet LaeufeDialog („Läufe hinzufügen“): gespeicherte Laeufe und Mittelwerte (Ø)
 aller Fahrzeuge waehlen, sie kommen gesperrt auf freie Plaetze (laeufe_hinzufuegen). Die Breite der Seitenleiste
 laesst sich aufgeklappt am rechten Rand und angepinnt am Teiler ziehen (eine Breite, gespeichert in laeufe_leiste).
-Unter „Lauf-Einstellungen …“ › DIAGRAMM der Haken „Ø automatisch mitteln“ (Einstellung AUTO_MITTEL, Standard aus, auch
-im Menue Ansicht): aus den
+Daneben der Haken „Ø automatisch mitteln“ (Einstellung AUTO_MITTEL, Standard aus, auch im Menue Ansicht): aus den
 Laeufen im Diagramm mit demselben Setup wie der neueste (auto_mittel_quellen, mind. 2, ohne Mittelwerte) rechnet
 mittelwert.mitteln einen Mittelwert, gezeichnet wie ein Mittelwert-Lauf (dick, Band min–max) unter AUTO_KEY. Er belegt
 keinen der Plaetze, steht oben in der Liste („Ø AUTOMATISCH“, AUTO_ROLLE) und wird bei jedem Neuzeichnen nachgefuehrt
@@ -1108,6 +1107,8 @@ class LaufListe(QtWidgets.QWidget):
         theme.rolle(self.b_hinzu, "primaer")
         self.b_hinzu.setToolTip("Läufe hinzufügen … (gespeicherte Läufe oder Mittelwerte gesperrt ins Diagramm)")
         self.b_hinzu.setFixedSize(40, 28)
+        self.auto = QtWidgets.QCheckBox(AUTO_TEXT)          # sitzt im Kopf neben „＋“ (MessenMixin)
+        self.auto.setToolTip(AUTO_TIP + " Auch im Menü Ansicht.")
         self.info = QtWidgets.QLabel("")
         self.info.setWordWrap(True)
         lay.addWidget(self.info)
@@ -1548,9 +1549,7 @@ class LaufKnopf(QtWidgets.QPushButton):
 class LaufEinstellungen(QtWidgets.QFrame):
     """Popup am Knopf „Lauf-Einstellungen …“: Übersetzung (Art von Hand / Funkenmessung, Wert, „Übersetzung
     einmessen …“), Filter und Laufgrenzen (n vom Gas, n Stop). Die Felder spiegeln die von Einstellungen › Rolle/Lauf
-    (seite = SettingsPage, dieselben Einstellungen): Aenderungen gelten sofort und stehen an beiden Orten.
-    Unter DIAGRAMM der Haken „Ø automatisch mitteln“ (self.auto, Einstellung AUTO_MITTEL; MessenMixin verbindet ihn
-    mit auto_mittel_setzen, gleich mit dem Eintrag im Menue Ansicht)."""
+    (seite = SettingsPage, dieselben Einstellungen): Aenderungen gelten sofort und stehen an beiden Orten."""
     einmessen = QtCore.Signal()
     live_abgleich = QtCore.Signal()
     alle_einstellungen = QtCore.Signal()
@@ -1626,16 +1625,6 @@ class LaufEinstellungen(QtWidgets.QFrame):
         for key in ("n_min", "n_stop"):
             grenzen.addRow(texte[key], self._spiegel(key))
         lay.addLayout(grenzen)
-
-        lay.addWidget(abschnitt("DIAGRAMM"))
-        self.auto = QtWidgets.QCheckBox(AUTO_TEXT)
-        self.auto.setToolTip(AUTO_TIP + " Auch im Menü Ansicht.")
-        lay.addWidget(self.auto)
-        self.auto_hinweis = QtWidgets.QLabel("Mittelwert der Läufe mit dem Setup des neuesten, steht oben in der "
-                                             "Liste Läufe („speichern“ macht daraus einen Mittelwert-Lauf).")
-        self.auto_hinweis.setWordWrap(True)
-        theme.rolle(self.auto_hinweis, "neben")
-        lay.addWidget(self.auto_hinweis)
         self.b_alle = QtWidgets.QPushButton("Alle Einstellungen › Rolle/Lauf …")
         self.b_alle.setCursor(QtCore.Qt.PointingHandCursor)
         self.b_alle.clicked.connect(self._alle)
@@ -1866,6 +1855,9 @@ class MessenMixin:
         self.run_filter.setCurrentIndex(self.settings.get("run_filter", 1))
         self.laeufe_leiste = SeitenLeiste("Läufe", ll, center, breite=LEISTE_BREITE)
         self.laeufe_leiste.kopf.insertWidget(1, self.b_hinzu)     # „＋“ oben im Kopf neben dem Titel
+        self.laeufe_leiste.kopf.insertWidget(2, ll.auto)          # daneben „Ø automatisch mitteln“
+        ll.auto.setChecked(self.auto_mittel_an())
+        ll.auto.toggled.connect(self.auto_mittel_setzen)
         self.laeufe_leiste.set_zustand(self.settings.get("laeufe_leiste"))
         self.laeufe_leiste.angepinnt_geaendert.connect(self._leiste_gemerkt)
         self.laeufe_leiste.breite_geaendert.connect(self._leiste_gemerkt)   # gezogen (eine Breite fuer beide)
@@ -2071,8 +2063,6 @@ class MessenMixin:
             p.live_abgleich.connect(self.on_abgleich_live)
             p.alle_einstellungen.connect(lambda: self.show_page(self.page_settings))
             p.geschlossen.connect(self._persist)
-            p.auto.setChecked(self.auto_mittel_an())
-            p.auto.toggled.connect(self.auto_mittel_setzen)
         self.lauf_popup.zeigen_an(self.lauf_btn)
 
     def on_abgleich_live(self):
@@ -2242,7 +2232,7 @@ class MessenMixin:
             if box is not None:
                 box.setChecked(self.anzeige_an(key))
                 box.toggled.connect(lambda an, k=key: self.anzeige_setzen(k, an))
-        self.auto_aktion = menue.addAction(AUTO_TEXT)          # wie der Haken unter Lauf-Einstellungen …
+        self.auto_aktion = menue.addAction(AUTO_TEXT)          # wie der Haken in der Seitenleiste Läufe
         self.auto_aktion.setCheckable(True)
         self.auto_aktion.setChecked(self.auto_mittel_an())
         self.auto_aktion.setToolTip(AUTO_TIP)
@@ -3086,14 +3076,12 @@ class MessenMixin:
         return bool(self.settings.get(AUTO_MITTEL, False))
 
     def auto_mittel_setzen(self, an: bool):
-        """Haken „Ø automatisch mitteln“ (Lauf-Einstellungen … › DIAGRAMM und Menue Ansicht) schalten, speichern,
-        neu zeichnen."""
+        """Haken „Ø automatisch mitteln“ (Seitenleiste Läufe und Menue Ansicht) schalten, speichern, neu zeichnen."""
         an = bool(an)
         if self.settings.get(AUTO_MITTEL) != an:
             self.settings[AUTO_MITTEL] = an
             _speichern(self.settings)
-        popup = getattr(self, "lauf_popup", None)
-        for w in (popup.auto if popup is not None else None, getattr(self, "auto_aktion", None)):
+        for w in (self.laufliste.auto, getattr(self, "auto_aktion", None)):
             if w is not None and w.isChecked() != an:
                 w.blockSignals(True)
                 w.setChecked(an)

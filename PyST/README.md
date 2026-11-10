@@ -39,16 +39,19 @@ Ausführliche Anleitung zu jeder Funktion: **[PyST-Wiki](https://github.com/chil
 
 | Reiter | Inhalt |
 |---|---|
-| **Messen** | Kopfzeile Fahrzeug · Setup · Notiz · Auto-Speichern · Status · **Verbinden/Trennen** · **Lauf-Einstellungen …** (Übersetzung, Filter, Laufgrenzen, Ø automatisch mitteln) · **START (F1)** (im Lauf rot: Abbrechen (Esc)). Zeile **SETUP-WERTE** (bis 8 Felder, ändern → als neues Setup speichern oder nur für diesen Lauf; bei unverändertem Setup fragt START „Setup unverändert – Änderungen eintragen?“). Leistungsdiagramm mit unterem Diagramm, „Kurven ▾“, Achsgrenzen, Fähnchen am Cursor je Kurve, große Anweisungen (GO bis *n vom Gas*, in der Messung nichts, am Ende GAS WEG bzw. GAS WEG – KUPPLUNG ZIEHEN) und großes Ergebnis Pmax/Mmax, Legende (Option). Rechts Umgebung (BME280) in einer Zeile, Drehzahl groß, 0 bis 12 **LIVE**-Kacheln je Fahrzeug (ab 5 zweispaltig; Kanal und Balkengrenzen wählbar; mit der Maus im Diagramm die Werte des letzten Laufs am Cursor), Ergebnis. Seitenleiste **Läufe** (Breite am Rand ziehbar, auch nicht angepinnt): 5 Plätze, gesperrt (Schloss) oder rollierend, **＋** holt alte Läufe und Mittelwerte gesperrt ins Diagramm, **Ø automatisch mitteln** unter Lauf-Einstellungen (Mittelwert der Läufe im Diagramm mit gleichem Setup, mit Band, nach jedem Lauf neu, belegt keinen Platz, **speichern** legt einen Mittelwert-Lauf an) |
+| **Messen** | Kopfzeile Fahrzeug · Setup · Notiz · Auto-Speichern · Status · **Verbinden/Trennen** · **Lauf-Einstellungen …** (Übersetzung, Filter, Laufgrenzen) · **START (F1)** (im Lauf rot: Abbrechen (Esc)). Zeile **SETUP-WERTE** (bis 8 Felder, ändern → als neues Setup speichern oder nur für diesen Lauf; bei unverändertem Setup fragt START „Setup unverändert – Änderungen eintragen?“). Leistungsdiagramm mit unterem Diagramm, „Kurven ▾“, Achsgrenzen, Fähnchen am Cursor je Kurve, große Anweisungen (GO bis *n vom Gas*, in der Messung nichts, am Ende GAS WEG bzw. GAS WEG – KUPPLUNG ZIEHEN) und großes Ergebnis Pmax/Mmax, Legende (Option). Rechts Umgebung (BME280) in einer Zeile, Drehzahl groß, 0 bis 12 **LIVE**-Kacheln je Fahrzeug (ab 5 zweispaltig; Kanal und Balkengrenzen wählbar; mit der Maus im Diagramm die Werte des letzten Laufs am Cursor), Ergebnis. Seitenleiste **Läufe** (Breite am Rand ziehbar, auch nicht angepinnt): 5 Plätze, gesperrt (Schloss) oder rollierend, **＋** holt alte Läufe und Mittelwerte gesperrt ins Diagramm, Haken **Ø automatisch mitteln** neben **＋** (Mittelwert der Läufe im Diagramm mit gleichem Setup, mit Band, nach jedem Lauf neu, belegt keinen Platz, **speichern** legt einen Mittelwert-Lauf an) |
 | **Fahrzeuge & Setups** | Fahrzeuge (Hersteller, Modell, Gemischaufbereitung, Motor …) und Setups (Motor, Vergaser, Einspritzung/ECU, Zündung, Antrieb, Ein-/Auslass, Kraftstoff). Kopieren, „Für neue Läufe verwenden“ |
-| **Auswertung** | Läufe überlagern wie MegaLogViewer: bis 4 Felder, X-Achse Zeit oder Drehzahl, Cursor mit Maus und ←/→. Laufleiste **ANGEZEIGTE LÄUFE** mit Setup-Spalten (Änderungen gelb), **Mittelwert bilden …**, rechts **Werte am Cursor** und **Setup-Vergleich**. Import, PDF-Bericht, CSV |
+| **Auswertung** | Läufe überlagern wie MegaLogViewer: bis 4 Felder, X-Achse Zeit oder Drehzahl, Cursor mit Maus und ←/→. Laufleiste **ANGEZEIGTE LÄUFE** mit Setup-Spalten (Änderungen gelb), **Mittelwert bilden …**, rechts **Werte am Cursor** und **Setup-Vergleich**. Import (Dateien oder Ordner mit Unterordnern), PDF-Bericht, CSV |
 | **Oszi / Dauermessung** | Fehlersuche an Zündung und Rolle: Dauermessung mit Markern (F2), Linienschreiber, Software-Trigger, Ereignisliste, Flanken-Ansicht (PST-Diag 1), Geräte-Einstellungen |
 | **Einstellungen** | Unterreiter **Rolle/Lauf** (Prüfstand, Anzeige beim Messen, Lauf, Filter, Klima, Verluste mit Rollen-Kalibrierung und Ausrollversuch) · **Verbindung** (Messboard, Geräte-Einstellungen der Basis, Prüfen, Datenbank) · **Zange** (Kopplung, Aufnahme & Log, Tasten der Zange, Tests, Geräte-Einstellungen) · **Lambda** (Heizung, λ/AFR, AFR-Eingang, Prüfen) · **ECU** (rusEFI, .ini, Kanal-Setup) · **Software & Firmware** (Kachel PyST mit installierter/verfügbarer Version, Kundenansicht mit vier Karten, Expertenmodus) · **WiFi** (WLAN der Basis, Steckdosen) |
 
-- Unten die **Statusleiste** mit drei Feldern (PST Basis · PST Zange/Mega · PST/Lambda ECU) und dem Umschalter
-  **☀ Tag | ☾ Nacht | Auto** (auch Menü *Ansicht › Darstellung*). Fenstergröße unter *Ansicht › Größe*.
-- Menü **Datei**: Öffnen/importieren (Ctrl+O), Läufe weitergeben als `.pyst` (Ctrl+S) oder HTML (Ctrl+H),
-  PDF-Bericht (Ctrl+P), CSV-Export (Ctrl+E). Dateien lassen sich auch ins Fenster ziehen.
+- Unten die **Statusleiste** mit drei Feldern (PST Basis · PST Zange/Mega · PST/Lambda ECU), dem Knopf
+  **PDF-Bericht** (druckt, was gerade im Diagramm steht: Messen bzw. die Felder der Auswertung) und den kleinen
+  Knöpfen **☀ ☾ ◐** für Tag, Nacht, Automatisch (auch Menü *Ansicht › Darstellung*). Fenstergröße unter
+  *Ansicht › Größe*.
+- Menü **Datei**: Öffnen/importieren (Ctrl+O), **Ordner importieren (mit Unterordnern)** (Ctrl+Umschalt+I), Läufe
+  weitergeben als `.pyst` (Ctrl+S) oder HTML (Ctrl+H), PDF-Bericht (Ctrl+P), CSV-Export (Ctrl+E). Dateien lassen sich
+  auch ins Fenster ziehen.
 - Während eines Laufs bleibt die Skalierung wie beim vorherigen Lauf stehen; danach wird neu skaliert.
 - Achsgrenzen direkt an den Achsenden: Drehzahl von/bis, PS von/bis, Nm von/bis (z.B. ab 5000 1/min und ab 5 PS);
   fett = fest, grau = automatisch aus den Kurven, „auto“ setzt alles zurück. Gilt auch für den PDF-Bericht.
@@ -59,8 +62,9 @@ Ausführliche Anleitung zu jeder Funktion: **[PyST-Wiki](https://github.com/chil
   ersten Start automatisch übernommen). Fenster und Reiter werden beim Beenden gespeichert; im Auswerter speicherbare
   Layouts. Rechtsklick auf einen Lauf in der Seitenleiste **Läufe**: Platz sperren (Schloss), In Auswertung öffnen,
   Notiz, Farbe, aktuellem Fahrzeug/Setup zuordnen, mit aktuellen Einstellungen neu rechnen, CSV-Export, Löschen.
-- **Import** von LabVIEW-XML und PyST-Läufen, **Export** als PDF-Bericht (sichtbare Läufe + Setup-Daten) und CSV
-  (Excel deutsch oder international).
+- **Import** von LabVIEW-XML und PyST-Läufen, auch ganze Ordner mit Unterordnern (Vorschau, schon vorhandene Läufe
+  abgewählt, Zuordnung Fahrzeug/Setup, Bericht), **Export** als PDF-Bericht (was im Diagramm steht, mit Referenzen,
+  Ø automatisch, Achsgrenzen, Setup-Daten) und CSV (Excel deutsch oder international).
 - **Verbinden** in der Kopfzeile von Messen oder unter Einstellungen › Verbindung (Port wählen). Automatisch verbindet
   PyST nur den **Nucleo** (STM32 F446, erkannt am ST-Link) und **Original-Arduino-Boards** (Mega) mit PST-Firmware:
   Es sucht alle 5 s (abschaltbar unter Einstellungen › Verbindung), Abziehen wird erkannt. Die **PyST-Basis** und
@@ -669,6 +673,8 @@ pyst/lauf_dialog.py Dialog „Setup …“ eines Laufs in der Auswertung (Setup 
 pyst/db.py        Datenbank Fahrzeuge / Setups / Läufe (SQLite)
 pyst/channels.py  Messkanäle eines Laufs (roh + abgeleitet + Zusatzkanäle + Fehlerkanäle)
 pyst/report.py    PDF- und CSV-Export
+pyst/bericht.py   Inhalt des PDF-Berichts: was im Diagramm steht (Messen bzw. Auswertung, Ø automatisch, Referenzen)
+pyst/ordner_import.py Ordner mit Unterordnern importieren: Suche, Vorschau, Duplikate, Zuordnung, Ergebnisbericht
 pyst/widgets.py   Anzeigen (live und am Cursor)
 pyst/dialogs.py   Eingabemasken Fahrzeug/Setup, Bearbeiten-Dialog
 ```
