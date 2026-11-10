@@ -250,3 +250,19 @@ Zeile bleibt `#STAT;u12=…`. `#STAT` der Zange ab 0.3.0: `isr_funken`, `rmt_fun
 
 PyST holt den Schlüssel bei jedem USB-Verbinden und legt ihn je `id` in `~/PyST/schluessel.json` ab (Rechte 600).
 Vor jedem TCP-Betrieb meldet es sich mit genau einem Versuch an. Der Schlüssel erscheint nie im Log.
+
+## 11 Vorschlag Analogeingänge (PyST ab 1.4.2, Firmware offen)
+
+Für Einstellungen › Analogeingänge. **Noch in keiner Firmware umgesetzt**, PyST und der Simulator (`SIM`, `SIM:mega`)
+können es. Ohne diese Felder bleibt alles wie bisher.
+
+- **`#CAP`** zusätzlich `ai=<Eingang>,<Eingang>,…`, z. B. Mega `ai=A0,A1,…,A15`, F446 `ai=ADC1,ADC2`, Basis
+  `ai=AI1,AI2`. Die Namen sind die Schlüssel in PyST.
+- **`#AI <hz>`** (0 … 50) → `#OK;AI;<hz>`; `#AI 0` schaltet aus. Nach dem Start aus, LabVIEW und alte PyST merken
+  nichts. PyST sendet `#AI 10`, wenn `#CAP` Eingänge nennt.
+- **Zeile** `A;<t_ms>;<Eingang>=<Wert>;…`, z. B. `A;12345;AI1=1.234;AI2=0.501`, in jedem Modus (N und D), zwischen
+  den Telegrammen. Wert = Spannung an der Klemme in V (Teiler herausgerechnet), bei der Basis im Modus 4–20 mA in mA,
+  `nan` = kein Wert. PyST hält jeden Wert 3 s und legt ihn an die folgenden Telegramme.
+- Belegte Eingänge (F446 `afr_src`) dürfen in der Liste bleiben, ihre Werte auch.
+
+Bis dahin liest PyST bei der Basis `ai1`/`ai2` aus `#STAT` (etwa einmal je Sekunde, Einheit `V` bzw. `mA` am Wert).

@@ -1,9 +1,10 @@
 # Einstellungen
 
-Der Reiter **Einstellungen** hat sieben Unterreiter:
+Der Reiter **Einstellungen** hat acht Unterreiter:
 
 **[Rolle/Lauf](#rollelauf)** · **[Verbindung](#verbindung)** · **[Zange](#zange)** · **[Lambda](#lambda)** ·
-**[ECU](#ecu)** · **[Software & Firmware](#software--firmware)** · **[WiFi](#wifi)**
+**[Analogeingänge](#analogeingänge)** · **[ECU](#ecu)** · **[Software & Firmware](#software--firmware)** ·
+**[WiFi](#wifi)**
 
 Alle Einstellungen speichert PyST sofort in `~/PyST/einstellungen.json`.
 
@@ -173,6 +174,22 @@ Knöpfe **Lesen** und **Übernehmen**.
 
 Der Wideband-Controller (F042) wird über die Basis geflasht: Einstellungen › Software & Firmware, Expertenmodus,
 Zeile Lambda (F042). Knopf **Zur Firmware …**.
+
+---
+
+## Analogeingänge
+
+![Einstellungen Analogeingänge](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_einst_analog.png)
+
+Analogeingänge von PyST-Basis (AI1/AI2 an X6), STM32 F446 (ADC1 = PB0, ADC2 = PA1) und Arduino Mega (A0 … A15)
+benennen und umrechnen. Oben das **Gerät** (vorgewählt das verbundene), darunter je Eingang eine Zeile mit **Aktiv**,
+**Name**, **Einheit**, **Umrechnung**, **Spannung** und **Wert** (live). Die Umrechnung des markierten Eingangs:
+**keine (V)**, **2-Punkt** (z. B. 0,5 V = 0 bar, 4,5 V = 10 bar) oder **Faktor/Offset** (W = a · U + b), dazu
+**Balken von / bis**, **Nachkommastellen** und **Vorlage ▾**. Aktive Kanäle stehen in den Live-Kacheln (Gruppe
+„Analog“), im unteren Diagramm und in der Auswertung.
+
+Die Basis liefert ihre Werte heute etwa einmal je Sekunde. Mega 3.1.0 und F446 1.1.0 senden noch keine Analogwerte.
+Alles Weitere: [Analogeingänge](Analogeingänge.md).
 
 ---
 

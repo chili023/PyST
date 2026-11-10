@@ -26,7 +26,8 @@ from . import farben
 from . import theme
 from .statusleiste import Eingang, Statusleiste, zustaende
 from .umbruch import UmbruchLayout
-from . import __version__, ausrollen, htmlexport, physics, report, storage, tasten
+from . import __version__, analog, ausrollen, htmlexport, physics, report, storage, tasten
+from .analog_page import AnalogPage
 from .channels import fault_text, lambda_from_afr, run_channels, run_faults
 from .db import SETUP_SUMMARY_KEYS, VEHICLE_FIELDS, Database, base_dir, field_label
 from .dialogs import FieldForm, SetupForm
@@ -701,6 +702,9 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.page_flash = FlashPage(self.settings, lambda: save_settings(self.settings), lambda: self.link,
                                     self.on_connect)
         self.page_kalib = KalibPage(self.settings, lambda: save_settings(self.settings))
+        self.page_analog = AnalogPage(self.settings, lambda: save_settings(self.settings), lambda: self.link,
+                                      busy=lambda: self.page_flash.busy)
+        self.page_analog.geaendert.connect(self._analog_geaendert)
         self._build_settings_tabs()
         self.tabs.addTab(self.settings_tabs, "Einstellungen")
         self.page_settings.data_label.setText(self.db.path)
@@ -978,6 +982,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         out = [("lam", "Lambda / AFR (Board)", ""), ("egt1", "EGT 1 (Board)", "°C"), ("egt2", "EGT 2 (Board)", "°C")]
         for name, label, unit in (avail if avail is not None else self._ecu_available()):
             out.append((EXTRA_PREFIX + name, f"{label} (ECU)", unit))
+        for _g, k in analog.aktive():                     # Analogeingaenge (Einstellungen › Analogeingänge)
+            out.append((EXTRA_PREFIX + analog.live_key(k.eingang), analog.kanal_name(k), k.einheit_text()))
         return out
 
     def _lower_sides(self):
@@ -1001,7 +1007,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
     def _apply_lower(self, avail):
         keys = {k: (lab, unit) for k, lab, unit in self._lower_candidates(avail)}
         left, right = self._lower_sides()
-        labels = {k: (lab.replace(" (Board)", "").replace("Lambda / AFR", "Lambda"), unit)
+        labels = {k: (lab.replace(" (Board)", "").replace(analog.SUFFIX, "").replace("Lambda / AFR", "Lambda"), unit)
                   for k, (lab, unit) in keys.items()}
         self.plot.set_lower([k for k in left if k in keys], [k for k in right if k in keys], labels)
 
@@ -1021,7 +1027,9 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
 
     def _ecu_extra_run(self, run, res) -> Dict[str, np.ndarray]:
         cols = run.get("columns", {})
-        return {n: cols[COLUMN_PREFIX + n][res.segment] for n in self._ecu_names() if COLUMN_PREFIX + n in cols}
+        out = {n: cols[COLUMN_PREFIX + n][res.segment] for n in self._ecu_names() if COLUMN_PREFIX + n in cols}
+        out.update(self._analog_extra_run(run, res))
+        return out
 
     def _ecu_extra_live(self, r) -> Dict[str, np.ndarray]:
         from .rusefi import resample
@@ -1036,6 +1044,12 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             return {}
         cols = resample(snap, np.array([f.t for f in frames]))
         return {n: cols[COLUMN_PREFIX + n] for n in names if COLUMN_PREFIX + n in cols}
+
+    def _ecu_extra_live_alle(self, r) -> Dict[str, np.ndarray]:
+        """Zusatzkanaele der laufenden Messung: ECU und Analogeingaenge."""
+        out = self._ecu_extra_live(r)
+        out.update(self._analog_extra_live(r))
+        return out
 
     def _update_buttons(self):
         busy = self.ctrl is not None and self.ctrl.state in ACTIVE
@@ -1145,7 +1159,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
 
         res, ch, fehler = wait_in_thread(rechnen)
         # Rohspalten braucht danach nur noch die ECU-Anzeige (_ecu_extra_run)
-        run["columns"] = {k: v for k, v in run.get("columns", {}).items() if k.startswith(COLUMN_PREFIX)}
+        run["columns"] = {k: v for k, v in run.get("columns", {}).items()
+                          if k.startswith(COLUMN_PREFIX) or k.startswith(analog.SPALTE)}
         entry = (run, res, ch, p)
         self.cache.put(rid, entry)
         if fehler is not None:
@@ -1641,7 +1656,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         if k < 2:
             return
         cut = lambda a: None if a is None else a[:k]
-        extra = {n: cut(v) for n, v in self._ecu_extra_live(r).items()}
+        extra = {n: cut(v) for n, v in self._ecu_extra_live_alle(r).items()}
         self.plot.set_curves(LIVE_KEY, cut(r.n), cut(r.ps), cut(r.nm), cut(lambda_from_afr(r.afr)), cut(r.egt),
                              cut(egt2), color="#000000", width=3.0, rescale=False, extra=extra)
         self._update_max_display()
@@ -2179,14 +2194,15 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         row.addWidget(hw.box_plugs, 7)
         self.page_wifi = self._seite(row, stretch_last=True)
         for page, text in ((s, "Rolle/Lauf"), (s.conn_page, "Verbindung"), (hw, "Zange"), (self.page_lambda, "Lambda"),
-                           (self.page_rusefi, "ECU"), (self.page_flash, "Software && Firmware"),
+                           (self.page_analog, "Analogeingänge"), (self.page_rusefi, "ECU"), (self.page_flash, "Software && Firmware"),
                            (self.page_wifi, "WiFi")):
             self.settings_tabs.addTab(page, text)
         self.settings_tabs.setStyleSheet("QTabBar::tab { min-width: 110px; }")
         # Schluessel der Seiten (gespeicherter Reiterstand, show_page); Unterseiten stecken in einer Seite
         self.seiten: Dict[str, QtWidgets.QWidget] = {
             "messen": self.tabs.widget(0), "fahrzeuge": self.page_db, "auswertung": self.viewer, "oszi": self.page_oszi,
-            "rolle": s, "verbindung": s.conn_page, "zange": hw, "lambda": self.page_lambda, "ecu": self.page_rusefi,
+            "rolle": s, "verbindung": s.conn_page, "zange": hw, "lambda": self.page_lambda, "analog": self.page_analog,
+            "ecu": self.page_rusefi,
             "firmware": self.page_flash, "wifi": self.page_wifi}
         self.unterseiten: Dict[str, QtWidgets.QWidget] = {
             "verluste": self.page_kalib, "pruefen": self.page_pruef, "tasten": self.page_tasten}
@@ -2338,6 +2354,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self._persist()
         self.page_oszi.close_page()
         self.page_hw.close_page()
+        self.page_analog.close_page()
         if self.link:
             self.link.close()
         self.page_rusefi.close_link()
