@@ -122,6 +122,12 @@ geändert, sondern über die serielle Schnittstelle gesetzt und im EEPROM gespei
    `pst_isr.h` im selben Ordner gehören dazu).
 4. *Werkzeuge → Board: „Arduino Mega or Mega 2560“*, Port wählen, **Hochladen**.
 
+Einfacher ohne Kompilieren: PyST spielt die fertige Datei auf (*Einstellungen › Software & Firmware › Arduino Mega*).
+Dafür muss die Arduino IDE geschlossen sein (sie belegt sonst den COM-Port); PyST findet das avrdude der IDE selbst.
+
+Ist die SparkFun BME280 schon über den Bibliotheksverwalter installiert (2.0.10 oder neuer), geht ab 3.2.0 auch die;
+3.1.0 bricht damit ab („'I2C_MODE' was not declared“) – dann die ZIP aus `libraries/` einbinden.
+
 **Oder mit PlatformIO** (nimmt die Bibliotheken direkt aus den ZIPs):
 
 ```bash

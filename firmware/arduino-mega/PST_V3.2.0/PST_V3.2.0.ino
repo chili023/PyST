@@ -74,6 +74,9 @@
 #include <SPI.h>
 #include <Wire.h>
 #include <SparkFunBME280.h>
+#ifndef I2C_MODE        // SparkFun BME280 ab 2.0.10 (Bibliotheksverwalter der Arduino IDE) nennt es kSfeI2CMode
+#define I2C_MODE 0
+#endif
 #include <Adafruit_MAX31855.h>
 #include "pst_core.h"
 
