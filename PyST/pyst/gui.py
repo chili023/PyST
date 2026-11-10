@@ -9,6 +9,7 @@ Einstellungen:  Rolle/Lauf | Verbindung | Zange | Lambda | ECU | Software & Firm
   WiFi: Netzwerk der Basis, Steckdosen
 Tag/Nacht: theme.py (Menue Ansicht › Darstellung, Umschalter in der Statusleiste), Statusleiste: statusleiste.py
 Messen: Aufbau und Messlogik in messen_page.py (MessenMixin), Einstellung messen_page.START_NACHFRAGE
+PDF-Bericht: bericht.py (was im Diagramm steht; Knopf unten rechts: on_pdf_aktiv), Ordner-Import: ordner_import.py
 """
 import json
 import logging
@@ -26,10 +27,10 @@ from . import farben
 from . import theme
 from .statusleiste import Eingang, Statusleiste, zustaende
 from .umbruch import UmbruchLayout
-from . import __version__, analog, ausrollen, htmlexport, physics, report, storage, tasten
+from . import __version__, analog, ausrollen, bericht, htmlexport, ordner_import, physics, report, storage, tasten
 from .analog_page import AnalogPage
-from .channels import fault_text, lambda_from_afr, run_channels, run_faults
-from .db import SETUP_SUMMARY_KEYS, VEHICLE_FIELDS, Database, base_dir, field_label
+from .channels import lambda_from_afr, run_channels, run_faults
+from .db import VEHICLE_FIELDS, Database, base_dir
 from .dialogs import FieldForm, SetupForm
 from .basis import ZANGE_USB_WARNUNG
 from .flash_page import FlashPage
@@ -764,6 +765,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         # Statusleiste: drei Felder Basis | Zange/Mega | Lambda/ECU, Kurzmeldungen, Umschalter Tag/Nacht/Auto
         self.statusleiste = Statusleiste()
         self.statusleiste.einbauen(self.statusBar())
+        self.statusleiste.pdf_gewuenscht.connect(lambda: self.on_pdf_aktiv())   # Knopf „PDF-Bericht“ unten rechts
         self._zange_state = ""
         self._zange_weitere = 0
         self.page_hw.zange_state.connect(self._zange_state_neu)
@@ -813,6 +815,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         m = self.menuBar().addMenu("Datei")
         for text, slot, key in (("Öffnen / importieren (.pyst, Läufe, Mitschnitte) …", self.on_import, "Ctrl+O"),
                                 ("Läufe importieren …", self.on_import, "Ctrl+I"),
+                                ("Ordner importieren (mit Unterordnern) …", lambda: self.on_import_ordner(),
+                                 "Ctrl+Shift+I"),
                                 ("Läufe weitergeben (.pyst) …", lambda: self.on_share(), "Ctrl+S"),
                                 ("Als HTML-Ansicht exportieren (ohne PyST ansehbar) …", lambda: self.on_share(html=True),
                                  "Ctrl+H"),
@@ -856,7 +860,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         s.losses_changed.connect(lambda: self.page_kalib.set_current(s.params()))
         self.page_kalib.set_current(s.params())
         self._verbinde_lauf_einstellungen()       # START/Abbrechen, Lauf-Einstellungen … (messen_page)
-        self.viewer.import_btn.clicked.connect(self.on_import)
+        self.viewer.import_dateien.triggered.connect(self.on_import)
+        self.viewer.import_ordner.triggered.connect(lambda: self.on_import_ordner())
         self.viewer.pdf_btn.clicked.connect(lambda: self.on_pdf())
         self.viewer.csv_btn.clicked.connect(lambda: self.on_csv(self.viewer.current_run_id()))
         self.page_db.changed.connect(self._db_changed)
@@ -1706,6 +1711,10 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         if files:
             self.open_files(files)
 
+    def on_import_ordner(self, ordner: str = ""):
+        """Ordner mit Unterordnern nach alten Messungen durchsuchen, Vorschau, importieren (ordner_import)."""
+        return ordner_import.ordner_importieren(self, ordner)
+
     def open_files(self, files, show: bool = True) -> list:
         """Dateien uebernehmen (.pyst, LabVIEW-XML, PyST-Ordner/lauf.json, Terminal-Mitschnitt).
         show=True: die Laeufe anhaken und in der Auswertung zeigen. Liefert die Lauf-IDs."""
@@ -1912,65 +1921,17 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             report.export_csv(path, e[2], decimal_comma="deutsch" in flt)
 
     def pdf_rows(self):
-        rows = []
-        vehicles = {r["id"]: r["name"] for r in self.db.vehicles()}
-        im_diagramm = set(self.diagramm_laeufe())
-        for row in self.db.runs():
-            if not row.sichtbar or row.id not in im_diagramm or row.ist_mittelwert:
-                continue
-            setup = self.db.setup(row.setup_id) if row.setup_id else None
-            details = ""
-            if setup:
-                details = ", ".join(f"{field_label(k).split(' [')[0]}: {setup[k]}" for k in SETUP_SUMMARY_KEYS
-                                    if setup.get(k))
-            e = self._entry(row.id)
-            p = e[3] if e else None
-            res = e[1] if e else None
-            veh = " / ".join(x for x in (vehicles.get(row.vehicle_id, ""), setup["name"] if setup else "") if x)
-            if res is not None and res.verluste:
-                ergebnis = (f"Motor {row.p_max:.1f} PS bei {row.n_pmax:.0f} 1/min\n"
-                            f"Rad {res.p_rad_max:.1f} PS bei {res.n_prad_max:.0f} 1/min\n"
-                            f"{row.m_max:.1f} Nm (Motor) bei {row.n_mmax:.0f} 1/min")
-            else:
-                ergebnis = f"{row.p_max:.1f} PS bei {row.n_pmax:.0f} 1/min\n{row.m_max:.1f} Nm bei {row.n_mmax:.0f} 1/min"
-            if res is not None and res.rolle_kalibriert:
-                ergebnis += f"\nReifen an Rolle {res.p_reifen_max:.1f} PS" + (
-                    f", Antrieb {res.antrieb_ps_pmax:.1f} PS" if res.verluste else "")
-            rows.append({
-                "farbe": run_color(row, theme.TAG),       # Bericht auf weissem Papier
-                "name": self._run_label(row) + (f"\n{row.notiz}" if row.notiz else ""),
-                "fahrzeug": veh + ("\n" + details if details else ""),
-                "ergebnis": ergebnis,
-                "klima": "" if p is None else
-                f"{p.temp_c:.1f} °C, {p.p_mbar:.0f} mbar\nk = {physics.din70020(p.temp_c, p.p_mbar):.3f}",
-                "details": ("" if p is None else
-                            f"i = {p.ratio:.3f}, J = {p.inertia:.2f}\n{physics.filter_text(p, row.rate)}")
-                + (f"\n{res.verlust_text()}" if res is not None and res.verluste else "")
-                + (f"\n{res.rk_quelle or 'Rollen-Kalibrierung'}" if res is not None and res.rolle_kalibriert else "")
-                + (f"\nMessfehler: {fault_text(row.fehler)}" if row.fehler else ""),
-            })
-        return rows
+        """Tabellenzeilen des PDF-Berichts: alles, was im Messen-Diagramm steht (bericht.messen_zeilen)."""
+        return bericht.messen_zeilen(self)
 
-    def on_pdf(self, path: str = ""):
-        rows = self.pdf_rows()
-        if not rows:
-            QtWidgets.QMessageBox.information(self, "PDF-Bericht", "Keine Läufe sichtbar – bitte in der Liste anhaken.")
-            return
-        title = self.vehicle_combo.currentText() if self.vehicle_combo.currentData() else "Leistungsmessung"
-        if not path:
-            path, _ = QtWidgets.QFileDialog.getSaveFileName(
-                self, "PDF-Bericht", os.path.join(os.path.expanduser("~"), "Leistungsmessung.pdf"), "PDF (*.pdf)")
-            if not path:
-                return
-            open_after = True
-        else:
-            open_after = False
-        notes = ["Leistung nach DIN 70020 korrigiert (Radanteil; Verluste unkorrigiert wie LabVIEW).  "
-                 "Mit Verlusten: Motor = Rad + Verluste (Herkunft unter Details).  "
-                 "Oben: ── Leistung [PS], ╌╌ Drehmoment [Nm].  Unten: ── λ, ╌╌ EGT 1, ┈┈ EGT 2."]
-        report.export_pdf(path, self.plot.render_image(), title, rows, notes)
-        if open_after:
-            QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(path))
+    def on_pdf(self, path: str = "", quelle: str = bericht.MESSEN):
+        """PDF-Bericht vom Messen-Diagramm (Datei-Menue, Knopf der Auswertung) bzw. quelle="auswertung"."""
+        return bericht.erzeugen(self, path, quelle)
+
+    def on_pdf_aktiv(self, path: str = ""):
+        """Knopf „PDF-Bericht“ in der Statusleiste: im Reiter Auswertung deren Felder, sonst das Diagramm aus Messen."""
+        quelle = bericht.AUSWERTUNG if self.current_page_key() == "auswertung" else bericht.MESSEN
+        return bericht.erzeugen(self, path, quelle)
 
     # ------------------------------------------------------------------ Zyklus
     def _tick(self):

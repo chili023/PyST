@@ -158,8 +158,24 @@ Auch dann kann der Bootloader des Geräts die Datei ablehnen. Siehe
 **Wo liegen meine Läufe?**
 In `~/PyST` (Windows `C:\Users\<Name>\PyST`). Den Pfad der Datenbank zeigt Einstellungen › Verbindung unten.
 
-**Ein Mittelwert fehlt in der .pyst-Datei bzw. im PDF.**
-Das ist in 1.4.2 noch so: Mittelwerte kommen nicht in `.pyst`-Dateien und nicht in die PDF-Tabelle.
+**Ein Mittelwert fehlt in der .pyst-Datei.**
+Das ist in 1.4.2 noch so: Mittelwerte kommen nicht in `.pyst`-Dateien. Im PDF-Bericht stehen sie (mit Band und
+Quellläufen), wenn sie im Diagramm stehen, ebenso der automatische Mittelwert.
+
+**Wie lese ich alte Messungen ein (alte Software PST 3.x / LabVIEW, ältere PyST-Versionen)?**
+Einzelne Dateien: **Datei › Öffnen / importieren …** oder Datei ins Fenster ziehen. Eine ganze Sammlung:
+**Datei › Ordner importieren (mit Unterordnern) …** bzw. in der Auswertung **Importieren › Ordner mit Unterordnern …**.
+PyST findet LabVIEW-XML, PyST-Laufordner (`lauf.json`), `.pyst`-Dateien und Terminal-Mitschnitte, zeigt eine Vorschau
+und wählt schon vorhandene Läufe ab. Siehe [Auswertung › Ordner importieren](Auswertung.md#ordner-importieren).
+
+**Beim Ordner-Import steht „nicht lesbar“.**
+Die Datei hat die Endung, aber nicht das Format (z. B. eine andere XML-Datei). Der Grund steht im Status und im Bericht.
+
+**Ich kann keinen Lauf löschen.**
+Erst den Lauf in der Liste **Läufe** anklicken (markieren, mit Strg/Umschalt mehrere), dann **Löschen** unten in der
+Seitenleiste oder Rechtsklick › **Löschen …**. Ohne Markierung passiert nichts.
+Nach dem Löschen rückt ein älterer Lauf auf den freien Platz im Diagramm nach – die Liste sieht dann fast gleich aus,
+der gelöschte Lauf ist aber weg. Nicht angepinnt sieht man die Knöpfe erst, wenn die Seitenleiste aufgeklappt ist.
 
 **Ich habe einen Lauf gelöscht.**
 **Löschen** in der Laufliste fragt nach („Messdateien im PyST-Datenordner werden mitgelöscht.“) und entfernt dann auch

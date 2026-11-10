@@ -3,7 +3,7 @@ Auswerter im Stil von MegaLogViewer (Reiter Auswertung, Entwurf v3 vom 08.11.202
 
 Aufbau:
 - Kopfzeile: X-Achse, Felder, nur Kurvenbereich, Layout (Speichern / Speichern unter … / Löschen),
-  rechts Importieren …, PDF-Bericht …, CSV-Export …
+  rechts Importieren (Menü: Dateien … / Ordner mit Unterordnern …), PDF-Bericht …, CSV-Export …
 - links die SeitenLeiste „Läufe & Kanäle“ (32-px-Streifen, Overlay nach 300 ms, Anpinnen, Zustand gespeichert):
   Läufe auswählen (Fahrzeug -> Läufe nach Datum oder Setup, auch Mittelwerte) -> „Hinzufügen“, In der Auswertung,
   Kanäle je Feld. Fahrzeug- und Setup-Daten lassen sich direkt bearbeiten.
@@ -235,8 +235,15 @@ class LogViewer(QtWidgets.QWidget):
         bar.add_gruppe(self.layout_save_btn, self.layout_save_as_btn, self.layout_del_btn)
         bar.addStretch(1)
         # Import und Export (vom Hauptfenster verbunden), mit vollem Text
-        self.import_btn = QtWidgets.QPushButton("Importieren …")
-        self.import_btn.setToolTip("LabVIEW-XML oder PyST-Läufe in die Datenbank übernehmen")
+        # Menue am Knopf: einzelne Dateien oder ein ganzer Ordner mit Unterordnern (ordner_import)
+        self.import_btn = QtWidgets.QPushButton("Importieren")
+        self.import_btn.setToolTip("Alte Messungen in die Datenbank übernehmen: LabVIEW-XML (PST 3.x), PyST-Läufe "
+                                   "(lauf.json, .pyst), Terminal-Mitschnitte – einzelne Dateien oder ein ganzer "
+                                   "Ordner mit Unterordnern")
+        menue = QtWidgets.QMenu(self.import_btn)
+        self.import_dateien = menue.addAction("Dateien …")
+        self.import_ordner = menue.addAction("Ordner mit Unterordnern …")
+        self.import_btn.setMenu(menue)
         self.pdf_btn = QtWidgets.QPushButton("PDF-Bericht …")
         self.pdf_btn.setToolTip("Leistungsdiagramm mit den im Reiter Messen angehakten Läufen und deren Setups")
         self.csv_knopf = QtWidgets.QPushButton("CSV-Export …")

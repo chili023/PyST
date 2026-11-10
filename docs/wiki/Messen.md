@@ -16,7 +16,7 @@ Der Reiter **Messen** ist der Arbeitsplatz am Prüfstand: Lauf starten, Kurve li
 | **Auto-Speichern** | Lauf nach dem Ende sofort in die Datenbank schreiben |
 | Statusfeld | Zustand und Anweisung an den Fahrer (Tabelle unten) |
 | **Verbinden / Trennen** | Messboard verbinden oder trennen |
-| **Lauf-Einstellungen …** | kleines Fenster mit Übersetzung, Filter, Start und Ende des Laufs und **Ø automatisch mitteln**. Darunter steht kurz, was gilt, z. B. „i 6,850 (Hand) · Filter 35 / 15 Pkt.“ |
+| **Lauf-Einstellungen …** | kleines Fenster mit Übersetzung, Filter sowie Start und Ende des Laufs. Darunter steht kurz, was gilt, z. B. „i 6,850 (Hand) · Filter 35 / 15 Pkt.“ |
 | **START  (F1)** | Lauf starten, bei unverändertem Setup erst mit kurzer [Nachfrage](#start-nachfrage). Im Lauf wird der Knopf rot: **Abbrechen  (Esc)**, beim Ausrollen **Ausrollen beenden (Esc)** |
 
 ### Statusfeld
@@ -100,7 +100,6 @@ Ein kleines Fenster mit den Werten, die man zwischen zwei Läufen am häufigsten
 | **ÜBERSETZUNG  nKW/nRolle** | Auswahl **von Hand (Wert eintragen oder einmessen)** oder **Funkenmessung (aus Zündung/Rolle jedes Laufs)**. Feld **Übersetzung** (bei Funkenmessung heißt es **Startwert**). Knöpfe **Übersetzung einmessen …** und **Live abgleichen …**. Siehe [Übersetzung](Übersetzung.md) |
 | **FILTER** | **Filter in** Sekunden oder Messpunkte (wie LabVIEW), die zwei Filterwerte, Knopf **Standard** (1,75 s / 0,75 s) |
 | **LAUF  Start und Ende** | **Start: steigt über [s]** (Standard 1,0) und **Start: Anstieg mind. [1/min]** (Standard 150): nach GO beginnt der Lauf, sobald die Drehzahl so lange und so viel steigt. **n vom Gas [1/min]**: ab hier wird auf fallende Drehzahl (= Laufende) geprüft. **n Stop [1/min] (0 = aus)** |
-| **DIAGRAMM** | Haken **Ø automatisch mitteln** (Standard aus, wirkt sofort, auch im Menü **Ansicht**), siehe [unten](#ø-automatisch-mitteln) |
 | Link | **Alle Einstellungen › Rolle/Lauf …** |
 
 ## SETUP-WERTE
@@ -201,6 +200,27 @@ bzw. des automatischen Mittelwerts, wenn seine Zeile markiert ist.
   Laufende). Ist sie zu lang, zeigt der Tooltip den ganzen Text.
 - Im Lauf bleibt die Skalierung fest, damit die Kurve nicht springt.
 
+### PDF-Bericht
+
+![PDF-Bericht aus Messen, erste Seite](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_pdf_messen.png)
+
+Der Knopf **PDF-Bericht** unten rechts in der Statusleiste (neben ☀ ☾ ◐) druckt genau das, was gerade im Diagramm zu
+sehen ist. Dasselbe machen **Datei › PDF-Bericht der sichtbaren Läufe …** (Ctrl+P) und der Knopf **PDF-Bericht …** der
+Auswertung. PyST fragt nach dem Dateinamen (Vorschlag `Leistungsmessung.pdf`) und öffnet den Bericht danach.
+
+| Im Bericht | woher |
+|---|---|
+| Kopf | Fahrzeug, Datum und eine Zeile „Diagramm aus Messen · Drehzahl 4.000–12.000 1/min · oben: … · unten: … · Achsgrenzen …“ |
+| Diagramm | wie angezeigt: dieselben Achsgrenzen, Kurven oben und unten, Bänder der Mittelwerte. Immer in Tag-Farben |
+| **Ø automatisch** | „Ø 4 Läufe · Serie HD 135 (automatisch)“ mit Pmax/Mmax und den Quellläufen, wenn der Haken an ist |
+| Referenzen | gespeicherte Mittelwerte im Diagramm mit Pmax/Mmax, Band und Quellläufen |
+| Läufe | die angehakten Läufe auf den Plätzen (gesperrte mit „Platz gesperrt“), mit Fahrzeug/Setup, Setup-Werten, Klima, Ergebnis, Übersetzung und Filter |
+| Letzter Lauf | eine eben gemessene, noch nicht gespeicherte Kurve |
+
+Passt die Tabelle nicht auf die erste Seite, geht sie auf der nächsten weiter. Ist der Reiter **Auswertung** offen,
+druckt der Knopf in der Statusleiste deren Felder (X-Achse, Kanäle je Feld) mit den dort angezeigten Läufen, der Kopf
+sagt dann „Diagramm aus der Auswertung“.
+
 ## Läufe (Seitenleiste)
 
 Am linken Rand des Diagramms steht eine schmale Leiste „Läufe · 5 Plätze: x gesperrt, y rollierend“. Mit der Maus
@@ -218,15 +238,16 @@ Plätze rollieren: der neueste Lauf verdrängt den ältesten nicht gesperrten.
 | Element | Funktion |
 |---|---|
 | **＋** (oben neben „Läufe“) | **Läufe hinzufügen …**: alte Läufe oder Mittelwerte gesperrt ins Diagramm legen (siehe [unten](#läufe-hinzufügen)) |
+| **Ø automatisch mitteln** (neben **＋**) | Mittelwert der Läufe im Diagramm mit gleichem Setup, ohne Platz zu belegen (siehe [unten](#ø-automatisch-mitteln)). Standard aus, wirkt sofort, auch im Menü **Ansicht** |
 | Filter | **alle**, **aktuelles Fahrzeug**, **aktuelles Setup** |
-| Gruppen | **Ø AUTOMATISCH** (nur mit Haken [Ø automatisch mitteln](#ø-automatisch-mitteln) unter **Lauf-Einstellungen …**), **GESPERRT**, **ROLLIEREND** (die letzten n), **ÄLTERE LÄUFE** |
+| Gruppen | **Ø AUTOMATISCH** (nur mit Haken [Ø automatisch mitteln](#ø-automatisch-mitteln)), **GESPERRT**, **ROLLIEREND** (die letzten n), **ÄLTERE LÄUFE** |
 | Spalten | Schloss, Lauf, PS, bei, Nm, Fehler |
 | Schloss anklicken | Platz sperren bzw. lösen. Ältere Läufe holt man mit dem Schloss ins Diagramm |
 | Häkchen | Lauf im Diagramm zeigen oder ausblenden |
 | Doppelklick | Lauf in der Auswertung öffnen |
 | **Alle ausblenden** | alle Häkchen weg |
 | **In Auswertung** | markierte Läufe in die Auswertung |
-| **Löschen** | Läufe löschen, **auch die Messdateien** |
+| **Löschen** | markierte Läufe (anklicken, mit Strg/Umschalt mehrere) nach Rückfrage löschen, **auch die Messdateien**. Ohne Markierung passiert nichts. Rückt danach ein älterer Lauf auf den freien Platz nach, ist das kein Fehler |
 
 **Rechtsklick auf einen Lauf:** **Platz sperren (Schloss)** / **Schloss lösen**, **In Auswertung öffnen**,
 **Notiz bearbeiten …**, **Farbe ändern …**, **Aktuellem Fahrzeug/Setup zuordnen**, **Mit aktuellen Einstellungen neu
@@ -261,8 +282,8 @@ Linie mit Streuband und steht immer in der Legende („gesperrt, Referenz · Ban
 
 ![Ø automatisch mitteln: Mittelwert aus 4 Läufen mit Band, oben in der Liste mit „speichern“](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_auto_mittel.png)
 
-Mit dem Haken **Ø automatisch mitteln** im Fenster **Lauf-Einstellungen …** (Knopf oben rechts, Abschnitt
-**DIAGRAMM**) oder im Menü **Ansicht** mittelt PyST selbst. Der Haken wirkt sofort:
+Mit dem Haken **Ø automatisch mitteln** oben in der Seitenleiste Läufe (neben **＋**) oder im Menü **Ansicht** mittelt
+PyST selbst. Der Haken wirkt sofort:
 
 - **Welche Läufe:** alle Läufe, die gerade im Diagramm stehen (Häkchen an) und **dasselbe Setup** haben wie der
   neueste davon. Gleiches Setup heißt: gleiches Fahrzeug, gleiches Setup und gleiche Setup-Werte. Ein Lauf mit Werten

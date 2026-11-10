@@ -50,7 +50,8 @@ Eine einzige Datei. Läuft offline in jedem Browser, auch auf dem Handy.
 |---|---|
 | **Datei › Öffnen / importieren (.pyst, Läufe, Mitschnitte) …** (Ctrl+O) | Datei wählen |
 | **Datei › Läufe importieren …** (Ctrl+I) | dasselbe für Läufe |
-| **Importieren …** in der Auswertung | dasselbe |
+| **Importieren › Dateien …** in der Auswertung | dasselbe |
+| **Datei › Ordner importieren (mit Unterordnern) …** (Ctrl+Umschalt+I) oder **Importieren › Ordner mit Unterordnern …** | ganzer Ordner mit Unterordnern, mit Vorschau und Duplikaterkennung, siehe [Auswertung › Ordner importieren](Auswertung.md#ordner-importieren) |
 | Datei ins Fenster ziehen (Drag & Drop) | öffnet die Datei |
 | Start mit Datei, z. B. `./start_linux.sh lauf.pyst` | öffnet die Datei in der Auswertung |
 
