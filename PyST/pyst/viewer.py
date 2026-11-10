@@ -25,7 +25,7 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import mittelwert as mw
-from . import physics
+from . import analog, physics
 from . import theme
 from .channels import Channel
 from .cursorwerte import CursorSpalte, KachelDaten, bereich_runden, dez_fuer, wert_bei
@@ -1201,7 +1201,8 @@ class LogViewer(QtWidgets.QWidget):
             unit = self._unit(name)
             blo, bhi, zonen = self._balken(name, runs)
             daten.append(KachelDaten(name, unit, dez_fuer(unit, bhi - blo), blo, bhi, zonen, laeufe))
-        kanaele = [Kanal(n, n, self._unit(n), "ECU" if n.endswith("(ECU)") else "PST", dez_fuer(self._unit(n)))
+        kanaele = [Kanal(n, n, self._unit(n), "ECU" if n.endswith("(ECU)") else
+                         analog.GRUPPE if n.endswith(analog.SUFFIX) else "PST", dez_fuer(self._unit(n)))
                    for n in getattr(self, "_alle_namen", [])]
         self.cursor.set_kacheln(daten, kanaele)
         # Maxima je Lauf

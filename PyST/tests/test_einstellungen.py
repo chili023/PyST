@@ -696,8 +696,9 @@ class Unterreiter(unittest.TestCase):
     def test_reiter(self):
         t = self.w.settings_tabs
         self.assertEqual([t.tabText(i) for i in range(t.count())],
-                         ["Rolle/Lauf", "Verbindung", "Zange", "Lambda", "ECU", "Software && Firmware", "WiFi"])
-        self.assertIs(t.widget(5), self.w.page_flash)
+                         ["Rolle/Lauf", "Verbindung", "Zange", "Lambda", "Analogeingänge", "ECU", "Software && Firmware",
+                          "WiFi"])
+        self.assertIs(t.widget(6), self.w.page_flash)
         self.assertIs(self.w.seiten["firmware"], self.w.page_flash)     # Schlüssel bleibt (gespeicherter Reiter)
         from pyst import __version__
         k = self.w.page_flash.pyst_karte

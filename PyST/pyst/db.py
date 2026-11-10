@@ -224,7 +224,9 @@ MESSPLAETZE = 5              # Laeufe im Messfenster (gesperrte + rollierende)
 
 
 def live_kanal_ok(kanal: str) -> bool:
-    return kanal == "" or kanal in LIVE_KANAELE or (kanal.startswith(ECU_PREFIX) and len(kanal) > len(ECU_PREFIX))
+    from . import analog                                  # Analogeingang: "ain:" + Eingang (analog.py)
+    return kanal == "" or kanal in LIVE_KANAELE or (kanal.startswith(ECU_PREFIX) and len(kanal) > len(ECU_PREFIX)) \
+        or analog.ist_key(kanal)
 
 
 def _live_platz(p: Any, standard: Dict[str, Any]) -> Dict[str, Any]:
@@ -764,7 +766,8 @@ class Database:
 
     def live_plaetze(self, vid: Optional[int]) -> List[Dict[str, Any]]:
         """Die Live-Plaetze (Messen), 0 … LIVE_MAX je Fahrzeug: [{"kanal", "min", "max", "zonen": [[von, bis, stufe],
-        ...]}], kanal: Schluessel aus LIVE_KANAELE, ECU_PREFIX + rusEFI-Kanal oder "" (leer); stufe aus LIVE_STUFEN.
+        ...]}], kanal: Schluessel aus LIVE_KANAELE, ECU_PREFIX + rusEFI-Kanal, analog.PREFIX + Eingang oder ""
+        (leer); stufe aus LIVE_STUFEN.
         Ohne Eintrag die 5 Standardplaetze; gespeicherte Listen aelterer Versionen (immer 5 Plaetze) gelten weiter."""
         raw = self.vehicle_pref(vid, "live", None)
         if not isinstance(raw, list):

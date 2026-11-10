@@ -324,16 +324,18 @@ class Gui(unittest.TestCase):
         top = [w.tabs.tabText(i) for i in range(w.tabs.count())]
         self.assertEqual(top, ["Messen", "Fahrzeuge && Setups", "Auswertung", "Oszi / Dauermessung", "Einstellungen"])
         sub = [w.settings_tabs.tabText(i) for i in range(w.settings_tabs.count())]
-        self.assertEqual(sub, ["Rolle/Lauf", "Verbindung", "Zange", "Lambda", "ECU", "Software && Firmware", "WiFi"])
+        self.assertEqual(sub, ["Rolle/Lauf", "Verbindung", "Zange", "Lambda", "Analogeingänge", "ECU",
+                               "Software && Firmware", "WiFi"])
         s = w.page_settings
         # Entwurf 08.11.2026: keine Reiter in den Unterreitern, die Teile stecken als Gruppen in ihren Seiten
-        self.assertEqual([type(w.settings_tabs.widget(i)) for i in range(7) if isinstance(
+        self.assertEqual([type(w.settings_tabs.widget(i)) for i in range(8) if isinstance(
             w.settings_tabs.widget(i), type(w.settings_tabs))], [])
         self.assertIs(w.settings_tabs.widget(0), s)
         self.assertIs(w.settings_tabs.widget(1), s.conn_page)
         self.assertIs(w.settings_tabs.widget(2), w.page_hw)
-        self.assertIs(w.settings_tabs.widget(4), w.page_rusefi)
-        self.assertIs(w.settings_tabs.widget(5), w.page_flash)
+        self.assertIs(w.settings_tabs.widget(4), w.page_analog)
+        self.assertIs(w.settings_tabs.widget(5), w.page_rusefi)
+        self.assertIs(w.settings_tabs.widget(6), w.page_flash)
         self.assertTrue(w.page_hw.isAncestorOf(w.page_tasten) and w.page_hw.isAncestorOf(w.page_pruef_zange))
         self.assertTrue(s.conn_page.isAncestorOf(w.page_pruef) and s.conn_page.isAncestorOf(w.dev_settings_btn))
         self.assertTrue(w.page_lambda.isAncestorOf(w.page_hw.box_lambda))

@@ -114,6 +114,27 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 - Angepinnt zieht man wie bisher am Teiler. Es gibt eine Breite für beide Zustände (240 bis 900 px), PyST merkt sie
   sich (`"laeufe_leiste"` in `einstellungen.json`). Dasselbe gilt für die Seitenleiste „Läufe & Kanäle“ der Auswertung.
 
+**10. Analogeingänge (neuer Unterreiter Einstellungen › Analogeingänge)**
+- Oben das **Gerät**: PyST-Basis (AI1/AI2 an X6, 0–10 V, per Lötbrücke 0–5 V oder 4–20 mA), STM32 F446 (ADC1 = PB0,
+  ADC2 = PA1, 0–3,3 V) oder Arduino Mega (A0 … A15, 0–5 V). Vorgewählt ist das verbundene Gerät; die anderen bleiben
+  bearbeitbar, ihre Live-Werte grau.
+- Je Eingang eine Zeile: **Aktiv**, **Name** (z. B. „Öldruck“), **Einheit** (z. B. bar), **Umrechnung**, **Spannung**
+  und **Wert** live. Darunter die Umrechnung des markierten Eingangs: **keine (V)**, **2-Punkt** (0,5 V = 0 bar,
+  4,5 V = 10 bar, linear) oder **Faktor/Offset** (W = a · U + b), **Balken von / bis**, **Nachkommastellen** und
+  **Vorlage ▾** (Drucksensor 0,5–4,5 V, 0–5 V linear, 4–20 mA, Spannungsteiler). U1 = U2 meldet PyST, statt zu rechnen.
+  Beim F446 steht in der Spalte Hinweis, welcher Eingang AFR-Eingang sein kann (`afr_src`).
+- Gespeichert in `einstellungen.json` (`"analog"`, je Gerät), wirkt sofort.
+- Aktive Kanäle stehen in den **Live-Kacheln** (▾ und „＋“, Gruppe **Analog**, mit Name und Einheit), im **unteren
+  Diagramm** (Kurven ▾), in der **Auswertung** und im **CSV-Export** („Öldruck (Analog)“, dazu „AI1 Rohwert (Analog)“).
+- Läufe: `roh.csv` behält die Rohwerte (`analog_AI1` …, V bzw. mA), `lauf.json` die Umrechnung, die beim Lauf galt
+  (`"analog"`). Alte Läufe zeigen ihre damalige Umrechnung; mit dem Haken **Gespeicherte Läufe mit der aktuellen
+  Umrechnung zeigen** rechnet PyST sie neu. Läufe ohne Analogwerte laden wie bisher.
+- Die Basis meldet AI1/AI2 heute in `#STAT`; PyST fragt etwa jede Sekunde. Für Mega und F446 (und schnellere Werte der
+  Basis) schlägt PyST eine Erweiterung von PST-Diag 1 vor: `#CAP;…;ai=<Eingänge>` und `#AI <hz>` für Zeilen
+  `A;<t_ms>;AI1=1.234;…`. Der Simulator kann das (`SIM:mega`, `SIM`), die Firmwares noch nicht.
+
+![Einstellungen › Analogeingänge](bilder/v142_einst_analog.png)
+
 ## Hinweise und Annahmen
 
 - **Rollen-Kalibrierung:** Mit abgehobenem Rad misst der Assistent nur die Verluste der Rolle. Sie gelten für den
@@ -124,6 +145,10 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 - **Ø automatisch mitteln:** „Dasselbe Setup“ heißt gleiches Fahrzeug, gleiches Setup und gleiche Setup-Werte; ein
   Lauf mit Werten „nur für diesen Lauf“ zählt als anderes Setup. Ein Lauf ohne Auto-Speichern zählt erst nach dem
   Speichern. Gemittelt wird wie in Auswertung › Mittelwert bilden (Raster 50 1/min, oben 300 1/min weg).
+- **Analogeingänge:** Mega 3.1.0 und F446 1.1.0 senden noch keine Analogwerte; die Seite und die Umrechnung gehen
+  trotzdem, die Werte kommen erst mit einer Firmware, die `#AI` kann. Die Basis liefert sie heute nur etwa einmal je
+  Sekunde (`#STAT`), im Lauf gilt der letzte Wert bis zum nächsten. Den Bereich der Basis (0–5 V, 0–10 V, 4–20 mA)
+  legen Lötbrücke und `ai1_mode`/`ai2_mode` fest, PyST rechnet mit dem Wert, den die Basis meldet.
 - Die neuen Funktionen sind im Simulator und mit automatischen Tests geprüft, **an der Hardware noch nicht**.
 
 ## Update von 1.4.1
@@ -137,6 +162,7 @@ im **[Wiki](https://github.com/chili023/PyST/wiki)**.
 ## Noch nicht an der Hardware bestätigt
 
 - Rollen-Kalibrierung mit abgehobenem Rad und die Aufteilung der Verluste.
+- Analogeingänge der Basis (`#STAT`) mit echtem Sensor.
 - Aus 1.4.1: Mega und F446 aus PyST flashen, Übersetzungsart **Funkenmessung**, Zangentasten im Abgleichfenster,
   Updates im Format 2 und Firmware 0.4.0 von Basis, Zange und Basis-ESP.
 
@@ -145,6 +171,7 @@ Bitte Rückmeldungen über die [Issues](https://github.com/chili023/PyST/issues)
 ## Bekannte Einschränkungen
 
 - Mittelwert-Läufe gehen noch nicht in `.pyst`-Dateien mit und stehen nicht in der PDF-Tabelle.
+- Die Dauermessung (Oszi) zeichnet die Analogeingänge noch nicht auf.
 - „Als Hauptzange“ und „Tasten prüfen“ sind ausgegraut, weil die Zangen-Firmware dafür noch keinen Befehl hat.
 - PyST steuert den Motor nicht. „n Stop“ und die große Anweisung zeigen nur **GAS WEG**.
 - Die Zange **nie am laufenden Motor per USB anschließen**: Sie ist dann galvanisch mit dem PC verbunden.

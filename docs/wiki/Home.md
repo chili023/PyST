@@ -23,6 +23,7 @@ Datenbank und hilft beim Vergleichen von Setups.
 | **Oszi / Dauermessung** | Fehlersuche an Zündung und Rolle: Linienschreiber, Software-Trigger, Ereignisliste, Flanken-Ansicht |
 | **Ausrollversuch** | Verluste von Rolle, Rad, Kette bestimmen, dann Motorleistung neben der Radleistung. Einmalige Rollen-Kalibrierung (Rad abgehoben) teilt sie in Rolle und Reifen/Kette/Getriebe auf |
 | **PyST-Basis & Zange** | Funk-Zündzange mit Tasten, Lambda-Heizung, WLAN, WLAN-Steckdosen |
+| **Analogeingänge** | Eingänge von Basis, F446 und Mega benennen und umrechnen (z. B. V zu bar), als Kanal in Kacheln, Diagramm und Auswertung |
 | **Software & Firmware** | installierte und neueste PyST-Version; Basis, Zange, Arduino Mega und STM32 (F446) aus PyST heraus aktualisieren |
 | **Darstellung** | Tag, Nacht oder Auto, Fenstergröße einstellbar |
 
@@ -34,9 +35,10 @@ Datenbank und hilft beim Vergleichen von Setups.
 | Fahrzeuge & Setups | [Fahrzeuge und Setups](Fahrzeuge-und-Setups.md) |
 | Auswertung | [Auswertung](Auswertung.md), [Läufe weitergeben](Läufe-weitergeben.md) |
 | Oszi / Dauermessung | [Oszi und Dauermessung](Oszi-und-Dauermessung.md) |
-| Einstellungen | [Einstellungen](Einstellungen.md) mit den Unterreitern Rolle/Lauf, Verbindung, Zange, Lambda, ECU, Software & Firmware, WiFi |
+| Einstellungen | [Einstellungen](Einstellungen.md) mit den Unterreitern Rolle/Lauf, Verbindung, Zange, Lambda, [Analogeingänge](Analogeingänge.md), ECU, Software & Firmware, WiFi |
 
 Weitere Seiten: [Installation](Installation.md) · [Erste Schritte](Erste-Schritte.md) · [Ausrollversuch](Ausrollversuch.md) ·
+[Analogeingänge](Analogeingänge.md) ·
 [Firmware und Updates](Firmware-und-Updates.md) · [PyST-Basis und Zange](PyST-Basis-und-Zange.md) ·
 [Darstellung](Darstellung.md) · [Kommandozeile](Kommandozeile.md) · [Rechenweg](Rechenweg.md) · [Fehlersuche](Fehlersuche.md)
 
@@ -62,6 +64,10 @@ Weitere Seiten: [Installation](Installation.md) · [Erste Schritte](Erste-Schrit
   auf. Siehe [Ausrollversuch](Ausrollversuch.md#rollen-kalibrierung-ausrollen-ohne-rad).
 - **Software & Firmware:** neuer Name des Unterreiters, Kachel **PyST (Software)** mit installierter und verfügbarer
   Version. Nicht angeschlossene Geräte sind ausgegraut.
+- **Analogeingänge** (neuer Unterreiter in den Einstellungen): Eingänge von PyST-Basis, STM32 F446 und Arduino Mega
+  benennen, Einheit und Umrechnung eintragen (keine, 2-Punkt, Faktor/Offset, Vorlagen). Aktive Kanäle stehen in den
+  Live-Kacheln, im unteren Diagramm und in der Auswertung; jeder Lauf merkt sich seine Umrechnung. Siehe
+  [Analogeingänge](Analogeingänge.md).
 
 Alle Änderungen: [Release Notes 1.4.2](https://github.com/chili023/PyST/blob/main/docs/RELEASE_NOTES_1.4.2.md).
 

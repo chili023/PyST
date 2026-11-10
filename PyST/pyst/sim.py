@@ -331,8 +331,51 @@ class SimSerial:
         self.flags_extra = 0
         self.last_out = {"I": 0.0, "R": 0.0}       # alter Mega: letzter Wert bleibt stehen
         self._edges_on = False
+        self.ai_hz = 0                              # Vorschlag '#AI <hz>': A-Zeilen mit den Analogwerten (analog.py)
+        self._ai_acc = 0.0
+        self._ai_t = 0.0                            # Uhr der simulierten Sensoren [s]
+        self.ai_rng = random.Random(seed + 101)     # eigener Zufall: Flanken und Funk bleiben wiederholbar
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
+
+    # --- Analogeingaenge (Vorschlag PST-Diag 1, analog.py): Mega A0…A15, F446 ADC1/ADC2
+    def ai_eingaenge(self) -> List[str]:
+        if not self.diag:
+            return []
+        return [f"A{i}" for i in range(16)] if self.mega else ["ADC1", "ADC2"]
+
+    def _last(self) -> float:
+        """0 … 1: wie weit der Motor dreht (aus der letzten Rollenfrequenz), fuer Sensoren, die mitlaufen."""
+        return max(0.0, min(1.0, self.last_out.get("R", 0.0) / 2800.0))
+
+    def analog_werte(self) -> Dict[str, float]:
+        """Simulierte Spannungen an den Eingaengen: 1. Eingang wie ein Drucksensor 0,5–4,5 V (steigt mit der
+        Drehzahl), 2. Eingang langsame Welle (Temperatur), die uebrigen offen (wenige mV Rauschen)."""
+        t, x = self._ai_t, self._last()
+        r = self.ai_rng
+        u_max = 3.3 if not self.mega else 5.0
+        out = {}
+        for i, k in enumerate(self.ai_eingaenge()):
+            if i == 0:
+                v = (0.5 + 3.0 * x) * u_max / 5.0 + r.gauss(0.0, 0.01)
+            elif i == 1:
+                v = (1.6 + 0.4 * math.sin(t / 8.0)) * u_max / 5.0 + r.gauss(0.0, 0.005)
+            else:
+                v = abs(r.gauss(0.0, 0.004))
+            out[k] = max(0.0, min(u_max, v))
+        return out
+
+    def _analog_step(self, dt: float):
+        self._ai_t += dt
+        if self.ai_hz <= 0:
+            return
+        self._ai_acc += dt
+        if self._ai_acc + 1e-9 < 1.0 / self.ai_hz:
+            return
+        self._ai_acc = 0.0
+        t_ms = (int(self._ai_t * 1000) + self.ms_offset) & 0xFFFFFFFF
+        felder = ";".join(f"{k}={v:.3f}" for k, v in self.analog_werte().items())
+        self._out(f"A;{t_ms};{felder}\r\n")
 
     # --- serial.Serial-Schnittstelle
     @property
@@ -426,8 +469,19 @@ class SimSerial:
         a = parts[1:]
         if cmd == "?":
             fw = "PST-Mega 3.1.0 SIM" if self.mega else "PST-STM32 1.1.0 SIM"
+            ai = ",".join(self.ai_eingaenge())
             self._out(f"#CAP;proto=1;fw={fw};tick_ns={self.tick_ns:g};ch=I,R;burst_max={self.burst_max()};"
-                      f"modes=N,D;set=1\r\n")
+                      f"modes=N,D;set=1" + (f";ai={ai}" if ai else "") + "\r\n")
+        elif cmd == "AI" and a and self.ai_eingaenge():
+            try:
+                hz = int(float(a[0]))
+            except ValueError:
+                hz = -1
+            if 0 <= hz <= 50:
+                self.ai_hz, self._ai_acc = hz, 0.0
+                self._out(f"#OK;AI;{hz}\r\n")
+            else:
+                self._out("#ERR;AI;bereich 0-50\r\n")
         elif cmd == "MODE" and a and a[0].upper() in ("N", "D"):
             self.mode = a[0].upper()
             self._out(f"#OK;MODE;{self.mode}\r\n")
@@ -635,7 +689,9 @@ class SimSerial:
         """Ein Telegramm erzeugen. Liefert dessen Dauer [s] (fuer die Echtzeit-Taktung)."""
         self._background()
         if not self.streaming:
+            self._analog_step(0.05)
             return 0.05
+        self._analog_step(1.0 / max(1.0, getattr(self.engine, "rate", 60.0) or 60.0))
         dt, rate, f_ign, f_roll, egt1, afr, egt2 = self.engine.next_frame()
         f_ign, f_roll = self._frame_hook(f_ign, f_roll, dt)
         self.cycle = (self.cycle + 1) & 0xFFFF
@@ -1027,6 +1083,17 @@ class BasisSimSerial(SimSerial):
         self.z_peak = max(0.0, 4300.0 - 0.07 * rpm + self.brng.gauss(0.0, 70.0)) if f_ign > 0 else 0.0
         return f_ign, f_roll
 
+    def ai_eingaenge(self) -> List[str]:
+        return []                                               # Basis 0.4 kennt '#AI' nicht, Werte nur in '#STAT'
+
+    def _ai_stat(self) -> str:
+        """AI1/AI2 wie die Basis im Werkszustand (0–10 V): AI1 Drucksensor 0,5–4,5 V, AI2 langsame Welle."""
+        t = time.time() % 10000.0
+        x = self._last()
+        ai1 = 0.5 + 3.0 * x + self.ai_rng.gauss(0.0, 0.01)
+        ai2 = 2.0 + 0.5 * math.sin(t / 8.0) + self.ai_rng.gauss(0.0, 0.005)
+        return f"ai1={max(0.0, ai1):.3f}V;ai2={max(0.0, ai2):.3f}V"
+
     def _extra_flags(self) -> int:
         fl = 0
         if not (self.z_paired and self.z_conn):
@@ -1122,7 +1189,7 @@ class BasisSimSerial(SimSerial):
                       "#STAT;wb=reset;lambda=nan;afr=nan;wb_temp=-1;wb_status=-;heat_cmd=0;heat=0;can_rx=0;can_err=0;"
                       f"wb_reset={0 if self._lam_on() else 1};wb_guard={'laeuft' if self._lam_on() else 'aus'}\r\n"
                       f"#STAT;{self._lam_fields(now)}\r\n"
-                      f"#STAT;u12={self._setf('sim_u12'):.2f};u5s=4.961;ai1=0.010V;ai2=0.010V;vref=2.497;t_mcu=29.7\r\n")
+                      f"#STAT;u12={self._setf('sim_u12'):.2f};u5s=4.961;{self._ai_stat()};vref=2.497;t_mcu=29.7\r\n")
         elif cmd == "ZANGE":
             sub = a[0].upper() if a else ""
             if not self.z_paired:
@@ -1362,6 +1429,9 @@ class ZangeUsbSimSerial(SimSerial):
 
     def burst_max(self) -> int:
         return 2000
+
+    def ai_eingaenge(self) -> List[str]:
+        return []                                               # Zange: keine Analogeingaenge
 
     def _frame_hook(self, f_ign: float, f_roll: float, dt: float):
         self.peak = max(0.0, 4300.0 - 4.2 * f_ign + self.zrng.gauss(0, 70)) if f_ign > 0 else 0.0

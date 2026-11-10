@@ -56,7 +56,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from . import mittelwert, tasten, theme
+from . import analog, mittelwert, tasten, theme
 from .abgleich_dialog import AbgleichDialog, skala_bereich
 from .bg import wait_in_thread, waiting
 from .channels import fault_text, lambda_from_afr
@@ -171,6 +171,9 @@ def ecu_titel(name: str, titel: str = "", einheit: str = "") -> Tuple[str, str]:
 def kanal_bereich(kanal: str) -> Tuple[float, float, int, list, bool]:
     if kanal.startswith(ECU_PREFIX):
         return ecu_bereich(kanal[len(ECU_PREFIX):])
+    if kanal.startswith(analog.PREFIX):
+        lo, hi, dez = analog.bereich(kanal)
+        return lo, hi, dez, [], False
     return KANAL_BEREICH.get(kanal, (0.0, 100.0, 1, [], False))
 
 
@@ -2476,6 +2479,10 @@ class MessenMixin:
             lo, hi, dez, _z, _m = ecu_bereich(name)
             label, unit = ecu_titel(name, label, unit)
             out.append(Kanal(ECU_PREFIX + name, label, unit, "ECU", dez, lo, hi))
+        for _g, k in analog.aktive():                      # Einstellungen › Analogeingänge
+            key = analog.live_key(k.eingang)
+            lo, hi, dez = analog.bereich(key)
+            out.append(Kanal(key, k.titel(), k.einheit_text(), analog.GRUPPE, dez, lo, hi))
         return out
 
     def _live_plaetze_anwenden(self):
@@ -2492,10 +2499,13 @@ class MessenMixin:
             kk = list(kan)
             if p["kanal"] and not any(x.schluessel == p["kanal"] for x in kk):
                 ecu = p["kanal"].startswith(ECU_PREFIX)
+                ain = analog.kanal(p["kanal"])             # Analogkanal, der gerade nicht aktiv ist
                 titel, einheit = (ecu_titel(p["kanal"][len(ECU_PREFIX):]) if ecu
+                                  else (ain[1].titel(), ain[1].einheit_text()) if ain
                                   else LIVE_KANAELE.get(p["kanal"], (p["kanal"], "")))
                 dez = kanal_bereich(p["kanal"])[2]
-                kk.append(Kanal(p["kanal"], titel, einheit, "ECU" if ecu else "PST", dez, p["min"], p["max"]))
+                kk.append(Kanal(p["kanal"], titel, einheit, "ECU" if ecu else analog.GRUPPE if ain else "PST", dez,
+                                p["min"], p["max"]))
             k.set_kanaele(kk)
             k.set_kanal(p["kanal"])
             k.set_bereich(p["min"], p["max"], zonen=[tuple(z) for z in p["zonen"]], dez=tick_dez(p["min"], p["max"]),
@@ -2653,6 +2663,13 @@ class MessenMixin:
             "ratio_ecu": ecu_rpm / lv.n_roll if ecu_rpm is not None and lv.n_roll > 1 else None,
             "rate": lv.rate if fin(lv.rate) and lv.rate > 0 else None,
         }
+        self._live.update(self._analog_live(f))
+
+    def _analog_live(self, f) -> Dict[str, Optional[float]]:
+        """Umgerechnete Analogwerte des Telegramms f (Frame.ain) fuer die aktiven Kanaele des verbundenen Geraets."""
+        werte = getattr(f, "ain", None) or {}
+        g = analog.geraet_von_link(self.link)
+        return {analog.live_key(k.eingang): k.wert(werte.get(k.eingang)) for _g, k in analog.aktive(g)} if g else {}
 
     def _kacheln_takt(self):
         """Aus _tick: Live-Kacheln hoechstens 10-mal je Sekunde neu."""
@@ -2698,7 +2715,7 @@ class MessenMixin:
                 quelle = "ECU"
         else:
             v = self._live.get(kanal)
-            quelle = "" if i < 0 else "PST"
+            quelle = "" if i < 0 else (analog.GRUPPE if kanal.startswith(analog.PREFIX) else "PST")
             if kanal == "lam":
                 if v is not None and not self.page_settings.lambda_radio.isChecked():
                     text = zahl(self._live.get("afr"), 2)
@@ -2783,6 +2800,30 @@ class MessenMixin:
             link.start()
 
     # ------------------------------------------------------------------ ECU, Lambda-Anzeige
+    def _analog_geaendert(self):
+        """Einstellungen › Analogeingänge geaendert: Laeufe neu rechnen (Kanaele der Auswertung), Kacheln und Diagramm."""
+        for rid in list(self.cache.items):
+            self.cache.pop(rid)
+        self._ecu_changed()
+
+    def _analog_extra_run(self, run, res) -> Dict[str, np.ndarray]:
+        """Aktive Analogkanaele eines gespeicherten Laufs fuer das Diagramm (Schluessel 'ain:<Eingang>')."""
+        return {analog.live_key(lk.kanal.eingang): lk.werte[res.segment] for lk in analog.lauf_kanaele(run)
+                if len(lk.werte) == len(run["dt"])}
+
+    def _analog_extra_live(self, r) -> Dict[str, np.ndarray]:
+        """Aktive Analogkanaele der laufenden Messung (Frame.ain) fuer das Diagramm."""
+        g = analog.geraet_von_link(self.link)
+        akt = analog.aktive(g) if g else []
+        frames = self.ctrl.frames[r.segment] if akt else []
+        if not frames or not any(getattr(f, "ain", None) for f in frames):
+            return {}
+        out = {}
+        for _g, k in akt:
+            u = np.array([(f.ain or {}).get(k.eingang, np.nan) if f.ain else np.nan for f in frames], float)
+            out[analog.live_key(k.eingang)] = k.werte(u)
+        return out
+
     def _ecu_changed(self):
         """Live-Plaetze und Diagramm-Kanaele nach Auswahl/Verbindung der ECU neu aufbauen."""
         avail = {n: (lab, unit) for n, lab, unit in self._ecu_available()}
@@ -3339,7 +3380,8 @@ class MessenMixin:
                                            "egt2": wert(d.get("egt2"))}
         for k, a in d.items():
             if k.startswith(EXTRA_PREFIX):
-                out[ECU_PREFIX + k[len(EXTRA_PREFIX):]] = wert(a)
+                name = k[len(EXTRA_PREFIX):]
+                out[name if name.startswith(analog.PREFIX) else ECU_PREFIX + name] = wert(a)
         row = self._laeufe.get(int(key)) if key.isdigit() else None
         e = self._entry(int(key)) if row is not None and not row.ist_mittelwert else None
         if e is not None and e[1] is not None:
@@ -3352,6 +3394,8 @@ class MessenMixin:
             for spalte, a in run.get("columns", {}).items():
                 if spalte.startswith(COLUMN_PREFIX):
                     out[ECU_PREFIX + spalte[len(COLUMN_PREFIX):]] = wert(np.asarray(a, float)[seg])
+            for lk in analog.lauf_kanaele(run):
+                out[analog.live_key(lk.kanal.eingang)] = wert(lk.werte[seg])
         for k in ("egt1", "egt2"):
             if out.get(k) is not None and out[k] <= 0:
                 out[k] = None                          # kein Sensor

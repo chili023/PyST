@@ -43,7 +43,7 @@ Ausführliche Anleitung zu jeder Funktion: **[PyST-Wiki](https://github.com/chil
 | **Fahrzeuge & Setups** | Fahrzeuge (Hersteller, Modell, Gemischaufbereitung, Motor …) und Setups (Motor, Vergaser, Einspritzung/ECU, Zündung, Antrieb, Ein-/Auslass, Kraftstoff). Kopieren, „Für neue Läufe verwenden“ |
 | **Auswertung** | Läufe überlagern wie MegaLogViewer: bis 4 Felder, X-Achse Zeit oder Drehzahl, Cursor mit Maus und ←/→. Laufleiste **ANGEZEIGTE LÄUFE** mit Setup-Spalten (Änderungen gelb), **Mittelwert bilden …**, rechts **Werte am Cursor** und **Setup-Vergleich**. Import, PDF-Bericht, CSV |
 | **Oszi / Dauermessung** | Fehlersuche an Zündung und Rolle: Dauermessung mit Markern (F2), Linienschreiber, Software-Trigger, Ereignisliste, Flanken-Ansicht (PST-Diag 1), Geräte-Einstellungen |
-| **Einstellungen** | Unterreiter **Rolle/Lauf** (Prüfstand, Anzeige beim Messen, Lauf, Filter, Klima, Verluste mit Rollen-Kalibrierung und Ausrollversuch) · **Verbindung** (Messboard, Geräte-Einstellungen der Basis, Prüfen, Datenbank) · **Zange** (Kopplung, Aufnahme & Log, Tasten der Zange, Tests, Geräte-Einstellungen) · **Lambda** (Heizung, λ/AFR, AFR-Eingang, Prüfen) · **ECU** (rusEFI, .ini, Kanal-Setup) · **Software & Firmware** (Kachel PyST mit installierter/verfügbarer Version, Kundenansicht mit vier Karten, Expertenmodus) · **WiFi** (WLAN der Basis, Steckdosen) |
+| **Einstellungen** | Unterreiter **Rolle/Lauf** (Prüfstand, Anzeige beim Messen, Lauf, Filter, Klima, Verluste mit Rollen-Kalibrierung und Ausrollversuch) · **Verbindung** (Messboard, Geräte-Einstellungen der Basis, Prüfen, Datenbank) · **Zange** (Kopplung, Aufnahme & Log, Tasten der Zange, Tests, Geräte-Einstellungen) · **Lambda** (Heizung, λ/AFR, AFR-Eingang, Prüfen) · **Analogeingänge** (Eingänge von Basis, F446 und Mega benennen und umrechnen) · **ECU** (rusEFI, .ini, Kanal-Setup) · **Software & Firmware** (Kachel PyST mit installierter/verfügbarer Version, Kundenansicht mit vier Karten, Expertenmodus) · **WiFi** (WLAN der Basis, Steckdosen) |
 
 - Unten die **Statusleiste** mit drei Feldern (PST Basis · PST Zange/Mega · PST/Lambda ECU) und dem Umschalter
   **☀ Tag | ☾ Nacht | Auto** (auch Menü *Ansicht › Darstellung*). Fenstergröße unter *Ansicht › Größe*.
@@ -68,7 +68,7 @@ Ausführliche Anleitung zu jeder Funktion: **[PyST-Wiki](https://github.com/chil
   Flashen wird wieder gesucht. Reißt die WLAN-Verbindung zur Basis ab (auch bei jedem Neustart der Basis), verbindet
   PyST neu und meldet sich neu an; eine abgelehnte Anmeldung wiederholt es nicht, jeder Fehlversuch verlängert die
   Sperre der Basis (1 bis 60 s).
-- **Anzeigen und Diagramme** frei belegbar: Titel ▾ jeder LIVE-Kachel (Kanal wählen, gruppiert nach PST und ECU),
+- **Anzeigen und Diagramme** frei belegbar: Titel ▾ jeder LIVE-Kachel (Kanal wählen, gruppiert nach PST, ECU und Analog),
   „Kurven ▾“ im Leistungs- und im unteren Diagramm (links/rechts, unteres Diagramm ausblendbar). Unter
   Einstellungen › Rolle/Lauf › **Anzeige beim Messen** (auch Menü *Ansicht*): **Ergebnis groß nach dem Lauf** (an),
   **Anweisungen groß (GO, GAS WEG …)** (an), **Legende im Diagramm** (aus).
@@ -91,6 +91,20 @@ Ausführliche Anleitung zu jeder Funktion: **[PyST-Wiki](https://github.com/chil
     gelegt (Farbe = Lauf, Punkt-/Strichpunkt-Muster = Kanal, Bereich in der Legende oben links).
   - Zum Entpacken der `.7z` wird `py7zr` benutzt, ersatzweise `bsdtar`/`7z` (Mac und Windows haben `tar` dabei,
     auf Linux ggf. `pip install py7zr` oder `apt install p7zip-full`).
+- **Analogeingänge** (Einstellungen › Analogeingänge, Wiki [Analogeingänge](../docs/wiki/Analogeingänge.md)): je Gerät
+  (PyST-Basis AI1/AI2 an X6, 0–10 V / 0–5 V / 4–20 mA per Lötbrücke · STM32 F446 ADC1 = PB0, ADC2 = PA1, 0–3,3 V ·
+  Arduino Mega A0 … A15, 0–5 V) eine Zeile je Eingang mit Haken, Name, Einheit, Umrechnung (**keine**, **2-Punkt**
+  U1 → W1 / U2 → W2, **Faktor/Offset** W = a · U + b; U1 = U2 wird abgefangen), Balkengrenzen, Nachkommastellen,
+  Vorlagen (Drucksensor 0,5–4,5 V, 0–5 V linear, Spannungsteiler …) und Spannung/Wert live. Gespeichert in
+  `einstellungen.json` (`"analog"`), wirkt sofort.
+  - Aktive Kanäle: LIVE-Kachel (Gruppe „Analog“), „Kurven ▾“ im unteren Diagramm, Auswertung und CSV-Export
+    („Öldruck (Analog)“ und „AI1 Rohwert (Analog)“).
+  - Beim Speichern eines Laufs: Rohwerte in `roh.csv` (Spalten `analog_<Eingang>`, V bzw. mA), die zum Lauf gültige
+    Konfiguration in `lauf.json` (`"analog"`). Alte Läufe zeigen ihre damalige Umrechnung; Haken „Gespeicherte Läufe
+    mit der aktuellen Umrechnung zeigen“ rechnet neu.
+  - Werte: Die Basis meldet AI1/AI2 in `#STAT`, PyST fragt etwa jede Sekunde. Vorschlag für alle Firmwares:
+    `#CAP;…;ai=<Eingänge>`, `#AI <hz>` → Zeilen `A;<t_ms>;AI1=1.234;…` (PyST schickt `#AI 10`). Mega 3.1.0 und
+    F446 1.1.0 senden noch keine Analogwerte; der Simulator (`SIM:mega`, `SIM`, `SIM:basis`) schon.
 - Weitere Messkanäle (später WSB) sind zusätzliche Spalten in `roh.csv` und
   erscheinen automatisch im Auswerter und im CSV-Export.
 
@@ -658,6 +672,8 @@ pyst/ratio_dialog.py Fenster „Übersetzung“: Übersetzung eintragen oder ein
 pyst/abgleich_dialog.py Fenster „Übersetzung live abgleichen“ (Drehzahlmesser, Pfeilknöpfe, Zangentasten)
 pyst/rusefi.py    rusEFI-Steuergerät: TunerStudio-Protokoll, .ini, Kanäle
 pyst/rusefi_page.py Unterreiter „ECU“: Verbindung zum Steuergerät, .ini, Kanal-Setup
+pyst/analog.py    Analogeingänge: Eingänge je Gerät, Umrechnung, A-Zeilen/#STAT, Spalten und Konfiguration der Läufe (ohne Oberfläche)
+pyst/analog_page.py Unterreiter „Analogeingänge“: Tabelle je Gerät, Umrechnung, Vorlagen, Live-Werte
 pyst/update.py    nach neuer PyST-Version und Firmware suchen (manifest.json im Branch firmware), Download mit Prüfung
 pyst/plots.py     Leistungsdiagramm mit ausgerichteten Achsen und Cursor
 pyst/viewer.py    Auswerter (MegaLogViewer-Stil)
