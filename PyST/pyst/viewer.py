@@ -18,6 +18,7 @@ Aufbau:
   (CSV-Export liefert die gemittelten Kurven, Ausrollversuch/Kanäle des Hauptfensters bekommen sie nicht).
 """
 import json
+import math
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -115,6 +116,7 @@ class LogViewer(QtWidgets.QWidget):
         self.rows: Dict[int, object] = {}       # run_id -> RunRow (bei jedem Neuladen aufgefrischt)
         self.bez: Dict[int, str] = {}           # run_id -> „16:24“ / „Ø Ref.“
         self.cursor_idx = 0
+        self._cursor_frei: Optional[float] = None    # Maus: X frei ueber alle Laeufe; None = Telegramm des ersten
         self.color_of: Dict[str, str] = {}
         # Layout: Kanaele je Feld bleiben erhalten, auch wenn ein geladener Lauf einen Kanal nicht hat
         self.pane_channels: List[List[str]] = [list(p) for p in DEFAULT_PANES]
@@ -1068,6 +1070,16 @@ class LogViewer(QtWidgets.QWidget):
             pi.addItem(line, ignoreBounds=True)
             self.plots.append(pi)
             self.lines.append(line)
+        # Fahne unten an der Cursorlinie (unterstes Feld): genaue Drehzahl bzw. Zeit am Cursor
+        self.cursor_fahne = None
+        if self.lines:
+            T = theme.tokens()
+            self.cursor_fahne = pg.InfLineLabel(self.lines[-1], "", movable=False, position=0.04,
+                                                anchors=[(0.5, 1), (0.5, 1)], color=T["text"],
+                                                fill=pg.mkBrush(T["panel"]), border=pg.mkPen(T["border"]))
+            f = self.cursor_fahne.textItem.font()
+            f.setBold(True)
+            self.cursor_fahne.textItem.setFont(f)
         for p, f in enumerate(FELD_HOEHEN[:n_panes]):          # oberes Feld groesser (Entwurf: 5 : 3 : 2)
             self.glw.ci.layout.setRowStretchFactor(p, f)
         if self.plots:
@@ -1083,7 +1095,7 @@ class LogViewer(QtWidgets.QWidget):
     def _mouse_moved(self, pos):
         for pi in self.plots:
             if pi.sceneBoundingRect().contains(pos):
-                self._set_cursor_x(pi.vb.mapSceneToView(pos).x())
+                self._set_cursor_x(pi.vb.mapSceneToView(pos).x(), frei=True)
                 return
 
     def _primary(self) -> Optional[int]:
@@ -1092,15 +1104,32 @@ class LogViewer(QtWidgets.QWidget):
         echte = [r for r in runs if not self._ist_mw(r)]
         return (echte or runs or [None])[0]
 
-    def _set_cursor_x(self, x: float):
+    def _x_bereich(self) -> Optional[Tuple[float, float]]:
+        """Kleinstes und groesstes X aller angezeigten Laeufe (der Cursor darf ueberall dazwischen stehen)."""
+        lo, hi = math.inf, -math.inf
+        for rid in self._runs_shown():
+            xa = self._x(rid)
+            if xa is not None and len(xa):
+                ok = np.isfinite(xa)
+                if ok.any():
+                    lo, hi = min(lo, float(np.min(xa[ok]))), max(hi, float(np.max(xa[ok])))
+        return (lo, hi) if lo <= hi else None
+
+    def _set_cursor_x(self, x: float, frei: bool = False):
+        """Cursor an X. frei=True (Maus): genau dort, ueber den ganzen Bereich aller Laeufe – auch wenn der erste
+        Lauf vorher endet; sonst auf das naechste Telegramm des ersten Laufs."""
         rid = self._primary()
         xa = self._x(rid) if rid is not None else None
         if xa is None or not len(xa) or not np.isfinite(xa).any():
             return
         self.cursor_idx = int(np.nanargmin(np.abs(xa - x)))
+        b = self._x_bereich() if frei else None
+        self._cursor_frei = min(max(float(x), b[0]), b[1]) if b else None
         self._place_cursor()
 
     def cursor_x(self) -> Optional[float]:
+        if self._cursor_frei is not None:
+            return self._cursor_frei
         rid = self._primary()
         xa = self._x(rid) if rid is not None else None
         if xa is None or not len(xa):
@@ -1113,14 +1142,19 @@ class LogViewer(QtWidgets.QWidget):
         xa = self._x(rid) if rid is not None else None
         if xa is not None and len(xa):
             self.cursor_idx = max(0, min(len(xa) - 1, self.cursor_idx))
-            x = float(xa[self.cursor_idx])
-            if np.isfinite(x):
-                for line in self.lines:
-                    line.setPos(x)
+        x = self.cursor_x()
+        if x is not None and np.isfinite(x):
+            for line in self.lines:
+                line.setPos(x)
+            if getattr(self, "cursor_fahne", None) is not None:
+                zeit = self._x_key() == "Zeit"
+                self.cursor_fahne.setText(f"{zahl(x, 2)} s" if zeit else f"{zahl(x)} 1/min")
         self._cursor_timer.start()
 
     def keyPressEvent(self, ev: QtGui.QKeyEvent):
         if ev.key() in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Right):
+            if self._cursor_frei is not None:               # von der Mausstelle aus auf Telegramme des ersten Laufs
+                self._set_cursor_x(self._cursor_frei)
             self.cursor_idx += -1 if ev.key() == QtCore.Qt.Key_Left else 1
             self._place_cursor()
         else:
@@ -1193,7 +1227,7 @@ class LogViewer(QtWidgets.QWidget):
                 c = self.data[rid][0].get(name)
                 x = self._x(rid)
                 y = None if c is None else c.values[self._slice(rid)]
-                if rid == prim and y is not None and len(y) and x_at is not None:
+                if rid == prim and self._cursor_frei is None and y is not None and len(y) and x_at is not None:
                     v = float(y[min(self.cursor_idx, len(y) - 1)])
                     laeufe.append((self._basis(self.rows[rid]), self.bez.get(rid, ""), v if np.isfinite(v) else None))
                 else:

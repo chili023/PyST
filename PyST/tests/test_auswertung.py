@@ -308,6 +308,36 @@ class Auswertung(unittest.TestCase):
         self.assertEqual(p.viewportUpdateMode(), QtWidgets.QGraphicsView.FullViewportUpdate)
         p.deleteLater()
 
+    def test_cursor_folgt_maus_ueber_den_ersten_lauf_hinaus(self):
+        """Zwei Laeufe, der zweite dreht hoeher: der Cursor geht bis ans Ende des zweiten; der erste zeigt dort „–“,
+        unten an der Linie steht die genaue Drehzahl."""
+        def laden(rid):
+            ch, seg, mk = synth_kanaele(rid)
+            if rid == self.ids[1]:
+                for c in ch.values():
+                    c.values = np.asarray(c.values, float).copy()
+                ch["Drehzahl Motor"].values = ch["Drehzahl Motor"].values * 11000.0 / 9000.0
+            return ch, seg, mk
+        v = LogViewer(self.db, laden)
+        v.resize(1700, 1000)
+        v.apply_layout({"felder": 1, "x": "Drehzahl Motor", "kanaele": [["Leistung"]]})
+        v.show()
+        v.add_runs(self.ids[:2])
+        pump(0.1)
+        v._set_cursor_x(10500, frei=True)
+        v._update_cursor()
+        self.assertAlmostEqual(v.cursor_x(), 10500, delta=1)
+        self.assertAlmostEqual(v.lines[0].value(), 10500, delta=1)
+        self.assertEqual(v.cursor_fahne.textItem.toPlainText(), "10.500 1/min")
+        k = next(k for k in v.cursor.kacheln if k.isVisible() and k.laeufe)
+        werte = dict(k.lauf_texte())
+        self.assertEqual(werte["16:18"], "–")                           # erster Lauf endet bei 9000
+        self.assertNotEqual(werte["16:19"], "–")
+        v._set_cursor_x(20000, frei=True)                               # rechts ausserhalb: am Ende des laengsten
+        self.assertAlmostEqual(v.cursor_x(), 11000, delta=1)
+        v.close()
+        v.deleteLater()
+
     def test_notiz_sichtbar_entfernen(self):
         self.v.add_runs(self.ids[:3])
         pump()
