@@ -11,6 +11,26 @@ _home = tempfile.mkdtemp(prefix="pyst-tests-")
 atexit.register(shutil.rmtree, _home, ignore_errors=True)
 os.environ["HOME"] = os.environ["USERPROFILE"] = _home
 
+# Echte Geraete am Testrechner (Mega, Nucleo, Basis, Zange) sehen und oeffnen die Tests nie: sonst verbindet jedes
+# Hauptfenster sie per Auto-Verbinden und schickt Befehle (10.11.2026: F446 am TUF waehrend der Suite offen). Tests,
+# die Ports brauchen, setzen eigene comports-Listen bzw. den Simulator ein.
+import serial  # noqa: E402
+from serial.tools import list_ports as _list_ports  # noqa: E402
+
+_list_ports.comports = lambda *_a, **_k: []
+ECHTE_PORTS = ("/dev/ttyACM", "/dev/ttyUSB", "/dev/ttyS", "/dev/cu.", "/dev/tty.", "COM")
+_serial_open = serial.Serial.open
+
+
+def _nur_testports(self):
+    port = str(self.port or "")
+    if port.startswith(ECHTE_PORTS):
+        raise serial.SerialException(f"Tests öffnen keinen echten Port ({port})")
+    return _serial_open(self)
+
+
+serial.Serial.open = _nur_testports
+
 
 @pytest.fixture(autouse=True)
 def _start_nachfrage_ohne_fenster(monkeypatch):
