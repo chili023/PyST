@@ -57,7 +57,8 @@ Ein simulierter Lauf dauert ca. 15 s.
 
 1. Motor warmfahren, gleicher Gang, gleiche Reifentemperatur wie bei den anderen Tests.
 2. Klimadaten: automatisch (Sensor) – in allen Tests gleich lassen.
-3. Pro Lauf: Drehzahl ~3000 halten (unter n vom Gas!) → START → bei GO Vollgas → bei 8000 Gas weg.
+3. Pro Lauf: Drehzahl ~3000 halten (unter n vom Gas!) → START → „Klima wird gemessen …“ abwarten → bei GO Vollgas
+   (die Messung beginnt, sobald die Drehzahl 1 s lang steigt) → bei 8000 Gas weg.
 4. **Auto-Speichern an** (LabVIEW legt `JJMMTT_HHMMSS_PS_n.xml` ab, PyST einen Ordner
    in `~/PyST/messungen/`).
 5. Notieren: Pmax, n(Pmax), COM-Fehlerrate, Auffälligkeiten (Aussetzer, springende Drehzahl).
@@ -147,13 +148,19 @@ Ohne Hardware (Simulator) – alles muss vorführbar sein:
 7. Port `SIM:mega300:stoerung` (alter Mega ohne `#CAP`): Flanken-Ansicht gesperrt, Software-Trigger meldet trotzdem.
 8. Abstürzen simulieren (PyST während der Dauermessung beenden mit `kill`): Ordner per „Öffnen“ importieren → Daten bis auf Sekunden da.
 
-Mit Hardware (Mega 3.1.0 / F446 1.1.0 neben Mega 3.0.0 / F446 1.0.0):
+Mit Hardware (Mega 3.1.0/3.2.0 / F446 1.1.0/1.2.0 neben Mega 3.0.0 / F446 1.0.0):
 
 | Prüfung | erwartet |
 |---|---|
 | Verbinden 3.0.0 / 1.0.0 | kein `#CAP` → „Gerät ohne PST-Diag 1“, Läufe wie bisher, LabVIEW-identisch |
 | Verbinden 3.1.0 / 1.1.0 | `#CAP` erkannt, Modus D nur während der Dauermessung |
 | Leistungslauf mit 3.1.0 | identisch zu 3.0.0 (Normalmodus) |
+| Mega 3.2.0 / F446 1.2.0 verbinden | `#CAP` mit `ai=`, PyST sendet `#AI 10`, Einstellungen › Analogeingänge „✔ verbunden · live“ |
+| Spannung an A0 bzw. PB0 (Netzteil, Poti) | Wert in PyST = Messgerät (Mega ± Versorgung, F446 ± 1 %), offene Eingänge rauschen |
+| Mega 3.2.0 Dauermessung mit `#AI 10` | Zünd-/Rollenfrequenz wie mit 3.1.0, Flag 4 (Verlust) nie gesetzt, A-Zeilen 10/s |
+| F446 1.2.0 `afr_src 1` | AFR im Telegramm wie mit 1.1.0, ADC1 in der A-Zeile = Spannung an PB0 |
+| PyST trennen, dann LabVIEW 3.2.1 (F446) | keine A-Zeilen bei LabVIEW (PyST hat `#AI 0` gesendet) |
+| STM-LabVIEW 0.2.0 am F446 nach PyST | Binärtelegramme fehlerfrei, keine A-Zeilen |
 | Kabel bewegen während Dauermessung | Marker + Rollensprung/Wackelkontakt im Linienschreiber, Fehler Rolle > 0 |
 | Burst Zündung, Flanke B | Pulsbreite des Zündimpulses, ggf. zweiter Impuls ~142° danach sichtbar |
 

@@ -2,13 +2,15 @@
 PyST – Oberflaeche (PySide6 + pyqtgraph). Mac, Linux (Raspberry Pi), Windows.
 
 Reiter:  Messen | Fahrzeuge & Setups | Auswertung | Oszi / Dauermessung | Einstellungen
-Einstellungen:  Rolle/Lauf | Verbindung | Zange | Lambda | ECU | Firmware | WiFi
+Einstellungen:  Rolle/Lauf | Verbindung | Zange | Lambda | ECU | Software & Firmware | WiFi
   Rolle/Lauf: Allgemein (Pruefstand, Lauf, Filter, Klima, Anzeige) | Verluste (Ausrollversuch, frueher Reiter Kalibrierung)
   Verbindung: Messboard (Port, Geraete-Einstellungen PST-Diag) | Prüfen
   Zange: Zange (Zustand, Kopplung, Log) | Tasten;  Lambda: Lambda-Heizung;  ECU: rusEFI (frueher Hauptreiter ECU)
   WiFi: Netzwerk der Basis, Steckdosen
 Tag/Nacht: theme.py (Menue Ansicht › Darstellung, Umschalter in der Statusleiste), Statusleiste: statusleiste.py
-Messen: Aufbau und Messlogik in messen_page.py (MessenMixin), Einstellung messen_page.START_NACHFRAGE
+Messen: Aufbau und Messlogik in messen_page.py (MessenMixin), Einstellungen messen_page.START_NACHFRAGE,
+  NACH_LAUF_FENSTER (Fenster „Lauf fertig“), SETUP_EINGEKLAPPT; Lauf speichern: save_current_run / lauf_speichern
+PDF-Bericht: bericht.py (was im Diagramm steht; Knopf unten rechts: on_pdf_aktiv), Ordner-Import: ordner_import.py
 """
 import json
 import logging
@@ -26,14 +28,16 @@ from . import farben
 from . import theme
 from .statusleiste import Eingang, Statusleiste, zustaende
 from .umbruch import UmbruchLayout
-from . import __version__, ausrollen, htmlexport, physics, report, storage, tasten
-from .channels import fault_text, lambda_from_afr, run_channels, run_faults
-from .db import SETUP_SUMMARY_KEYS, VEHICLE_FIELDS, Database, base_dir, field_label
+from . import __version__, analog, ausrollen, bericht, htmlexport, ordner_import, physics, report, storage, tasten
+from .analog_page import AnalogPage
+from .channels import lambda_from_afr, run_channels, run_faults
+from .db import VEHICLE_FIELDS, Database, base_dir
 from .dialogs import FieldForm, SetupForm
 from .basis import ZANGE_USB_WARNUNG
 from .flash_page import FlashPage
 from .pruef_page import PruefPage
 from .hw_page import HardwarePage
+from .ausroll_assistent import AusrollAssistent
 from .kalib_page import KalibPage
 from .link import (DEFAULT_SIM_PORT, SIM_PORT, DynoLink, guess_port, is_pst_firmware, list_serial_ports,
                    pst_board_ports, zange_usb_ports)
@@ -45,11 +49,11 @@ from .bg import Bg, wait_in_thread, waiting
 from .plots import EXTRA_PREFIX, LOWER_DEFAULT, MAX_LOWER, MAX_OVERLAYS, DynoPlot, fmt_value, run_color
 from .rusefi import COLUMN_PREFIX
 from .runcache import RunCache
-from .runner import ABORTED, ACTIVE, COAST, DONE, IDLE, RUN, WAIT, RunController
+from .runner import ABORTED, ACTIVE, COAST, DONE, IDLE, KLIMA, RUN, WAIT, RunController
 from .rusefi_page import RusefiPage
 from .tasten_page import TastenBand, TastenPage
 from .viewer import LogViewer
-from .messen_page import GEAENDERT, LIVE_KEY, START_NACHFRAGE, MessenMixin  # noqa: F401
+from .messen_page import GEAENDERT, LIVE_KEY, NACH_LAUF_FENSTER, START_NACHFRAGE, MessenMixin  # noqa: F401
 
 log = logging.getLogger("pyst.gui")
 
@@ -83,6 +87,8 @@ PARAM_FIELDS = {
     ],
     "Lauf": [
         ("ratio", "Übersetzung nKW/nRolle", 0.01, 100, 3),
+        ("start_anstieg_s", "Start: steigt über [s]", 0.2, 5, 1),
+        ("start_anstieg_min", "Start: Anstieg mind. [1/min]", 0, 5000, 0),
         ("n_min", "n vom Gas [1/min]", 0, 30000, 0),
         ("n_stop", "n Stop [1/min] (0 = aus)", 0, 30000, 0),
     ],
@@ -100,6 +106,19 @@ PARAM_FIELDS = {
         ("temp_c", "Lufttemperatur [°C]", -30, 60, 1),
         ("p_mbar", "Luftdruck [mbar]", 500, 1200, 1),
     ],
+}
+
+
+# Tooltips der Felder (auch an den Spiegeln unter Messen › Lauf-Einstellungen …)
+PARAM_TIPS = {
+    "start_anstieg_s": "Laufbeginn: Nach GO beginnt die Messung, sobald die Motordrehzahl (Rolle × Übersetzung) so "
+                       "lange durchgehend steigt. Die Kurve beginnt am Anfang dieses Zeitfensters, nichts geht "
+                       "verloren. Standard 1,0 s.",
+    "start_anstieg_min": "Laufbeginn: Um so viel muss die Motordrehzahl im Zeitfenster mindestens steigen, damit "
+                         "Halten mit Messrauschen nicht als Start gilt. Standard 150 1/min.",
+    "n_min": "Ab dieser Motordrehzahl wird auf fallende Drehzahl (= Laufende, Gas weg) geprüft. Startet den Lauf "
+             "nicht, der beginnt mit dem Drehzahlanstieg. Muss über der Haltedrehzahl liegen.",
+    "n_stop": "Lauf endet spätestens bei dieser Motordrehzahl (0 = aus, Ende nur durch Gas weg).",
 }
 
 
@@ -202,6 +221,11 @@ class SettingsPage(QtWidgets.QScrollArea):
                 unten.addWidget(box, 1, QtCore.Qt.AlignTop)
                 unten.addLayout(self.verluste_lay, 3)
                 self.verluste_box = box
+            elif group == "Prüfstand":                 # darunter die Gruppe „Anzeige beim Messen“
+                spalte = QtWidgets.QVBoxLayout()
+                spalte.addWidget(box, 1)
+                spalte.addWidget(self._anzeige_gruppe(settings))
+                oben.add(spalte, 1, gruppe=paare[group])
             else:
                 oben.add(box, 1, gruppe=paare[group])
         self.filter_form = boxes["Filter"]
@@ -221,6 +245,12 @@ class SettingsPage(QtWidgets.QScrollArea):
                     sp.setSingleStep(0.05)
                 sp.setValue(float(getattr(defaults, key)))
                 sp.setKeyboardTracking(False)
+                if key in PARAM_TIPS:
+                    sp.setToolTip(PARAM_TIPS[key])
+                if key == "start_anstieg_s":
+                    sp.setSingleStep(0.1)
+                elif key == "start_anstieg_min":
+                    sp.setSingleStep(50)
                 self.fields[key] = sp
                 ziel = "Verluste" if key in LOSS_KEYS else "Filter" if group.startswith("Filter") else group
                 if key == "ratio":                 # Art, Wert und der Knopf „Übersetzung einmessen …“
@@ -246,17 +276,27 @@ class SettingsPage(QtWidgets.QScrollArea):
                     continue
                 boxes[ziel].addRow(label, sp)
         fl = boxes["Lauf"]
-        note = QtWidgets.QLabel("n vom Gas: ab hier wird auf fallende Drehzahl (= Laufende) geprüft. "
-                                "Muss über der Haltedrehzahl liegen.")
+        note = QtWidgets.QLabel("Start: Nach GO beginnt der Lauf, sobald die Drehzahl so lange steigt. "
+                                "n vom Gas: ab hier wird auf fallende Drehzahl (= Laufende) geprüft, "
+                                "muss über der Haltedrehzahl liegen.")
         note.setWordWrap(True)
         theme.rolle(note, "neben")
         fl.addRow(note)
-        self.start_nachfrage = QtWidgets.QCheckBox("Bei geändertem Setup vor START nachfragen")
-        self.start_nachfrage.setToolTip("Weicht das Setup vom letzten Lauf ab, fragt PyST vor dem Start nach "
-                                        "(Messen). Einstellung „start_nachfrage_setup“.")
+        self.start_nachfrage = QtWidgets.QCheckBox("Vor START nachfragen, ob sich das Setup geändert hat")
+        self.start_nachfrage.setToolTip("Ist in SETUP-WERTE (Messen) nichts geändert, zeigt START kurz die Schnellwerte "
+                                        "zum Eintragen von Änderungen. Die Zangentaste „Neuer Lauf“ fragt nie. "
+                                        "Einstellung „start_nachfrage_setup“.")
         self.start_nachfrage.setChecked(bool(settings.get("start_nachfrage_setup", True)))
         self.start_nachfrage.setStyleSheet("font-weight: 600;")
         fl.addRow(self.start_nachfrage)
+        self.nach_lauf_fenster = QtWidgets.QCheckBox("Nach dem Lauf Notiz/Setup-Fenster zeigen")
+        self.nach_lauf_fenster.setToolTip("Nach dem Lauf (mit dem Ergebnis) das Fenster „Lauf fertig“: Notiz und "
+                                          "Setup-Werte des Laufs nachtragen, ohne Auto-Speichern dort speichern. "
+                                          "Nicht modal – START, F1 und die Zangentaste gehen weiter. "
+                                          "Einstellung „nach_lauf_fenster“.")
+        self.nach_lauf_fenster.setChecked(bool(settings.get("nach_lauf_fenster", True)))
+        self.nach_lauf_fenster.setStyleSheet("font-weight: 600;")
+        fl.addRow(self.nach_lauf_fenster)
         self.filter_label = QtWidgets.QLabel()
         self.filter_label.setWordWrap(True)
         theme.rolle(self.filter_label, "neben")
@@ -295,6 +335,8 @@ class SettingsPage(QtWidgets.QScrollArea):
         self.update_ka()
         # Herkunft der Verluste: Ausrollversuch, bis jemand M0/M1/n1/m2 von Hand aendert
         self.verlust_quelle = defaults.verlust_quelle
+        # Rollen-Kalibrierung (Pruefstand, einstellungen.json "rollen_kalibrierung"): geht als rk_* in params()
+        self.rollen_kalib = ausrollen.RollenKalibrierung.aus_dict(settings.get(ausrollen.KALIB_KEY))
         self._loss_guard = False
         for k in LOSS_KEYS:
             self.fields[k].valueChanged.connect(self._loss_edited)
@@ -302,6 +344,21 @@ class SettingsPage(QtWidgets.QScrollArea):
         self.filter_mode.currentIndexChanged.connect(lambda i: self.set_filter_seconds(i == 0))
         self.set_filter_seconds(self.filter_seconds)
         self._rate = 60.0
+
+    def _anzeige_gruppe(self, settings: dict) -> QtWidgets.QGroupBox:
+        """Gruppe „Anzeige beim Messen“: je Option (messen_page.ANZEIGE_OPTIONEN) ein Kaestchen in anzeige_boxen;
+        das Hauptfenster verbindet sie mit dem Menue Ansicht (MessenMixin._anzeige_verbinden)."""
+        from .messen_page import ANZEIGE_OPTIONEN
+        box = QtWidgets.QGroupBox("Anzeige beim Messen")
+        lay = QtWidgets.QVBoxLayout(box)
+        self.anzeige_boxen: Dict[str, QtWidgets.QCheckBox] = {}
+        for key, (std, text, tip) in ANZEIGE_OPTIONEN.items():
+            cb = QtWidgets.QCheckBox(text)
+            cb.setToolTip(tip + f". Auch im Menü Ansicht. Einstellung „{key}“.")
+            cb.setChecked(bool(settings.get(key, std)))
+            lay.addWidget(cb)
+            self.anzeige_boxen[key] = cb
+        return box
 
     def _build_verbindung(self, settings: dict):
         """Unterreiter Verbindung: Messboard (links), Prüfen (rechts, setzt das Hauptfenster ein), Datenbank unten."""
@@ -386,7 +443,14 @@ class SettingsPage(QtWidgets.QScrollArea):
         if not self.filter_seconds:
             d["ma_s"] = d["dq_s"] = 0.0
         d["verlust_quelle"] = self.verlust_quelle
-        return physics.DynoParams(**d)
+        p = physics.DynoParams(**d)
+        k = getattr(self, "rollen_kalib", None)
+        return k.in_params(p) if k is not None else p
+
+    def set_rollen_kalib(self, k):
+        """Neue Rollen-Kalibrierung (ausrollen.RollenKalibrierung oder None) fuer params()."""
+        self.rollen_kalib = k if k is not None and k.gueltig else None
+        self.losses_changed.emit()
 
     def set_params(self, p: physics.DynoParams):
         """Filter in Sekunden, wenn p sie hat, sonst Messpunkte (z.B. LabVIEW-Lauf im Simulator)."""
@@ -628,15 +692,17 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.db = db or Database()
         self.link: Optional[DynoLink] = None
         self.ctrl: Optional[RunController] = None
+        self.ausroll_dlg: Optional[AusrollAssistent] = None      # Assistent Rollen-Kalibrierung (offen: kein Lauf)
         self.firmware = ""
         self.cache = RunCache()                    # run_id -> (run, result, channels, params)
         self.last_keepalive = 0.0
         self._done_handled = True
+        self._klima_offen = False                  # Phase KLIMA des laufenden Laufs noch nicht uebernommen
         self._plot_due = 0.0
         self._shown_rate = 0.0
         self._cursor_n = 0.0
         self._cursor_inside = False
-        self._cursor_names: Optional[Dict[str, tuple]] = None   # Laufnamen der Cursor-Tabelle, _reload_runs leert sie
+        self._cursor_names: Optional[Dict[str, tuple]] = None   # Laufnamen am Cursor, _reload_runs leert sie
         self._live_vals: Dict[str, str] = {}
 
         self.tabs = QtWidgets.QTabWidget()
@@ -669,6 +735,9 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.page_flash = FlashPage(self.settings, lambda: save_settings(self.settings), lambda: self.link,
                                     self.on_connect)
         self.page_kalib = KalibPage(self.settings, lambda: save_settings(self.settings))
+        self.page_analog = AnalogPage(self.settings, lambda: save_settings(self.settings), lambda: self.link,
+                                      busy=lambda: self.page_flash.busy)
+        self.page_analog.geaendert.connect(self._analog_geaendert)
         self._build_settings_tabs()
         self.tabs.addTab(self.settings_tabs, "Einstellungen")
         self.page_settings.data_label.setText(self.db.path)
@@ -692,7 +761,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         QtCore.QTimer.singleShot(800, self._auto_connect)          # beim Start gleich versuchen
         self._update_buttons()
         QtGui.QShortcut(QtGui.QKeySequence("F1"), self, activated=self.on_start)
-        QtGui.QShortcut(QtGui.QKeySequence("Escape"), self, activated=self.on_abort)
+        QtGui.QShortcut(QtGui.QKeySequence("Escape"), self, activated=self._esc)   # Ergebnis gross weg, sonst Abbruch
         # am Hauptfenster: Ein Shortcut wirkt nur, solange sein Widget sichtbar ist
         QtGui.QShortcut(QtGui.QKeySequence("F3"), self, activated=self.page_hw.mark,
                         context=QtCore.Qt.ApplicationShortcut)
@@ -701,13 +770,18 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.page_hw.log_saved.connect(lambda folder: self._dauer_saved(folder, "Zange-Log"))
         self.page_hw.connect_port.connect(self._connect_port)
         self.page_flash.flash_done.connect(lambda: setattr(self, "_manual_off", False))
+        self.page_flash.set_datenordner(os.path.dirname(self.db.path))
         # Statusleiste: drei Felder Basis | Zange/Mega | Lambda/ECU, Kurzmeldungen, Umschalter Tag/Nacht/Auto
         self.statusleiste = Statusleiste()
         self.statusleiste.einbauen(self.statusBar())
+        self.statusleiste.pdf_gewuenscht.connect(lambda: self.on_pdf_aktiv())   # Knopf „PDF-Bericht“ unten rechts
+        self.statusleiste.speichern_gewuenscht.connect(lambda: self.lauf_speichern())   # daneben „Lauf speichern“
+        self._speichern_stand()
         self._zange_state = ""
         self._zange_weitere = 0
         self.page_hw.zange_state.connect(self._zange_state_neu)
         self.page_hw.zange_state.connect(self.page_tasten.zange_zustand)
+        self.page_hw.zange_state.connect(self.page_flash.verbindung_geaendert)    # Zange per Funk da/weg
         self.page_hw.zange_text.connect(self._zange_text_neu)
         self.page_hw.lambda_text.connect(lambda *_a: self._status_tick())
         self.status_timer = QtCore.QTimer(self)
@@ -748,10 +822,19 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             grp.addAction(a)
             a.triggered.connect(lambda _c=False, w=wahl: theme.manager().setze(w))
             self.thema_aktionen[wahl] = a
+        self._anzeige_verbinden(v)                 # Anzeige beim Messen: Ergebnis/Anweisungen groß, Legende
         m = self.menuBar().addMenu("Datei")
+        self.speichern_aktion = m.addAction("Lauf speichern")         # wie der Knopf unten rechts
+        self.speichern_aktion.setShortcut("Ctrl+S")
+        self.speichern_aktion.setToolTip("Letzten Lauf speichern (nur ohne Auto-Speichern nötig)")
+        self.speichern_aktion.triggered.connect(lambda _c=False: self.lauf_speichern())
+        self.speichern_aktion.setEnabled(False)
+        m.addSeparator()
         for text, slot, key in (("Öffnen / importieren (.pyst, Läufe, Mitschnitte) …", self.on_import, "Ctrl+O"),
                                 ("Läufe importieren …", self.on_import, "Ctrl+I"),
-                                ("Läufe weitergeben (.pyst) …", lambda: self.on_share(), "Ctrl+S"),
+                                ("Ordner importieren (mit Unterordnern) …", lambda: self.on_import_ordner(),
+                                 "Ctrl+Shift+I"),
+                                ("Läufe weitergeben (.pyst) …", lambda: self.on_share(), "Ctrl+Shift+S"),
                                 ("Als HTML-Ansicht exportieren (ohne PyST ansehbar) …", lambda: self.on_share(html=True),
                                  "Ctrl+H"),
                                 ("PDF-Bericht der sichtbaren Läufe …", self.on_pdf, "Ctrl+P"),
@@ -788,11 +871,14 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.b_view.clicked.connect(lambda: self._open_in_viewer(self._current_run_id()))
         self.b_del.clicked.connect(self.on_delete)
         self.page_kalib.uebernehmen.connect(self._apply_coast)
+        self.page_kalib.kalib_speichern.connect(self._rollen_kalib_speichern)
         self.page_kalib.lauf_auswerten.connect(self._coast_from_run)
+        self.page_kalib.assistent.connect(self.on_ausroll_assistent)
         s.losses_changed.connect(lambda: self.page_kalib.set_current(s.params()))
         self.page_kalib.set_current(s.params())
         self._verbinde_lauf_einstellungen()       # START/Abbrechen, Lauf-Einstellungen … (messen_page)
-        self.viewer.import_btn.clicked.connect(self.on_import)
+        self.viewer.import_dateien.triggered.connect(self.on_import)
+        self.viewer.import_ordner.triggered.connect(lambda: self.on_import_ordner())
         self.viewer.pdf_btn.clicked.connect(lambda: self.on_pdf())
         self.viewer.csv_btn.clicked.connect(lambda: self.on_csv(self.viewer.current_run_id()))
         self.page_db.changed.connect(self._db_changed)
@@ -930,25 +1016,10 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             boxes["right"].append(pair[1])
         update()
 
-    def _fill_cursor_menu(self):
-        """Spalten der Cursor-Tabelle."""
-        m = self.cursor_menu
-        m.clear()
-        m.addSection("Spalten der Cursor-Tabelle")
-        cols = self._cursor_cols()
-        for key, label, unit in self._lower_candidates():
-            self._check_row(m, f"{label} [{unit}]" if unit else label,
-                            [("", key in cols, lambda on, k=key: self._set_cursor_col(k, on))])
-
     def _cursor_cols(self):
+        """Kanaele der frueheren Cursor-Tabelle (Einstellung „cursor_cols“): ECU-Kanaele darin kommen weiter mit ins
+        Datenlager des Diagramms."""
         return self.settings.get("cursor_cols", ["lam", "egt1", "egt2"])
-
-    def _set_cursor_col(self, key: str, on: bool):
-        order = [k for k, _l, _u in self._lower_candidates()]
-        cur = set(self._cursor_cols()) - {key} | ({key} if on else set())
-        self.settings["cursor_cols"] = [k for k in order if k in cur]
-        save_settings(self.settings)
-        self._ecu_changed()
 
     # ---- unteres Diagramm: Belegung links/rechts
     def _lower_candidates(self, avail=None):
@@ -956,6 +1027,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         out = [("lam", "Lambda / AFR (Board)", ""), ("egt1", "EGT 1 (Board)", "°C"), ("egt2", "EGT 2 (Board)", "°C")]
         for name, label, unit in (avail if avail is not None else self._ecu_available()):
             out.append((EXTRA_PREFIX + name, f"{label} (ECU)", unit))
+        for _g, k in analog.aktive():                     # Analogeingaenge (Einstellungen › Analogeingänge)
+            out.append((EXTRA_PREFIX + analog.live_key(k.eingang), analog.kanal_name(k), k.einheit_text()))
         return out
 
     def _lower_sides(self):
@@ -979,7 +1052,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
     def _apply_lower(self, avail):
         keys = {k: (lab, unit) for k, lab, unit in self._lower_candidates(avail)}
         left, right = self._lower_sides()
-        labels = {k: (lab.replace(" (Board)", "").replace("Lambda / AFR", "Lambda"), unit)
+        labels = {k: (lab.replace(" (Board)", "").replace(analog.SUFFIX, "").replace("Lambda / AFR", "Lambda"), unit)
                   for k, (lab, unit) in keys.items()}
         self.plot.set_lower([k for k in left if k in keys], [k for k in right if k in keys], labels)
 
@@ -999,7 +1072,9 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
 
     def _ecu_extra_run(self, run, res) -> Dict[str, np.ndarray]:
         cols = run.get("columns", {})
-        return {n: cols[COLUMN_PREFIX + n][res.segment] for n in self._ecu_names() if COLUMN_PREFIX + n in cols}
+        out = {n: cols[COLUMN_PREFIX + n][res.segment] for n in self._ecu_names() if COLUMN_PREFIX + n in cols}
+        out.update(self._analog_extra_run(run, res))
+        return out
 
     def _ecu_extra_live(self, r) -> Dict[str, np.ndarray]:
         from .rusefi import resample
@@ -1015,15 +1090,24 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         cols = resample(snap, np.array([f.t for f in frames]))
         return {n: cols[COLUMN_PREFIX + n] for n in names if COLUMN_PREFIX + n in cols}
 
+    def _ecu_extra_live_alle(self, r) -> Dict[str, np.ndarray]:
+        """Zusatzkanaele der laufenden Messung: ECU und Analogeingaenge."""
+        out = self._ecu_extra_live(r)
+        out.update(self._analog_extra_live(r))
+        return out
+
     def _update_buttons(self):
         busy = self.ctrl is not None and self.ctrl.state in ACTIVE
+        self.page_flash.verbindung_geaendert()             # Verbinden/Trennen: Karten der Firmware neu
         connected = self.link is not None
-        self.start_btn.setEnabled(connected or busy)       # im Lauf: Abbrechen bzw. Ausrollen beenden
+        # im Lauf: Abbrechen bzw. Ausrollen beenden; Assistent Rollen-Kalibrierung offen: kein Lauf
+        self.start_btn.setEnabled((connected and self.ausroll_dlg is None) or busy)
         self._start_knopf_stil()
         self.lauf_btn.setEnabled(not busy)
         if busy and self.lauf_popup is not None:
             self.lauf_popup.hide()
         self.page_kalib.lauf_btn.setEnabled(not busy)
+        self.page_kalib.assist_btn.setEnabled(not busy)
         self.page_kalib.apply_btn.setEnabled(not busy and self.page_kalib.result is not None
                                              and self.page_kalib.result.ok)
         s = self.page_settings
@@ -1038,7 +1122,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.vehicle_combo.setEnabled(not busy)
         self.setup_combo.setEnabled(not busy)
         self.setup_zeile.setEnabled(not busy)
-        self.b_ref.setEnabled(not busy)
+        self.b_hinzu.setEnabled(not busy)
+        self._speichern_stand()
 
     def _persist(self):
         s = self.page_settings
@@ -1120,7 +1205,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
 
         res, ch, fehler = wait_in_thread(rechnen)
         # Rohspalten braucht danach nur noch die ECU-Anzeige (_ecu_extra_run)
-        run["columns"] = {k: v for k, v in run.get("columns", {}).items() if k.startswith(COLUMN_PREFIX)}
+        run["columns"] = {k: v for k, v in run.get("columns", {}).items()
+                          if k.startswith(COLUMN_PREFIX) or k.startswith(analog.SPALTE)}
         entry = (run, res, ch, p)
         self.cache.put(rid, entry)
         if fehler is not None:
@@ -1217,7 +1303,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         s.fw_label.setText(f"{port}: {kind} – {first}")
         s.fw_label.setToolTip(self.firmware)
         if self.link.bootloader:
-            s.fw_label.setText(f"{port}: Basis im Bootloader, Firmware unter Einstellungen › Firmware aufspielen")
+            s.fw_label.setText(f"{port}: Basis im Bootloader, Firmware unter Einstellungen › Software & Firmware "
+                               "aufspielen")
             s.fw_label.setToolTip(self.link.bootloader)
         self.ctrl = RunController(self.link, s.params(), auto_climate=s.climate_auto.isChecked(),
                                   ecu=self.page_rusefi.active_link())
@@ -1369,9 +1456,12 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
 
     # ------------------------------------------------------------------ Lauf
     def on_start(self, *_a, nachfrage: bool = True):
-        """START (F1). nachfrage=False: bei geaendertem Setup nicht fragen (Taste der Zange), die Werte gelten
-        dann nur fuer diesen Lauf."""
+        """START (F1). nachfrage=False (Taste „Neuer Lauf“ der Zange): nicht nach dem Setup fragen
+        (MessenMixin._setup_vor_start), geaenderte Werte gelten fuer diesen Lauf."""
         if not self.ctrl or self.ctrl.state in ACTIVE:
+            return
+        if self.ausroll_dlg is not None:
+            self._set_status("Rollen-Kalibrierung (Assistent) offen – erst schließen, dann START", farben.BALKEN_FEHLER)
             return
         s = self.page_settings
         p = s.params()
@@ -1379,11 +1469,13 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         if msg:
             QtWidgets.QMessageBox.warning(self, "Einstellungen", msg)
             return
+        self._lauf_fertig_schliessen(start=True)          # Fenster „Lauf fertig“ zu (Auto-Speichern: Eingaben gelten)
         if nachfrage and not self._setup_vor_start():
             return
+        self._start_hinweis_ungespeichert(zange=not nachfrage)    # alter Lauf ungespeichert: kurz im Band
         self._persist()
         self.tabs.setCurrentIndex(0)
-        self.gas_weg.verbergen()
+        self._gross_verbergen()
         self.ctrl.params = p
         self.ctrl.auto_climate = s.climate_auto.isChecked()
         self.ctrl.ausrollen = self.page_kalib.enabled()
@@ -1393,19 +1485,30 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.plot.remove(LIVE_KEY)
         self.plot.freeze(True)                     # Skalierung wie beim vorherigen Lauf
         self.result_label.setText("")
-        wait_in_thread(self.ctrl.start)                    # Klima abfragen dauert
-        if self.ctrl.climate:
-            s.fields["temp_c"].setValue(self.ctrl.params.temp_c)
-            s.fields["p_mbar"].setValue(self.ctrl.params.p_mbar)
-            self._klima_gelesen(self.ctrl.climate)
+        wait_in_thread(self.ctrl.start)                    # ohne Klima: Messung starten; mit: Phase KLIMA
+        self._klima_offen = self.ctrl.state == KLIMA
         self.result_label.setText(self.ctrl.message)
         self._done_handled = False
+        self._laufzustand_zeigen(self.ctrl.state, self.ctrl.live)    # „Klima wird gemessen …“ bzw. GO sofort
         self._update_buttons()
+
+    def _klima_nach_start(self):
+        """Phase KLIMA vorbei: frischen Sensorwert eintragen (oder Hinweis, dass der eingetragene Wert gilt)."""
+        self._klima_offen = False
+        c = self.ctrl.climate
+        if c:
+            s = self.page_settings
+            s.fields["temp_c"].setValue(self.ctrl.params.temp_c)
+            s.fields["p_mbar"].setValue(self.ctrl.params.p_mbar)
+            self._klima_gelesen(c)
+        elif self.ctrl.state == WAIT:
+            self.statusBar().showMessage(self.ctrl.klima_text(), 8000)
+        self.result_label.setText(self.ctrl.message)
 
     def on_abort(self):
         if self.ctrl and self.ctrl.state == COAST:
             self.ctrl.end_coast()                          # Lauf ist fertig: nur das Ausrollen beenden
-        elif self.ctrl and self.ctrl.state in (WAIT, RUN):
+        elif self.ctrl and self.ctrl.state in (KLIMA, WAIT, RUN):
             self.ctrl.abort()
             if self.page_settings.live_check.isChecked():
                 self.link.start()
@@ -1415,14 +1518,18 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         r = self.ctrl.result
         self.plot.freeze(False)
         coast = self.ctrl.coast
+        if coast is None:
+            self._laufende_gas_weg()                       # ohne Ausrollversuch: GAS WEG groß, dann das Ergebnis
         ratio_text = self._ratio_aus_funken_uebernehmen()
         if r is None:
             self._set_status("Fertig – keine Auswertung möglich", farben.BALKEN_FEHLER)
             if coast is not None:
                 self.page_kalib.show_result(coast, self._coast_label(None))
             return
+        klima = self.ctrl.klima_text()
         self.result_label.setText(r.summary() + f"\nEnde: {self.ctrl.message or r.end_reason}   |   "
                                   f"{len(self.ctrl.frames)} Telegramme, {self.link.lost} verloren"
+                                  + (f"   |   {klima}" if klima else "")
                                   + (f"\n{ratio_text}" if ratio_text else "")
                                   + (f"\n{self.ctrl.coast_text()}" if coast is not None else ""))
         if r.verluste:
@@ -1430,18 +1537,27 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
                              "#b8e6b8")
         else:
             self._set_status(f"{r.p_max:.1f} PS bei {r.n_pmax:.0f} 1/min", "#b8e6b8")
+        self._lauf_merken(self.ctrl)                      # Stand fuer „Lauf fertig“ und „Lauf speichern“
         rid = None
         if self.autosave.isChecked():
             rid = self.save_current_run()
         else:
             self._draw_live(final=True)
             self.plot.auto_scale()
+            self._legende_zeigen()
+        self._nachlauf_faellig = True                     # Fenster „Lauf fertig“ kommt mit dem Ergebnis
+        self._ergebnis_gross_zeigen(r, rid, warten=coast is None)   # Option „Ergebnis groß nach dem Lauf“
         if coast is not None:
-            self.page_kalib.show_result(coast, self._coast_label(rid), rid)
+            self.page_kalib.show_result(coast, self._coast_label(rid), rid, n_pmax=r.n_pmax)
             self.statusBar().showMessage(self.ctrl.coast_text(), 10000)
-            self.band.zeige(("Ausrollversuch ausgewertet – unter Einstellungen › Rolle/Lauf › Verluste prüfen und übernehmen"
-                             if coast.ok else f"Ausrollversuch: {coast.meldung}"),
-                            farben.GUT if coast.ok else farben.FEHLER, 8.0)
+            auf = self.page_kalib.aufteilung()
+            if not coast.ok:
+                band = f"Ausrollversuch: {coast.meldung}"
+            elif auf is not None:
+                band = f"Ausrollversuch: {auf.kurz(r.n_pmax)}"
+            else:
+                band = "Ausrollversuch ausgewertet – unter Einstellungen › Rolle/Lauf › Verluste prüfen und übernehmen"
+            self.band.zeige(band, farben.GUT if coast.ok else farben.FEHLER, 8.0)
 
     def _ratio_aus_funken_uebernehmen(self) -> str:
         """Uebersetzung aus den Funken (Einstellung „uebersetzung_art“): gemessenen Wert eintragen. -> Hinweistext
@@ -1488,10 +1604,66 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         n_ende, _t_max, quad = self.page_kalib.config()
         c = wait_in_thread(lambda: ausrollen.analyse(run["n_roll"], run["dt"], p, start=start, n_meas=run["n_meas"],
                                                      n_ende=n_ende, quadratisch=quad))
-        self.page_kalib.show_result(c, self._coast_label(rid), rid)
+        self.page_kalib.show_result(c, self._coast_label(rid), rid, n_pmax=res.n_pmax if res is not None else None)
+
+    def on_ausroll_assistent(self):
+        """Assistent Rollen-Kalibrierung (Rad abgehoben, Rolle allein; nicht modal, schon offen: nach vorn). Nicht
+        waehrend eines Laufs; solange er offen ist, startet kein Lauf."""
+        if self._lauf_aktiv():
+            self.statusBar().showMessage("Rollen-Kalibrierung: erst nach dem Lauf", 5000)
+            return
+        d = self.ausroll_dlg
+        if d is not None:
+            d.raise_()
+            d.activateWindow()
+            return
+        d = self.ausroll_dlg = AusrollAssistent(
+            self, lambda: self.ctrl, self.page_settings.params, self.settings.setdefault("ausrollen", {}),
+            lambda: save_settings(self.settings), self.db.runs_dir, self._assistent_verbinden, self._lauf_aktiv)
+        d.kalib_speichern.connect(self._rollen_kalib_speichern)
+        d.ausgewertet.connect(lambda c, text: self.page_kalib.show_result(c, text))
+
+        def fertig(_r, d=d):
+            if self.ausroll_dlg is d:
+                self.ausroll_dlg = None
+                self._update_buttons()
+            d.deleteLater()
+
+        d.finished.connect(fertig)
+        self._update_buttons()
+        d.show()
+        d.raise_()
+
+    def _assistent_verbinden(self) -> bool:
+        """„Verbinden“ im Assistenten: Messboard wie mit dem Knopf verbinden, Daten anstossen."""
+        if self.link is None:
+            self.on_connect()
+        if self.link is not None and not self.link.streaming():
+            self.link.start()
+        return self.link is not None
+
+    def _rollen_kalib_speichern(self, c):
+        """„Als Rollen-Kalibrierung speichern“ (Assistent bzw. Gruppe „Letzter Ausrollversuch“): Verluste der Rolle
+        allein als Pruefstands-Kalibrierung ablegen (einstellungen.json), nicht in M0/M1. Gilt ab jetzt fuer neue
+        Laeufe (Reifen an Rolle) und die Aufteilung der Ausrollversuche."""
+        if c is None or not c.ok or not c.rolle_allein:
+            return
+        k = ausrollen.RollenKalibrierung.aus_ergebnis(c)
+        self.settings[ausrollen.KALIB_KEY] = k.als_dict()
+        self.page_settings.set_rollen_kalib(k)
+        self.page_kalib.set_kalibrierung(k)
+        self._persist()
+        save_settings(self.settings)
+        text = "Rollen-Kalibrierung gespeichert: " + k.kurztext(self.page_settings.params().ratio)
+        self._set_status(text, "#b8e6b8")
+        self.statusBar().showMessage(text, 8000)
 
     def _apply_coast(self, c, rid):
-        """„Übernehmen“: Verluste eintragen, speichern und den Lauf des Ausrollversuchs damit neu rechnen."""
+        """„Übernehmen“: Verluste eintragen, speichern und den Lauf des Ausrollversuchs damit neu rechnen. Ein
+        Ergebnis mit abgehobenem Rad gehoert nicht in M0/M1: es wird Rollen-Kalibrierung."""
+        if c is not None and c.rolle_allein:
+            self._rollen_kalib_speichern(c)
+            return
         s = self.page_settings
         s.set_losses(c.m0, c.m1, c.n1, c.m2, c.quelle())
         self._persist()
@@ -1502,6 +1674,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             e = self._entry(rid)
             if e is not None:
                 q = c.params_fuer(e[3])
+                if s.rollen_kalib is not None:             # Pruefstand ist kalibriert: auch fuer diesen Lauf
+                    q = s.rollen_kalib.in_params(q)
                 self.db.update_run(rid, params=asdict(q))
                 self.cache.pop(rid, None)
                 self.viewer.invalidate(rid)
@@ -1514,24 +1688,31 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self._set_status(text, "#b8e6b8")
         self.statusBar().showMessage(text, 8000)
 
-    def save_current_run(self) -> Optional[int]:
-        if not self.ctrl or not self.ctrl.result:
+    def save_current_run(self, stand: Optional[dict] = None) -> Optional[int]:
+        """Letzten Lauf speichern (Auto-Speichern, „Lauf speichern“, Fenster „Lauf fertig“). stand: Fahrzeug, Setup,
+        Aenderungen und Notiz (messen_page._lauf_stand_jetzt); ohne den beim Laufende festgehaltenen bzw. den von jetzt."""
+        ctrl = self._lauf_ctrl or self.ctrl
+        if not ctrl or not ctrl.result:
             return None
-        vid, sid = self.vehicle_combo.currentData(), self.setup_combo.currentData()
-        vname = self.vehicle_combo.currentText() if vid else ""
-        folder = storage.save_run(self.ctrl, vehicle=vname, firmware=self.firmware, base_dir=self.db.runs_dir())
-        r = self.ctrl.result
-        werte, nur_lauf = self._setup_schnappschuss()
+        stand = stand or self._lauf_stand or self._lauf_stand_jetzt()
+        vid, sid, vname = stand["vid"], stand["sid"], stand["vname"]
+        folder = storage.save_run(ctrl, vehicle=vname, firmware=self.firmware, base_dir=self.db.runs_dir())
+        r = ctrl.result
+        werte, nur_lauf = self._setup_schnappschuss(stand)
         rid = self.db.add_run(folder, "lauf.json", "PyST", os.path.basename(folder),
                               QtCore.QDateTime.currentDateTime().toString(QtCore.Qt.ISODate), r,
-                              params=asdict(self.ctrl.params), rate=self._current_rate(), vehicle_id=vid,
-                              setup_id=sid, notiz=self.run_note.text(), farbe="", sichtbar=True,
+                              params=asdict(ctrl.params), rate=self._current_rate(), vehicle_id=vid,
+                              setup_id=sid, notiz=stand["notiz"], farbe="", sichtbar=True,
                               setup_werte=werte, nur_lauf=nur_lauf)
+        if ctrl is self._lauf_ctrl:
+            self._lauf_rid = rid
+            self._lauf_stand = stand
         self.plot.remove(LIVE_KEY)
         self._reload_runs()
         self.plot.auto_scale()
         self.result_label.setText(self.result_label.text() + "   |   gespeichert ✓")
         self.result_label.setToolTip(folder)
+        self._speichern_stand()
         return rid
 
     def _draw_live(self, final: bool = False, res=None):
@@ -1545,7 +1726,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         if k < 2:
             return
         cut = lambda a: None if a is None else a[:k]
-        extra = {n: cut(v) for n, v in self._ecu_extra_live(r).items()}
+        extra = {n: cut(v) for n, v in self._ecu_extra_live_alle(r).items()}
         self.plot.set_curves(LIVE_KEY, cut(r.n), cut(r.ps), cut(r.nm), cut(lambda_from_afr(r.afr)), cut(r.egt),
                              cut(egt2), color="#000000", width=3.0, rescale=False, extra=extra)
         self._update_max_display()
@@ -1558,6 +1739,10 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             "LabVIEW-XML / PyST lauf.json (*.xml *.json);;Rohmitschnitt Terminal (*.log *.txt *.csv);;Alle Dateien (*)")
         if files:
             self.open_files(files)
+
+    def on_import_ordner(self, ordner: str = ""):
+        """Ordner mit Unterordnern nach alten Messungen durchsuchen, Vorschau, importieren (ordner_import)."""
+        return ordner_import.ordner_importieren(self, ordner)
 
     def open_files(self, files, show: bool = True) -> list:
         """Dateien uebernehmen (.pyst, LabVIEW-XML, PyST-Ordner/lauf.json, Terminal-Mitschnitt).
@@ -1765,61 +1950,17 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             report.export_csv(path, e[2], decimal_comma="deutsch" in flt)
 
     def pdf_rows(self):
-        rows = []
-        vehicles = {r["id"]: r["name"] for r in self.db.vehicles()}
-        im_diagramm = set(self.diagramm_laeufe())
-        for row in self.db.runs():
-            if not row.sichtbar or row.id not in im_diagramm or row.ist_mittelwert:
-                continue
-            setup = self.db.setup(row.setup_id) if row.setup_id else None
-            details = ""
-            if setup:
-                details = ", ".join(f"{field_label(k).split(' [')[0]}: {setup[k]}" for k in SETUP_SUMMARY_KEYS
-                                    if setup.get(k))
-            e = self._entry(row.id)
-            p = e[3] if e else None
-            res = e[1] if e else None
-            veh = " / ".join(x for x in (vehicles.get(row.vehicle_id, ""), setup["name"] if setup else "") if x)
-            if res is not None and res.verluste:
-                ergebnis = (f"Motor {row.p_max:.1f} PS bei {row.n_pmax:.0f} 1/min\n"
-                            f"Rad {res.p_rad_max:.1f} PS bei {res.n_prad_max:.0f} 1/min\n"
-                            f"{row.m_max:.1f} Nm (Motor) bei {row.n_mmax:.0f} 1/min")
-            else:
-                ergebnis = f"{row.p_max:.1f} PS bei {row.n_pmax:.0f} 1/min\n{row.m_max:.1f} Nm bei {row.n_mmax:.0f} 1/min"
-            rows.append({
-                "farbe": run_color(row, theme.TAG),       # Bericht auf weissem Papier
-                "name": self._run_label(row) + (f"\n{row.notiz}" if row.notiz else ""),
-                "fahrzeug": veh + ("\n" + details if details else ""),
-                "ergebnis": ergebnis,
-                "klima": "" if p is None else
-                f"{p.temp_c:.1f} °C, {p.p_mbar:.0f} mbar\nk = {physics.din70020(p.temp_c, p.p_mbar):.3f}",
-                "details": ("" if p is None else
-                            f"i = {p.ratio:.3f}, J = {p.inertia:.2f}\n{physics.filter_text(p, row.rate)}")
-                + (f"\n{res.verlust_text()}" if res is not None and res.verluste else "")
-                + (f"\nMessfehler: {fault_text(row.fehler)}" if row.fehler else ""),
-            })
-        return rows
+        """Tabellenzeilen des PDF-Berichts: alles, was im Messen-Diagramm steht (bericht.messen_zeilen)."""
+        return bericht.messen_zeilen(self)
 
-    def on_pdf(self, path: str = ""):
-        rows = self.pdf_rows()
-        if not rows:
-            QtWidgets.QMessageBox.information(self, "PDF-Bericht", "Keine Läufe sichtbar – bitte in der Liste anhaken.")
-            return
-        title = self.vehicle_combo.currentText() if self.vehicle_combo.currentData() else "Leistungsmessung"
-        if not path:
-            path, _ = QtWidgets.QFileDialog.getSaveFileName(
-                self, "PDF-Bericht", os.path.join(os.path.expanduser("~"), "Leistungsmessung.pdf"), "PDF (*.pdf)")
-            if not path:
-                return
-            open_after = True
-        else:
-            open_after = False
-        notes = ["Leistung nach DIN 70020 korrigiert (Radanteil; Verluste unkorrigiert wie LabVIEW).  "
-                 "Mit Verlusten: Motor = Rad + Verluste (Herkunft unter Details).  "
-                 "Oben: ── Leistung [PS], ╌╌ Drehmoment [Nm].  Unten: ── λ, ╌╌ EGT 1, ┈┈ EGT 2."]
-        report.export_pdf(path, self.plot.render_image(), title, rows, notes)
-        if open_after:
-            QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(path))
+    def on_pdf(self, path: str = "", quelle: str = bericht.MESSEN):
+        """PDF-Bericht vom Messen-Diagramm (Datei-Menue, Knopf der Auswertung) bzw. quelle="auswertung"."""
+        return bericht.erzeugen(self, path, quelle)
+
+    def on_pdf_aktiv(self, path: str = ""):
+        """Knopf „PDF-Bericht“ in der Statusleiste: im Reiter Auswertung deren Felder, sonst das Diagramm aus Messen."""
+        quelle = bericht.AUSWERTUNG if self.current_page_key() == "auswertung" else bericht.MESSEN
+        return bericht.erzeugen(self, path, quelle)
 
     # ------------------------------------------------------------------ Zyklus
     def _tick(self):
@@ -1847,6 +1988,10 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             return
         new = self.ctrl.poll()
         lv = self.ctrl.live
+        if self._klima_offen and self.ctrl.state != KLIMA:
+            self._klima_nach_start()
+        if new and self.ausroll_dlg is not None and self.ctrl.state not in ACTIVE:
+            self.ausroll_dlg.telegramme(new)               # Assistent Rollen-Kalibrierung: Rolle ohne Lauf
         if new:
             f = new[-1]
             ecu_rpm = self.page_rusefi.live("RPMValue")
@@ -1913,6 +2058,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
     def _taste_lauf(self):
         """Wie der Start-Knopf, nur wenn ein Lauf möglich ist. Abbrechen geht nur am PC."""
         grund = self._taste_sperre() or ("Übersetzung wird gerade gemessen" if self.ratio_mess.aktiv else "") \
+            or ("Rollen-Kalibrierung (Assistent) offen" if self.ausroll_dlg is not None else "") \
             or physics.check_params(self.page_settings.params())
         if grund:
             self._taste_abgelehnt("Neuer Lauf", grund)
@@ -2019,6 +2165,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         s.abgleich_btn.clicked.connect(self.on_abgleich_live)
         self.settings.setdefault("start_nachfrage_setup", True)
         s.start_nachfrage.toggled.connect(self._start_nachfrage_geaendert)
+        self.settings.setdefault(NACH_LAUF_FENSTER, True)
+        s.nach_lauf_fenster.toggled.connect(self._nach_lauf_fenster_geaendert)
         # Verbindung: Messboard mit den Geräte-Einstellungen der Basis, Prüfen (Sammelknopf)
         self.dev_settings_btn = QtWidgets.QPushButton("Geräte-Einstellungen der Basis …")
         self.dev_settings_btn.setToolTip("#GET/#SET der Basis bzw. des Messboards (PST-Diag 1): Messfrequenz, Flanken, "
@@ -2044,6 +2192,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.page_flash.zange_verfuegbar.connect(hw.set_fw_verfuegbar)
         self.page_flash.get_info = lambda: self.firmware
         self.page_flash.get_zange = lambda: f"Zange {hw.zst.id}" if hw.zst is not None and hw.zst.id else ""
+        self.page_flash.get_zange_state = lambda: getattr(self, "_zange_state", "")
         # Lambda: Heizung, Anzeige λ/AFR, AFR-Eingang links; Prüfen und Firmware rechts
         self.page_pruef_lambda = PruefPage(self.page_pruef.get_link, hw.pair, self.page_pruef.aufnahme, bereich=LAMBDA)
         pr = QtWidgets.QGroupBox("Prüfen: Wideband (F042) und Heizung")
@@ -2051,7 +2200,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         fw = QtWidgets.QGroupBox("Firmware")
         fl = QtWidgets.QVBoxLayout(fw)
         fl.addWidget(ew.neben("Der Wideband-Controller (F042) wird über die Basis geflasht: "
-                              "Einstellungen › Firmware, Expertenmodus, Zeile Lambda (F042)."))
+                              "Einstellungen › Software & Firmware, Expertenmodus, Zeile Lambda (F042)."))
         b = QtWidgets.QPushButton("Zur Firmware …")
         b.clicked.connect(lambda: self.show_page(self.page_flash))
         fl.addWidget(b, 0, QtCore.Qt.AlignLeft)
@@ -2075,20 +2224,27 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         row.addWidget(hw.box_plugs, 7)
         self.page_wifi = self._seite(row, stretch_last=True)
         for page, text in ((s, "Rolle/Lauf"), (s.conn_page, "Verbindung"), (hw, "Zange"), (self.page_lambda, "Lambda"),
-                           (self.page_rusefi, "ECU"), (self.page_flash, "Firmware"), (self.page_wifi, "WiFi")):
+                           (self.page_analog, "Analogeingänge"), (self.page_rusefi, "ECU"), (self.page_flash, "Software && Firmware"),
+                           (self.page_wifi, "WiFi")):
             self.settings_tabs.addTab(page, text)
         self.settings_tabs.setStyleSheet("QTabBar::tab { min-width: 110px; }")
         # Schluessel der Seiten (gespeicherter Reiterstand, show_page); Unterseiten stecken in einer Seite
         self.seiten: Dict[str, QtWidgets.QWidget] = {
             "messen": self.tabs.widget(0), "fahrzeuge": self.page_db, "auswertung": self.viewer, "oszi": self.page_oszi,
-            "rolle": s, "verbindung": s.conn_page, "zange": hw, "lambda": self.page_lambda, "ecu": self.page_rusefi,
+            "rolle": s, "verbindung": s.conn_page, "zange": hw, "lambda": self.page_lambda, "analog": self.page_analog,
+            "ecu": self.page_rusefi,
             "firmware": self.page_flash, "wifi": self.page_wifi}
         self.unterseiten: Dict[str, QtWidgets.QWidget] = {
             "verluste": self.page_kalib, "pruefen": self.page_pruef, "tasten": self.page_tasten}
 
     def _start_nachfrage_geaendert(self, on: bool):
-        """Rolle/Lauf: „Bei geändertem Setup vor START nachfragen“ (gelesen beim START unter Messen)."""
+        """Rolle/Lauf: „Vor START nachfragen, ob sich das Setup geändert hat“ (gelesen beim START unter Messen)."""
         self.settings["start_nachfrage_setup"] = bool(on)
+        save_settings(self.settings)
+
+    def _nach_lauf_fenster_geaendert(self, on: bool):
+        """Rolle/Lauf: „Nach dem Lauf Notiz/Setup-Fenster zeigen“ (gelesen beim naechsten Laufende)."""
+        self.settings[NACH_LAUF_FENSTER] = bool(on)
         save_settings(self.settings)
 
     def _messboard_einstellungen(self):
@@ -2233,6 +2389,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self._persist()
         self.page_oszi.close_page()
         self.page_hw.close_page()
+        self.page_analog.close_page()
         if self.link:
             self.link.close()
         self.page_rusefi.close_link()

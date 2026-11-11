@@ -4,6 +4,7 @@ Laeufe speichern und laden.
 Ein Lauf = Ordner  messungen/YYMMDD_HHMMSS_<PS>_<n>/  mit
   roh.csv       alle Telegramme (Zyklus, Zeit, Frequenzen, EGT, AFR) + nRolle, dT
                 (+ Spalten rusefi_<Kanal>: ECU-Werte auf die Telegramm-Zeitpunkte gelegt)
+                (+ Spalten analog_<Eingang>: Rohwerte der Analogeingaenge in V bzw. mA, analog.py)
   rusefi.csv    ECU-Werte in ihrer eigenen Abtastung (nur mit rusEFI)
   kurve.csv     ausgewertete Kurve (n, PS, Nm, n gemessen, AFR, EGT)
   lauf.json     Parameter, Klima, Ergebnis, Firmware-Info, Ausrollversuch (wenn eingeschaltet: "ausrollen")
@@ -31,7 +32,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 
 from .felder import to_float
-from . import __version__, lvxml, physics, rusefi
+from . import __version__, analog, lvxml, physics, rusefi
 
 PYST_EXT = ".pyst"
 ROH_HEADER = ["zyklus", "pc_zeit_s", "messfrequenz_hz", "zuendung_hz", "rolle_hz",
@@ -80,6 +81,11 @@ def write_side_events(folder: str, t0: float, events) -> Tuple[int, int]:
     return len(marks), len(other)
 
 
+def _zeit_iso(t: float) -> str:
+    """PC-Zeit -> ISO-Text fuer lauf.json ("" = keine)."""
+    return _dt.datetime.fromtimestamp(t).isoformat(timespec="seconds") if t and t > 1e9 else ""
+
+
 def default_dir() -> str:
     from .db import base_dir
     return os.path.join(base_dir(), "messungen")
@@ -99,11 +105,14 @@ def save_run(ctrl, vehicle: str = "", firmware: str = "", base_dir: str = "") ->
     ecu_cols = rusefi.resample(ecu, np.array([f.t for f in ctrl.frames])) if ecu and ctrl.frames else {}
     has_diag = any(getattr(f, "diag", None) for f in ctrl.frames)
     zange = has_diag and has_zange_fields(ctrl.frames)
+    ain_cols = analog.spalten(ctrl.frames)                  # Rohwerte der Analogeingaenge (V bzw. mA)
     with open(os.path.join(folder, "roh.csv"), "w", newline="") as fh:
         w = csv.writer(fh, delimiter=";")
-        w.writerow(ROH_HEADER + (DIAG_HEADER if has_diag else []) + (ZANGE_HEADER if zange else []) + list(ecu_cols))
+        w.writerow(ROH_HEADER + (DIAG_HEADER if has_diag else []) + (ZANGE_HEADER if zange else []) + list(ecu_cols)
+                   + list(ain_cols))
         for i, f in enumerate(ctrl.frames):
-            w.writerow(frame_row(f, t0, p, has_diag, zange) + [f"{v[i]:.6g}" for v in ecu_cols.values()])
+            w.writerow(frame_row(f, t0, p, has_diag, zange) + [f"{v[i]:.6g}" for v in ecu_cols.values()]
+                       + [f"{v[i]:.6g}" for v in ain_cols.values()])
     basis_events = getattr(ctrl, "basis_events", None) or []
     if basis_events and ctrl.frames:
         write_side_events(folder, t0, basis_events)
@@ -128,6 +137,11 @@ def save_run(ctrl, vehicle: str = "", firmware: str = "", base_dir: str = "") ->
         "port": ctrl.link.port,
         "parameter": asdict(p),
         "klima": ctrl.climate,
+        # woher T/p kommen: "Sensor 14:30:05" (frisch nach START gelesen) bzw. "eingetragen (…)"
+        "klima_quelle": getattr(ctrl, "klima_quelle", ""),
+        "klima_zeit": _zeit_iso(getattr(ctrl, "klima_zeit", 0.0)),
+        # Laufbeginn: Drehzahl stieg start_anstieg_s lang, die Daten beginnen am Anfang dieses Fensters
+        "laufbeginn": _zeit_iso(getattr(ctrl, "run_start_t", 0.0)),
         "com_verloren": ctrl.link.lost,
         "telegramme": len(ctrl.frames),
         "rusefi": None if not ecu else {
@@ -136,6 +150,9 @@ def save_run(ctrl, vehicle: str = "", firmware: str = "", base_dir: str = "") ->
             "kanaele": {rusefi.COLUMN_PREFIX + c["name"]: {"name": c["name"], "label": c["label"],
                                                            "einheit": c["unit"]} for c in ecu["channels"]},
         },
+        # Analogeingaenge: Geraet und die zum Lauf gueltige Konfiguration (Name, Einheit, Umrechnung)
+        "analog": analog.lauf_meta(analog.geraet_von_link(ctrl.link), ain_cols,
+                                   getattr(ctrl.link, "analog_einheit", None)),
         "ergebnis": None if res is None else {
             "p_max_ps": res.p_max, "n_pmax": res.n_pmax, "m_max_nm": res.m_max, "n_mmax": res.n_mmax,
             "v_max_kmh": res.v_max, "ka": res.ka, "strecke_m": res.distance_m, "ende": res.end_reason,
@@ -145,9 +162,19 @@ def save_run(ctrl, vehicle: str = "", firmware: str = "", base_dir: str = "") ->
             "verluste": res.verlust_text(),
         },
     }
+    if res is not None and getattr(res, "rolle_kalibriert", False):
+        # mit Rollen-Kalibrierung: Reifen an Rolle = Rad + Verlust der Rolle, Antriebsverlust = Motor - Reifen
+        meta["ergebnis"].update({
+            "rollen_kalibrierung": res.rk_quelle or "Rollen-Kalibrierung",
+            "p_reifen_max_ps": res.p_reifen_max, "n_preifen_max": res.n_preifen_max,
+            "reifen_ps_bei_pmax": res.reifen_ps_pmax, "antriebsverlust_ps_bei_pmax": res.antrieb_ps_pmax})
     coast = getattr(ctrl, "coast", None)
     if coast is not None:
         meta["ausrollen"] = coast.als_dict(punkte=True)
+        from . import ausrollen as _ausrollen
+        auf = _ausrollen.aufteilen(coast, _ausrollen.RollenKalibrierung.aus_params(p))
+        if auf is not None:
+            meta["ausrollen"]["aufteilung"] = auf.als_dict(res.n_pmax if res is not None else None)
     with open(os.path.join(folder, "lauf.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, indent=2, ensure_ascii=False)
     # LabVIEW-Datei mit Filtern in Messpunkten (LabVIEW kennt keine Sekunden)

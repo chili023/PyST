@@ -5,7 +5,7 @@ Läufe an Kunden, Kollegen oder einen zweiten PC geben, und Läufe aus anderen Q
 
 ## Weitergeben
 
-**Datei › Läufe weitergeben (.pyst) …** (Ctrl+S) öffnet das Fenster **„Läufe weitergeben“**.
+**Datei › Läufe weitergeben (.pyst) …** (Ctrl+Shift+S) öffnet das Fenster **„Läufe weitergeben“**.
 
 ### Welche Läufe?
 
@@ -31,7 +31,7 @@ Direkt als HTML: **Datei › Als HTML-Ansicht exportieren (ohne PyST ansehbar) �
 - Enthält alle Messdaten, Parameter, Fahrzeug und Setup der Läufe.
 - Beim Öffnen legt PyST Fahrzeug und Setup an oder nimmt ein gleichnamiges, das es schon gibt.
 - Läufe, die schon in der Datenbank sind (gleicher Name, Datum und Quelle), übernimmt PyST nicht noch einmal.
-- Mittelwerte kommen nicht in die `.pyst`-Datei (Stand 1.4.1).
+- Mittelwerte kommen nicht in die `.pyst`-Datei (Stand 1.4.2).
 
 ### HTML-Ansicht
 
@@ -50,7 +50,8 @@ Eine einzige Datei. Läuft offline in jedem Browser, auch auf dem Handy.
 |---|---|
 | **Datei › Öffnen / importieren (.pyst, Läufe, Mitschnitte) …** (Ctrl+O) | Datei wählen |
 | **Datei › Läufe importieren …** (Ctrl+I) | dasselbe für Läufe |
-| **Importieren …** in der Auswertung | dasselbe |
+| **Importieren › Dateien …** in der Auswertung | dasselbe |
+| **Datei › Ordner importieren (mit Unterordnern) …** (Ctrl+Umschalt+I) oder **Importieren › Ordner mit Unterordnern …** | ganzer Ordner mit Unterordnern, mit Vorschau und Duplikaterkennung, siehe [Auswertung › Ordner importieren](Auswertung.md#ordner-importieren) |
 | Datei ins Fenster ziehen (Drag & Drop) | öffnet die Datei |
 | Start mit Datei, z. B. `./start_linux.sh lauf.pyst` | öffnet die Datei in der Auswertung |
 

@@ -1,7 +1,7 @@
 # PST-Diag 1 – Oszi-/Diagnosemodus für alle PST-Messelektroniken
 
-Stand 26.10.2026, verbindlich für: Arduino-Mega-Sketch (ab 3.1.0), PST-STM32-Firmware F446 (ab 1.1.0),
-Basis-Firmware G473 (ASCII-Kompatibilitätsmodus) und PyST (ab 1.3). Ziel: jede Messelektronik kann ohne
+Stand 26.10.2026 (§11 Analogeingänge: 10.11.2026), verbindlich für: Arduino-Mega-Sketch (ab 3.1.0, §11 ab 3.2.0),
+PST-STM32-Firmware F446 (ab 1.1.0, §11 ab 1.2.0), Basis-Firmware G473 (ASCII-Kompatibilitätsmodus) und PyST (ab 1.3). Ziel: jede Messelektronik kann ohne
 Neu-Flashen zwischen „normal“ (LabVIEW-kompatibel) und „Diagnose/Oszi“ umgeschaltet werden.
 
 ## 1 Grundregeln
@@ -123,6 +123,7 @@ Gemeinsam festgelegt, damit PyST beide Geräte gleich behandeln kann:
 ## 9 Umsetzung Arduino Mega 3.1.0
 
 - `#CAP;proto=1;fw=PST-Mega 3.1.0;tick_ns=62.5;ch=I,R;burst_max=800;modes=N,D;set=1`
+  (ab 3.2.0 `fw=PST-Mega 3.2.0` und am Ende `;ai=A0,A1,…,A15`, siehe §11)
 - Zeitstempel: Timer4 (Zündung, ICP4 = Pin 49) und Timer5 (Rolle, ICP5 = Pin 48) ohne Vorteiler,
   synchron gestartet (gemeinsame Zeitbasis für `ch=A`, ±1 Tick), 32 bit = ICR + Überlaufzähler.
 - Einstellungen (`#GET`-Reihenfolge, Standardwert, Bereich):
@@ -250,3 +251,39 @@ Zeile bleibt `#STAT;u12=…`. `#STAT` der Zange ab 0.3.0: `isr_funken`, `rmt_fun
 
 PyST holt den Schlüssel bei jedem USB-Verbinden und legt ihn je `id` in `~/PyST/schluessel.json` ab (Rechte 600).
 Vor jedem TCP-Betrieb meldet es sich mit genau einem Versuch an. Der Schlüssel erscheint nie im Log.
+
+## 11 Analogeingänge (PyST ab 1.4.2, Mega ab 3.2.0, F446 ab 1.2.0)
+
+Für Einstellungen › Analogeingänge. Umgesetzt im Mega-Sketch 3.2.0, in PST-STM32 1.2.0, in PyST und im Simulator
+(`SIM`, `SIM:mega`); die Basis meldet ihre Eingänge bis auf Weiteres in `#STAT`. Ohne diese Felder bleibt alles wie
+bisher. PyST erkennt die Fähigkeit an `ai=` in `#CAP`, nicht an der Versionsnummer.
+
+- **`#CAP`** zusätzlich `ai=<Eingang>,<Eingang>,…`, z. B. Mega `ai=A0,A1,…,A15`, F446 `ai=ADC1,ADC2`, Basis
+  `ai=AI1,AI2`. Die Namen sind die Schlüssel in PyST.
+- **`#AI <hz>`** (0 … 50) → `#OK;AI;<hz>`; `#AI 0` schaltet aus. Nach dem Start aus, LabVIEW und alte PyST merken
+  nichts. PyST sendet `#AI 10`, wenn `#CAP` Eingänge nennt.
+- **Zeile** `A;<t_ms>;<Eingang>=<Wert>;…`, z. B. `A;12345;AI1=1.234;AI2=0.501`, in jedem Modus (N und D), zwischen
+  den Telegrammen. Wert = Spannung an der Klemme in V (Teiler herausgerechnet), bei der Basis im Modus 4–20 mA in mA,
+  `nan` = kein Wert. PyST hält jeden Wert 3 s und legt ihn an die folgenden Telegramme.
+- Belegte Eingänge (F446 `afr_src`) dürfen in der Liste bleiben, ihre Werte auch.
+- `#AI` nur mit genau einer ganzen Zahl 0 … 50, sonst `#ERR;AI;bereich 0-50` (auch `#AI` ohne Zahl). Der Takt läuft
+  ohne Drift (`#AI 3` = genau 3 Zeilen je Sekunde, Bezug alle 1000 ms neu); liegt er mehr als 1 s zurück, beginnt er
+  neu, ohne nachzuholen. A-Zeilen gibt es auch ohne laufende Messung.
+- Telegramme haben Vorrang: passt eine A-Zeile nicht mehr mit Reserve in den Sendepuffer, entfällt sie (kein Flag
+  Bit 2). Während einer Burst-Ausgabe pausieren die A-Zeilen wie die Telegramme.
+- PyST sendet beim Trennen `#AI 0`, wenn es `#AI` eingeschaltet hatte (der F446 startet beim Öffnen des Ports nicht
+  neu, LabVIEW soll danach keine A-Zeilen sehen).
+
+**Mega 3.2.0:** `ai=A0,…,A15`, Wert = ADC × 5 V / 1024 (Referenz AVcc, ohne Teiler), 3 Nachkommastellen; je Kanal
+wird die erste Wandlung nach dem Kanalwechsel verworfen und die nächsten 4 gemittelt (16 Kanäle in ca. 8,3 ms). Der
+ADC läuft ohne Interrupt: `loop()` übernimmt je Durchgang höchstens ein fertiges Ergebnis (ca. 130 Takte) und startet
+die nächste Wandlung; die Capture-ISRs sind unverändert. Eine A-Zeile hat bis 164 Byte und kostet in `loop()` ca. 1,1 ms
+(Interrupts frei). Last bei 115200 Baud (11,5 KB/s): 10 Hz = 1,6 KB/s, mit D-Telegrammen (ca. 90 Byte × 61 Hz) zusammen
+ca. 62 %; im Modus D passen mehr als ca. 30 Hz nicht. `nan` bis ein Kanal nach `#AI` einmal gewandelt ist.
+
+**F446 1.2.0:** `ai=ADC1,ADC2` (ADC1 = PB0, ADC2 = PA1), Wert = Rohwert × 3,3 V / 4096, Mittel der letzten 16
+Wandlungen. ADC1 tastet beide Eingänge per DMA (DMA2 Stream 0, im Kreis, ohne Interrupt) dauernd ab, je 480 Takte bei
+22,5 MHz; AFR (`afr_src`), Binärtelegramm der STM-LabVIEW und A-Zeilen lesen dieselben Werte. Keine A-Zeilen, solange
+Binärtelegramme laufen; die 8-Byte-Befehle der STM-LabVIEW und ein Break schalten `#AI` aus. Zeile ≤ 38 Byte.
+
+Die Basis liest PyST weiter über `ai1`/`ai2` aus `#STAT` (etwa einmal je Sekunde, Einheit `V` bzw. `mA` am Wert).

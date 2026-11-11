@@ -324,16 +324,18 @@ class Gui(unittest.TestCase):
         top = [w.tabs.tabText(i) for i in range(w.tabs.count())]
         self.assertEqual(top, ["Messen", "Fahrzeuge && Setups", "Auswertung", "Oszi / Dauermessung", "Einstellungen"])
         sub = [w.settings_tabs.tabText(i) for i in range(w.settings_tabs.count())]
-        self.assertEqual(sub, ["Rolle/Lauf", "Verbindung", "Zange", "Lambda", "ECU", "Firmware", "WiFi"])
+        self.assertEqual(sub, ["Rolle/Lauf", "Verbindung", "Zange", "Lambda", "Analogeingänge", "ECU",
+                               "Software && Firmware", "WiFi"])
         s = w.page_settings
         # Entwurf 08.11.2026: keine Reiter in den Unterreitern, die Teile stecken als Gruppen in ihren Seiten
-        self.assertEqual([type(w.settings_tabs.widget(i)) for i in range(7) if isinstance(
+        self.assertEqual([type(w.settings_tabs.widget(i)) for i in range(8) if isinstance(
             w.settings_tabs.widget(i), type(w.settings_tabs))], [])
         self.assertIs(w.settings_tabs.widget(0), s)
         self.assertIs(w.settings_tabs.widget(1), s.conn_page)
         self.assertIs(w.settings_tabs.widget(2), w.page_hw)
-        self.assertIs(w.settings_tabs.widget(4), w.page_rusefi)
-        self.assertIs(w.settings_tabs.widget(5), w.page_flash)
+        self.assertIs(w.settings_tabs.widget(4), w.page_analog)
+        self.assertIs(w.settings_tabs.widget(5), w.page_rusefi)
+        self.assertIs(w.settings_tabs.widget(6), w.page_flash)
         self.assertTrue(w.page_hw.isAncestorOf(w.page_tasten) and w.page_hw.isAncestorOf(w.page_pruef_zange))
         self.assertTrue(s.conn_page.isAncestorOf(w.page_pruef) and s.conn_page.isAncestorOf(w.dev_settings_btn))
         self.assertTrue(w.page_lambda.isAncestorOf(w.page_hw.box_lambda))
@@ -514,7 +516,7 @@ class Gui(unittest.TestCase):
         self.run_gui(0.3)
         self.assertEqual(ser.z_settings["blitz_phi_x10"], "-5")
         self.assertEqual(ser.z_led, [])                     # kein Neuer Lauf
-        self.assertNotIn(w.ctrl.state, (self.gui.WAIT, self.gui.RUN))
+        self.assertNotIn(w.ctrl.state, (self.gui.KLIMA, self.gui.WAIT, self.gui.RUN))
 
     # ------------------------------------------------------------------ Marker
     def test_marker_nummern(self):
@@ -558,7 +560,7 @@ class Gui(unittest.TestCase):
         ser = self.verbinden()
         w.show_page(w.page_tasten)
         ser.sim_taste("t3_kurz")
-        self.assertTrue(self.run_gui(3, lambda: w.ctrl.state in (self.gui.WAIT, self.gui.RUN)))
+        self.assertTrue(self.run_gui(3, lambda: w.ctrl.state in (self.gui.KLIMA, self.gui.WAIT, self.gui.RUN)))
         self.assertEqual(w.tabs.currentIndex(), 0)
         self.assertTrue(self.run_gui(3, lambda: tasten.LED_OK in ser.z_led))
         # zweiter Druck startet nichts neu und bricht nichts ab
@@ -567,7 +569,7 @@ class Gui(unittest.TestCase):
         ser.sim_taste("t3_kurz")
         self.assertTrue(self.run_gui(3, lambda: ser.z_led == [tasten.LED_FEHLER]))
         self.assertIs(w.ctrl.frames, frames)
-        self.assertIn(w.ctrl.state, (self.gui.WAIT, self.gui.RUN))
+        self.assertIn(w.ctrl.state, (self.gui.KLIMA, self.gui.WAIT, self.gui.RUN))
         self.assertIn("läuft schon", w.band.text())
         self.assertFalse(w.band.isHidden())
         self.shot("hinweis_lauf.png")
@@ -582,7 +584,7 @@ class Gui(unittest.TestCase):
         ser.sim_taste("t3_kurz")
         self.assertTrue(self.run_gui(3, lambda: ser.z_led == [tasten.LED_FEHLER]))
         self.assertIn("Oszi", w.band.text())
-        self.assertNotIn(w.ctrl.state, (self.gui.WAIT, self.gui.RUN))
+        self.assertNotIn(w.ctrl.state, (self.gui.KLIMA, self.gui.WAIT, self.gui.RUN))
         w.page_oszi.rec_btn.setChecked(False)
         # Flashen
         ser.z_led.clear()
@@ -598,7 +600,7 @@ class Gui(unittest.TestCase):
         ser.sim_taste("t3_kurz")
         self.assertTrue(self.run_gui(3, lambda: ser.z_led == [tasten.LED_FEHLER]))
         self.assertIsNone(self.app.activeModalWidget())
-        self.assertNotIn(w.ctrl.state, (self.gui.WAIT, self.gui.RUN))
+        self.assertNotIn(w.ctrl.state, (self.gui.KLIMA, self.gui.WAIT, self.gui.RUN))
 
     # ------------------------------------------------------------------ Übersetzung
     def test_uebersetzung(self):

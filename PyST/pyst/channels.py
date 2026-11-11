@@ -11,7 +11,7 @@ from typing import Dict, Optional, Tuple
 
 import numpy as np
 
-from . import physics
+from . import analog, physics
 
 AFR_STOICH = 14.7
 
@@ -229,6 +229,11 @@ def run_channels(run: Dict, res: Optional[physics.RunResult], p: physics.DynoPar
                 # Motor = Rad + Verluste (Ausrollversuch oder von Hand): Anteile getrennt
                 ch["Leistung Rad"] = Channel(res.full_ps_rad, "PS", "Auswertung")
                 ch["Verlustleistung"] = Channel(res.full_ps - res.full_ps_rad, "PS", "Auswertung")
+            if getattr(res, "full_ps_reifen", None) is not None:
+                # Rollen-Kalibrierung: Reifen an Rolle = Rad + Verlust der Rolle, Rest = Reifen, Kette, Getriebe
+                ch["Leistung Reifen an Rolle"] = Channel(res.full_ps_reifen, "PS", "Auswertung")
+                if res.verluste:
+                    ch["Antriebsverlust"] = Channel(res.full_ps - res.full_ps_reifen, "PS", "Auswertung")
     afr = np.asarray(run["afr"], float)
     ch["Lambda"] = Channel(lambda_from_afr(afr), "λ", "Gemisch")
     ch["AFR"] = Channel(np.where(afr > 0.5, afr, np.nan), "AFR", "Gemisch")
@@ -251,7 +256,19 @@ def run_channels(run: Dict, res: Optional[physics.RunResult], p: physics.DynoPar
             if col == "diag_ign_peak_mv":
                 v = np.where(v > 0, v, np.nan)                  # 0 = kein Funke im Fenster
             ch[name] = Channel(v, unit, "Zange")
+    # Analogeingaenge: umgerechnete Kanaele (Konfiguration des Laufs) und die Rohwerte (V bzw. mA)
+    for lk in analog.lauf_kanaele(run, alle=True):
+        if len(lk.roh) != N:
+            continue
+        if lk.aktiv:
+            name = analog.kanal_name(lk.kanal)
+            ch[name if name not in ch else f"{name} {lk.kanal.eingang}"] = Channel(lk.werte, lk.kanal.einheit_text(),
+                                                                                  analog.GRUPPE)
+        einheit = ((run.get("meta") or {}).get("analog") or {}).get("einheiten", {}).get(lk.kanal.eingang, "V")
+        ch[analog.roh_name(lk.kanal.eingang)] = Channel(lk.roh, einheit, analog.GRUPPE)
     for name, values in cols.items():
+        if name.startswith(analog.SPALTE):
+            continue
         if name not in _KNOWN_COLUMNS and len(values) == N:
             if name.startswith("rusefi_"):
                 m = ecu_meta.get(name, {})

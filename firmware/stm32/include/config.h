@@ -11,8 +11,8 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#define FW_VERSION          "1.1.0"
-#define FW_DATE             "26.10.26"
+#define FW_VERSION          "1.2.0"
+#define FW_DATE             "10.11.26"
 
 /* ------------------------------------------------------------------ PC --- */
 #define PC_BAUD             115200u   /* LabVIEW 3.2.1 ist fest auf 115200 */
@@ -118,6 +118,10 @@
 #define AFR_SOURCE          0         /* (afr_src) 0 = aus, 1 = PB0, 2 = PA1 */
 #define AFR_AT_0V           10.0f     /* (afr_0v) Kennlinie wie alte STM-Firmware: */
 #define AFR_AT_FULLSCALE    20.0f     /* (afr_fs) 0 V = AFR 10, 3,3 V = AFR 20     */
+
+/* Referenz des ADC (VDDA, auf dem Nucleo 3,3 V) fuer die Spannungen in den
+ * A-Zeilen (#AI, ab 1.2.0): U = Rohwert * ANALOG_VREF / 4096. */
+#define ANALOG_VREF         3.3f
 
 /* ------------------------------------------------ Diagnose (PST-Diag 1) -- */
 /* Flanken-Oszi (#BURST): max. Anzahl Flanken je Aufnahme (5 Byte RAM je Flanke). */

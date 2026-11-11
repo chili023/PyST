@@ -21,6 +21,7 @@ from pyst import mittelwert as mw  # noqa: E402
 from pyst import theme  # noqa: E402
 from pyst.channels import Channel  # noqa: E402
 from pyst.cursorwerte import bereich_runden, dez_fuer, wert_bei  # noqa: E402
+from pyst.kacheln import zahl  # noqa: E402
 from pyst.lauf_dialog import LaufSetupDialog, geaenderte_felder, schnappschuss_nachfuehren  # noqa: E402
 from pyst.laufleiste import (SCHWELLE_CHIPS, Zelle, chips_modus, datum_text, kurz_titel, reihenfolge,  # noqa: E402
                              schnellwert_zellen, zeit_text)
@@ -287,6 +288,82 @@ class Auswertung(unittest.TestCase):
         self.assertEqual(self.v.leiste.zeilen[self.ids[1]]["knopf"].text(), "Setup …")
         self.assertIn("3 angezeigt", self.v.seitenleiste.streifen.text())
 
+    def test_cursor_baut_keine_widgets_neu(self):
+        """Cursorbewegung tauscht nur die Zahlen: gleiche Label-Objekte, kein neues Stylesheet (sonst ruckelt es und auf
+        dem Mac bleiben Reste stehen); Diagramme zeichnen ganz neu."""
+        self.v.add_runs(self.ids)
+        pump(0.1)
+        self.v._set_cursor_x(5000)
+        self.v._update_cursor()
+        k = next(k for k in self.v.cursor.kacheln if k.isVisible() and k.laeufe)
+        vorher, texte = list(k._lauf_widgets), k.lauf_texte()
+        css = [w.styleSheet() for w in vorher]
+        self.v._set_cursor_x(8000)
+        self.v._update_cursor()
+        self.assertEqual([id(w) for w in k._lauf_widgets], [id(w) for w in vorher])
+        self.assertNotEqual(k.lauf_texte(), texte)
+        self.assertEqual([w.styleSheet() for w in k._lauf_widgets], css)
+        self.assertEqual(self.v.glw.viewportUpdateMode(), QtWidgets.QGraphicsView.FullViewportUpdate)
+        from pyst.plots import DynoPlot
+        p = DynoPlot()
+        self.assertEqual(p.viewportUpdateMode(), QtWidgets.QGraphicsView.FullViewportUpdate)
+        p.deleteLater()
+
+    def test_cursor_werte_sofort_wie_in_messen(self):
+        """Jede Mausbewegung schreibt die Werte rechts sofort (kein Timer, der bei laufender Maus nie feuert) und tauscht
+        nur die Zahlen; Bereiche und Kanalauswahl bleiben, bis sich Laeufe oder Felder aendern."""
+        import time as _t
+        v = self.v
+        v.add_runs(self.ids[:2])
+        pump(0.1)
+        k = next(k for k in v.cursor.kacheln if k.isVisible() and k.laeufe)
+        plan = v._cursor_plan
+        self.assertIsNotNone(plan)
+        dauer = []
+        for n in range(4000, 8600, 150):                                  # Maus faehrt durch, ohne Ereignisschleife
+            t0 = _t.perf_counter()
+            v._set_cursor_x(float(n), frei=True)
+            dauer.append(_t.perf_counter() - t0)
+            self.assertEqual(v.cursor.x_kachel.wert.text(), zahl(float(n)))
+            erwartet = [zahl(w, k.dez) for _f, _b, w in v._laufwerte(k.kanal, v._runs_shown(), v._primary(), n)]
+            self.assertEqual([t for _b, t in k.lauf_texte()], erwartet)
+        self.assertIs(v._cursor_plan, plan)                               # nichts neu aufgebaut
+        self.assertLess(sorted(dauer)[len(dauer) // 2], 0.02)             # Median unter 20 ms
+        v.leiste.zeilen[self.ids[1]]["anzeigen"].setChecked(False)        # anderer Lauf weg -> neu aufbauen
+        pump()
+        v._set_cursor_x(5000.0, frei=True)
+        self.assertEqual(len(k.laeufe), 1)
+
+    def test_cursor_folgt_maus_ueber_den_ersten_lauf_hinaus(self):
+        """Zwei Laeufe, der zweite dreht hoeher: der Cursor geht bis ans Ende des zweiten; der erste zeigt dort „–“,
+        unten an der Linie steht die genaue Drehzahl."""
+        def laden(rid):
+            ch, seg, mk = synth_kanaele(rid)
+            if rid == self.ids[1]:
+                for c in ch.values():
+                    c.values = np.asarray(c.values, float).copy()
+                ch["Drehzahl Motor"].values = ch["Drehzahl Motor"].values * 11000.0 / 9000.0
+            return ch, seg, mk
+        v = LogViewer(self.db, laden)
+        v.resize(1700, 1000)
+        v.apply_layout({"felder": 1, "x": "Drehzahl Motor", "kanaele": [["Leistung"]]})
+        v.show()
+        v.add_runs(self.ids[:2])
+        pump(0.1)
+        v._set_cursor_x(10500, frei=True)
+        v._update_cursor()
+        self.assertAlmostEqual(v.cursor_x(), 10500, delta=1)
+        self.assertAlmostEqual(v.lines[0].value(), 10500, delta=1)
+        self.assertEqual(v.cursor_fahne.textItem.toPlainText(), "10.500 1/min")
+        k = next(k for k in v.cursor.kacheln if k.isVisible() and k.laeufe)
+        werte = dict(k.lauf_texte())
+        self.assertEqual(werte["16:18"], "–")                           # erster Lauf endet bei 9000
+        self.assertNotEqual(werte["16:19"], "–")
+        v._set_cursor_x(20000, frei=True)                               # rechts ausserhalb: am Ende des laengsten
+        self.assertAlmostEqual(v.cursor_x(), 11000, delta=1)
+        v.close()
+        v.deleteLater()
+
     def test_notiz_sichtbar_entfernen(self):
         self.v.add_runs(self.ids[:3])
         pump()
@@ -357,6 +434,9 @@ class Auswertung(unittest.TestCase):
         self.assertTrue(dlg.ok.isEnabled())
         self.assertFalse(dlg.warnung.isVisibleTo(dlg))                   # gleiches Setup
         self.assertEqual(dlg.name.text(), "Ø 2 Läufe · Serie HD 135")
+        # der fruehere, wirkungslose Haken „im Messfenster als Referenz anbieten“ ist weg (1.4.2)
+        self.assertFalse(hasattr(dlg, "referenz"))
+        self.assertFalse([c for c in dlg.findChildren(QtWidgets.QCheckBox) if "Referenz" in c.text()])
         self.assertEqual(dlg.setup.currentData(), self.s1)
         dlg.baum.topLevelItem(1).setCheckState(0, QtCore.Qt.Unchecked)    # nur noch 1 Lauf
         self.assertFalse(dlg.ok.isEnabled())

@@ -40,7 +40,7 @@ Das ist Absicht (galvanische Verbindung zum PC). Port der Zange unter Einstellun
 PyST hat keinen gültigen Schlüssel der Basis, oder die Basis hat einen **Neuen Schlüssel** vergeben. Einmal per USB
 verbinden, dann wieder **PC per WLAN verbinden**. Eine abgelehnte Anmeldung wiederholt PyST nicht von selbst.
 
-**Statusleiste: „im Bootloader – Firmware unter Einstellungen › Firmware aufspielen“.**
+**Statusleiste: „im Bootloader – Firmware unter Einstellungen › Software & Firmware aufspielen“.**
 Die Basis hat keine gültige Firmware (z. B. abgebrochenes Update). Unter [Firmware und Updates](Firmware-und-Updates.md)
 neu aufspielen.
 
@@ -54,13 +54,39 @@ Wechsel des WLAN-Kanals sucht die Zange die Basis neu.
 *n Stop* muss größer als *n vom Gas* sein (oder 0). Übersetzung, Rollengeber, Zündimpulse, Trägheit und Filter
 müssen größer als 0 sein.
 
+**Der Lauf startet nicht: GO bleibt stehen, nach 60 s „Kein Drehzahlanstieg nach 60 s – abgebrochen“.**
+Der Lauf beginnt erst, wenn die Motordrehzahl (Rolle × Übersetzung) **1 s lang** durchgehend steigt, um mindestens
+150 1/min. Prüfen: Dreht die Rolle überhaupt (LIVE-Drehzahl rechts)? Stimmen Rollengeber und Übersetzung? Bei sehr
+schwerer Rolle oder hohem Gang steigt die Drehzahl langsam: unter **Lauf-Einstellungen …** › LAUF den Wert **Start:
+Anstieg mind.** kleiner stellen oder **Start: steigt über** verkürzen.
+
+**Der Lauf beginnt schon beim Halten.**
+Ein kurzer Gasstoß (Drehzahl steigt 1 s lang um mehr als 150 1/min) gilt als Start. Ruhig halten, bis GO kommt, oder
+**Start: Anstieg mind.** höher stellen. Die Kurve selbst stört das nicht: Der Vorlauf bis zur letzten Verzögerung
+unter *n vom Gas* wird weiter abgeschnitten.
+
+**Der Lauf lässt sich nicht speichern (Auto-Speichern aus).**
+Ohne **Auto-Speichern** schreibt PyST den Lauf erst auf Wunsch in die Datenbank: im Fenster **Lauf fertig** nach dem
+Lauf mit **Speichern** (Enter), sonst mit dem Knopf **Lauf speichern** unten rechts neben **PDF-Bericht**, mit
+**Datei › Lauf speichern** oder **Ctrl+S**. Das geht bis zum nächsten START, auch nach **Später** oder **Verwerfen**.
+Ist der Knopf grau („Kein ungespeicherter Lauf“), ist der Lauf schon gespeichert, es gab kein Ergebnis oder seitdem
+wurde neu gestartet – dann ist die alte Kurve weg (das Band hat beim START „Letzter Lauf nicht gespeichert“ gezeigt).
+Kommt das Fenster nicht: Einstellungen › Rolle/Lauf › **Nach dem Lauf Notiz/Setup-Fenster zeigen** einschalten.
+Mehr: [Messen](Messen.md#nach-dem-lauf-fenster-lauf-fertig).
+
+**„Klima: eingetragener Wert … (kein Sensorwert)“ im Ergebnis.**
+Der Klimasensor hat nach START nicht innerhalb von 3 s geantwortet (oder die Gegenstelle hat keinen, z. B. die Zange
+per USB). Der Lauf ist mit den Werten unter Einstellungen › Rolle/Lauf › Klima gerechnet. Unter Einstellungen ›
+Verbindung › Prüfen „Klima“ prüfen.
+
 **„Kein Laufende nach 120 s – abgebrochen“.**
 PyST hat kein Laufende gefunden. *n vom Gas* liegt vermutlich unter der Haltedrehzahl, oder die Drehzahl ist nie
 gefallen. *n vom Gas* über die Haltedrehzahl setzen oder *n Stop* einschalten.
 
 **Die Kurve fängt zu spät an oder ist zu kurz.**
-Vor dem START den Motor ruhig **unter** *n vom Gas* halten. PyST schneidet den Vorlauf bis zur letzten Verzögerung
-unter *n vom Gas* ab. Siehe [Rechenweg](Rechenweg.md#anfang-und-ende-der-kurve).
+Vor dem START den Motor ruhig **unter** *n vom Gas* halten und erst bei GO Vollgas geben. Die Kurve beginnt am Anfang
+der Sekunde, in der die Drehzahl steigt; davor schneidet PyST wie bisher den Vorlauf bis zur letzten Verzögerung unter
+*n vom Gas* ab. Siehe [Rechenweg](Rechenweg.md#anfang-und-ende-der-kurve).
 
 **Die Leistung ist viel zu hoch oder zu niedrig.**
 Meist stimmt die **Übersetzung** nicht. Sie geht quadratisch ein. Neu einmessen oder live abgleichen
@@ -82,9 +108,20 @@ Bei Filtern in Messpunkten wirken sie bei 60 Hz nur ein Drittel so lang. Filter 
 Das Zündsignal war nicht brauchbar. Dann nimmt PyST den eingestellten Wert. ⚠️ Funkenmessung ist noch nicht am
 Prüfstand bestätigt.
 
-**Vor START kommt „Setup geändert“.**
-Die SETUP-WERTE wurden geändert, aber nicht gespeichert. Speichern, nur für diesen Lauf nehmen oder abbrechen.
-Abschaltbar mit **Bei geändertem Setup vor START nachfragen**.
+**Vor START kommt „Setup unverändert – Änderungen eintragen?“.**
+PyST fragt, ob am Motorrad etwas geändert wurde, das noch nicht in den SETUP-WERTEN steht. Nichts geändert:
+**Unverändert starten** (Enter oder F1). Sonst die neuen Werte in die Felder tippen und **Übernehmen und starten**;
+sie gelten für diesen Lauf. Sind die SETUP-WERTE schon geändert, kommt die Frage nicht. Die Zangentaste „Neuer Lauf“
+fragt nie. Abschaltbar mit **Vor START nachfragen, ob sich das Setup geändert hat** (Einstellungen › Rolle/Lauf).
+Siehe [Messen](Messen.md#start-nachfrage).
+
+**START geht nicht: „Rollen-Kalibrierung (Assistent) offen – erst schließen, dann START“.**
+Solange das Fenster der Rollen-Kalibrierung offen ist, startet kein Lauf. Assistent schließen.
+
+**Ein alter Lauf oder ein Mittelwert soll ins Messdiagramm.**
+In Messen die Seitenleiste **Läufe** öffnen und oben **＋** drücken („Läufe hinzufügen“, Art z. B. „nur
+Mittelwerte“). Sind alle 5 Plätze gesperrt, zuerst ein Schloss lösen. Den Knopf „Referenz laden …“ gibt es seit 1.4.2
+nicht mehr. Siehe [Messen](Messen.md#läufe-hinzufügen).
 
 **Klima zeigt „noch nicht gelesen“.**
 PyST liest nur zwischen den Läufen (beim START, von Hand, im Leerlauf alle 5 min bei offenem Reiter Messen). Unter
@@ -130,8 +167,24 @@ Auch dann kann der Bootloader des Geräts die Datei ablehnen. Siehe
 **Wo liegen meine Läufe?**
 In `~/PyST` (Windows `C:\Users\<Name>\PyST`). Den Pfad der Datenbank zeigt Einstellungen › Verbindung unten.
 
-**Ein Mittelwert fehlt in der .pyst-Datei bzw. im PDF.**
-Das ist in 1.4.1 so: Mittelwerte kommen nicht in `.pyst`-Dateien und nicht in die PDF-Tabelle.
+**Ein Mittelwert fehlt in der .pyst-Datei.**
+Das ist in 1.4.2 noch so: Mittelwerte kommen nicht in `.pyst`-Dateien. Im PDF-Bericht stehen sie (mit Band und
+Quellläufen), wenn sie im Diagramm stehen, ebenso der automatische Mittelwert.
+
+**Wie lese ich alte Messungen ein (alte Software PST 3.x / LabVIEW, ältere PyST-Versionen)?**
+Einzelne Dateien: **Datei › Öffnen / importieren …** oder Datei ins Fenster ziehen. Eine ganze Sammlung:
+**Datei › Ordner importieren (mit Unterordnern) …** bzw. in der Auswertung **Importieren › Ordner mit Unterordnern …**.
+PyST findet LabVIEW-XML, PyST-Laufordner (`lauf.json`), `.pyst`-Dateien und Terminal-Mitschnitte, zeigt eine Vorschau
+und wählt schon vorhandene Läufe ab. Siehe [Auswertung › Ordner importieren](Auswertung.md#ordner-importieren).
+
+**Beim Ordner-Import steht „nicht lesbar“.**
+Die Datei hat die Endung, aber nicht das Format (z. B. eine andere XML-Datei). Der Grund steht im Status und im Bericht.
+
+**Ich kann keinen Lauf löschen.**
+Erst den Lauf in der Liste **Läufe** anklicken (markieren, mit Strg/Umschalt mehrere), dann **Löschen** unten in der
+Seitenleiste oder Rechtsklick › **Löschen …**. Ohne Markierung meldet PyST „Kein Lauf markiert …“.
+Nach dem Löschen rückt ein älterer Lauf auf den freien Platz im Diagramm nach – die Liste sieht dann fast gleich aus,
+der gelöschte Lauf ist aber weg. Nicht angepinnt sieht man die Knöpfe erst, wenn die Seitenleiste aufgeklappt ist.
 
 **Ich habe einen Lauf gelöscht.**
 **Löschen** in der Laufliste fragt nach („Messdateien im PyST-Datenordner werden mitgelöscht.“) und entfernt dann auch

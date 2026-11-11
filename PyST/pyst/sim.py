@@ -1,13 +1,17 @@
 """
-Simulierte Messelektronik: verhaelt sich wie die PST-STM32-Firmware 1.1 bzw. der Arduino-Mega-Sketch
-3.1.0 (Arduino-Protokoll + PST-Diag 1) oder – ohne Diagnose – wie F446 1.0.0 / Mega 3.0.0,
+Simulierte Messelektronik: verhaelt sich wie die PST-STM32-Firmware 1.2 bzw. der Arduino-Mega-Sketch
+3.2.0 (Arduino-Protokoll + PST-Diag 1 + Analogeingaenge '#AI') oder – ohne Diagnose – wie F446 1.0.0 / Mega 3.0.0,
 und simuliert Motor + Rolle, damit PyST ohne Pruefstand getestet werden kann.
 
 Ablauf nach 'm': Motor haelt 3000 1/min, nach 3 s Vollgas bis 11500 1/min, dann Gas weg
 und die Rolle rollt aus. Motor ~ 32 PS bei 10000 1/min (wie die Referenzlaeufe vom 26.05.26).
 Ausrollversuch (SimEngine(ausrollen=True), Port 'SIM:ausrollen'): nach dem Gas-Wegnehmen bremst der Motor noch
 t_kupplung Sekunden mit, dann ist die Kupplung gezogen: Zuendung auf Leerlauf, die Rolle rollt mit Rad und Kette
-(Verlust loss_ab0 + loss_ab1 * w, auch beim Beschleunigen) bis n_bremse aus, erst dann bremst der Fahrer.
+(Verlust Rolle rolle_m0/m1/n1/m2 + Reifen/Kette loss_ab0 + loss_ab1 * w, auch beim Beschleunigen, RollenEngine) bis
+n_bremse aus, erst dann bremst der Fahrer.
+Rollen-Kalibrierung (Assistent, RadAbEngine, Port 'SIM:rolle'): Halten, Vollgas bis n_lift, dort t_oben Sekunden
+halten, dann Rad von der Rolle: die Rolle laeuft frei aus, nur mit ihrem eigenen, bekannten Verlust (dasselbe
+Rollenmodell wie 'SIM:ausrollen'); unter n_wieder kommt das Rad wieder auf die Rolle und alles beginnt von vorn.
 
 PST-Diag 1: '#?', '#MODE', '#RUN', '#RATE', '#BURST' (mit Trigger), '#GET/#SET/#SAVE/#DEFAULTS'.
 Dafuer erzeugt der Simulator die einzelnen Flanken von Zuendung und Rolle (mit uint32-Zeitstempeln,
@@ -327,8 +331,51 @@ class SimSerial:
         self.flags_extra = 0
         self.last_out = {"I": 0.0, "R": 0.0}       # alter Mega: letzter Wert bleibt stehen
         self._edges_on = False
+        self.ai_hz = 0                              # Vorschlag '#AI <hz>': A-Zeilen mit den Analogwerten (analog.py)
+        self._ai_acc = 0.0
+        self._ai_t = 0.0                            # Uhr der simulierten Sensoren [s]
+        self.ai_rng = random.Random(seed + 101)     # eigener Zufall: Flanken und Funk bleiben wiederholbar
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
+
+    # --- Analogeingaenge (Vorschlag PST-Diag 1, analog.py): Mega A0…A15, F446 ADC1/ADC2
+    def ai_eingaenge(self) -> List[str]:
+        if not self.diag:
+            return []
+        return [f"A{i}" for i in range(16)] if self.mega else ["ADC1", "ADC2"]
+
+    def _last(self) -> float:
+        """0 … 1: wie weit der Motor dreht (aus der letzten Rollenfrequenz), fuer Sensoren, die mitlaufen."""
+        return max(0.0, min(1.0, self.last_out.get("R", 0.0) / 2800.0))
+
+    def analog_werte(self) -> Dict[str, float]:
+        """Simulierte Spannungen an den Eingaengen: 1. Eingang wie ein Drucksensor 0,5–4,5 V (steigt mit der
+        Drehzahl), 2. Eingang langsame Welle (Temperatur), die uebrigen offen (wenige mV Rauschen)."""
+        t, x = self._ai_t, self._last()
+        r = self.ai_rng
+        u_max = 3.3 if not self.mega else 5.0
+        out = {}
+        for i, k in enumerate(self.ai_eingaenge()):
+            if i == 0:
+                v = (0.5 + 3.0 * x) * u_max / 5.0 + r.gauss(0.0, 0.01)
+            elif i == 1:
+                v = (1.6 + 0.4 * math.sin(t / 8.0)) * u_max / 5.0 + r.gauss(0.0, 0.005)
+            else:
+                v = abs(r.gauss(0.0, 0.004))
+            out[k] = max(0.0, min(u_max, v))
+        return out
+
+    def _analog_step(self, dt: float):
+        self._ai_t += dt
+        if self.ai_hz <= 0:
+            return
+        self._ai_acc += dt
+        if self._ai_acc + 1e-9 < 1.0 / self.ai_hz:
+            return
+        self._ai_acc = 0.0
+        t_ms = (int(self._ai_t * 1000) + self.ms_offset) & 0xFFFFFFFF
+        felder = ";".join(f"{k}={v:.3f}" for k, v in self.analog_werte().items())
+        self._out(f"A;{t_ms};{felder}\r\n")
 
     # --- serial.Serial-Schnittstelle
     @property
@@ -400,7 +447,7 @@ class SimSerial:
                     self.engine.reset()
                     self.streaming = True
             elif c == "v":
-                ver = "3.1.0 vom 26.10.26" if self.diag else "3.0.0 vom 28.03.24"
+                ver = "3.2.0 vom 10.11.26" if self.diag else "3.0.0 vom 28.03.24"
                 self._out(f"Version {ver};\r\nRingspeicher Zuendsignal:5;\r\nRingspeicher Rolle:50;\r\n"
                           "Adresse BME280:76;\r\nThermoelement (1=ja 0=nein):0;\r\n")
             return
@@ -412,7 +459,7 @@ class SimSerial:
         elif c == "s":
             self.streaming = False
         elif c in "v?":
-            fw = "1.1.0" if self.diag else "1.0.0"
+            fw = "1.2.0" if self.diag else "1.0.0"
             self._out(f"PST-STM32 SIMULATOR {fw};\r\nMessfrequenz [Hz]:{self.engine.rate:.0f};\r\n")
 
     def _diag_command(self, line: str):
@@ -421,9 +468,18 @@ class SimSerial:
         cmd = parts[0].upper() if parts else ""
         a = parts[1:]
         if cmd == "?":
-            fw = "PST-Mega 3.1.0 SIM" if self.mega else "PST-STM32 1.1.0 SIM"
+            fw = "PST-Mega 3.2.0 SIM" if self.mega else "PST-STM32 1.2.0 SIM"
+            ai = ",".join(self.ai_eingaenge())
             self._out(f"#CAP;proto=1;fw={fw};tick_ns={self.tick_ns:g};ch=I,R;burst_max={self.burst_max()};"
-                      f"modes=N,D;set=1\r\n")
+                      f"modes=N,D;set=1" + (f";ai={ai}" if ai else "") + "\r\n")
+        elif cmd == "AI" and self.ai_eingaenge():
+            # wie Mega 3.2.0 / F446 1.2.0: genau eine ganze Zahl 0 … 50
+            hz = int(a[0]) if len(a) == 1 and a[0].isdigit() and len(a[0]) <= 3 else -1
+            if 0 <= hz <= 50:
+                self.ai_hz, self._ai_acc = hz, 0.0
+                self._out(f"#OK;AI;{hz}\r\n")
+            else:
+                self._out("#ERR;AI;bereich 0-50\r\n")
         elif cmd == "MODE" and a and a[0].upper() in ("N", "D"):
             self.mode = a[0].upper()
             self._out(f"#OK;MODE;{self.mode}\r\n")
@@ -631,7 +687,9 @@ class SimSerial:
         """Ein Telegramm erzeugen. Liefert dessen Dauer [s] (fuer die Echtzeit-Taktung)."""
         self._background()
         if not self.streaming:
+            self._analog_step(0.05)
             return 0.05
+        self._analog_step(1.0 / max(1.0, getattr(self.engine, "rate", 60.0) or 60.0))
         dt, rate, f_ign, f_roll, egt1, afr, egt2 = self.engine.next_frame()
         f_ign, f_roll = self._frame_hook(f_ign, f_roll, dt)
         self.cycle = (self.cycle + 1) & 0xFFFF
@@ -1023,6 +1081,17 @@ class BasisSimSerial(SimSerial):
         self.z_peak = max(0.0, 4300.0 - 0.07 * rpm + self.brng.gauss(0.0, 70.0)) if f_ign > 0 else 0.0
         return f_ign, f_roll
 
+    def ai_eingaenge(self) -> List[str]:
+        return []                                               # Basis 0.4 kennt '#AI' nicht, Werte nur in '#STAT'
+
+    def _ai_stat(self) -> str:
+        """AI1/AI2 wie die Basis im Werkszustand (0–10 V): AI1 Drucksensor 0,5–4,5 V, AI2 langsame Welle."""
+        t = time.time() % 10000.0
+        x = self._last()
+        ai1 = 0.5 + 3.0 * x + self.ai_rng.gauss(0.0, 0.01)
+        ai2 = 2.0 + 0.5 * math.sin(t / 8.0) + self.ai_rng.gauss(0.0, 0.005)
+        return f"ai1={max(0.0, ai1):.3f}V;ai2={max(0.0, ai2):.3f}V"
+
     def _extra_flags(self) -> int:
         fl = 0
         if not (self.z_paired and self.z_conn):
@@ -1118,7 +1187,7 @@ class BasisSimSerial(SimSerial):
                       "#STAT;wb=reset;lambda=nan;afr=nan;wb_temp=-1;wb_status=-;heat_cmd=0;heat=0;can_rx=0;can_err=0;"
                       f"wb_reset={0 if self._lam_on() else 1};wb_guard={'laeuft' if self._lam_on() else 'aus'}\r\n"
                       f"#STAT;{self._lam_fields(now)}\r\n"
-                      f"#STAT;u12={self._setf('sim_u12'):.2f};u5s=4.961;ai1=0.010V;ai2=0.010V;vref=2.497;t_mcu=29.7\r\n")
+                      f"#STAT;u12={self._setf('sim_u12'):.2f};u5s=4.961;{self._ai_stat()};vref=2.497;t_mcu=29.7\r\n")
         elif cmd == "ZANGE":
             sub = a[0].upper() if a else ""
             if not self.z_paired:
@@ -1358,6 +1427,9 @@ class ZangeUsbSimSerial(SimSerial):
 
     def burst_max(self) -> int:
         return 2000
+
+    def ai_eingaenge(self) -> List[str]:
+        return []                                               # Zange: keine Analogeingaenge
 
     def _frame_hook(self, f_ign: float, f_roll: float, dt: float):
         self.peak = max(0.0, 4300.0 - 4.2 * f_ign + self.zrng.gauss(0, 70)) if f_ign > 0 else 0.0
@@ -2417,16 +2489,102 @@ class LambdaSimDevice:
             port._out(f"#ERR;WBF;version;ver={ver};app=neu\r\n" if ver else f"#OK;WBF;END;ver={okv};n=5\r\n")
 
 
+RAD_KETTE = (4.0, 0.08)        # Reifen, Kette, Getriebeausgang: loss_ab0 [Nm] + loss_ab1 [Nm/(rad/s)] an der Rolle
+
+
+class RollenEngine(SimEngine):
+    """SimEngine mit dem Rollenverlust wie physics.loss_torque (rolle_m0/m1/n1/m2, Drehzahlen an der Rolle in 1/min)
+    statt loss0/loss2, dazu Reifen/Kette/Getriebe loss_ab0 + loss_ab1 * w. Gemeinsames Modell von 'SIM:ausrollen'
+    (gesamt = Rolle + Reifen/Kette) und 'SIM:rolle' (Rad abgehoben = Rolle allein): Die Rollen-Kalibrierung aus
+    SIM:rolle trifft so genau den Rollenanteil des Ausrollversuchs in SIM:ausrollen, die Differenz ist Reifen/Kette."""
+
+    def __init__(self, rolle_m0: float = 8.0, rolle_m1: float = 30.0, rolle_n1: float = 1600.0,
+                 rolle_m2: float = 5.0, **kw):
+        kw.setdefault("loss_ab0", RAD_KETTE[0])
+        kw.setdefault("loss_ab1", RAD_KETTE[1])
+        self.rolle_m0, self.rolle_m1, self.rolle_n1, self.rolle_m2 = rolle_m0, rolle_m1, rolle_n1, rolle_m2
+        super().__init__(**kw)
+
+    def loss_rolle(self, w_roll: float) -> float:
+        """Verlustmoment der Rolle allein [Nm] bei w_roll [rad/s] (Modell wie physics.loss_torque)."""
+        n = w_roll * 60.0 / (2 * math.pi)
+        n1 = max(self.rolle_n1, 1.0)
+        mv = self.rolle_m0 + n * (self.rolle_m1 - self.rolle_m0) / n1
+        mv += self.rolle_m2 * (n / 1000.0) * ((n - n1) / 1000.0)
+        return mv if w_roll > 0 else 0.0
+
+    def loss_rad(self, w_roll: float) -> float:
+        """Reifen, Kette, Getriebeausgang [Nm an der Rolle]."""
+        return self.loss_ab0 + self.loss_ab1 * w_roll if w_roll > 0 else 0.0
+
+    def loss_total(self, w_roll: float) -> float:
+        return self.loss_rolle(w_roll) + self.loss_rad(w_roll)
+
+
 def ausroll_engine(**kw) -> SimEngine:
-    """Simulator fuer den Ausrollversuch: Rad/Kette verlieren zusaetzlich 2 Nm + 0,04 Nm/(rad/s) an der Rolle."""
-    args = dict(ausrollen=True, loss_ab0=2.0, loss_ab1=0.04)
+    """Simulator fuer den Ausrollversuch (Port 'SIM:ausrollen'): Rolle wie RollenEngine, Reifen/Kette/Getriebe
+    verlieren zusaetzlich RAD_KETTE (4 Nm + 0,08 Nm/(rad/s)) an der Rolle."""
+    args = dict(ausrollen=True)
     args.update(kw)
-    return SimEngine(**args)
+    return RollenEngine(**args)
+
+
+class RadAbEngine(RollenEngine):
+    """Simulator fuer die Rollen-Kalibrierung (Assistent, Port 'SIM:rolle'), Ablauf in Schleife:
+    hold (Haltedrehzahl, 3 s) -> wot (Vollgas bis n_lift) -> oben (n_lift t_oben Sekunden halten) -> frei (Rad
+    abgehoben, Motor im Leerlauf, Rolle laeuft allein aus) -> unter n_wieder (Motordrehzahl Rolle x i) Rad wieder
+    auf die Rolle -> hold …
+    Verlust der Rolle allein (Lager, Luft) = loss_rolle(w) wie RollenEngine (dieselben Werte wie 'SIM:ausrollen') –
+    das Ergebnis des Assistenten muss das treffen. Mit Rad auf der Rolle kommen Reifen und Kette dazu (loss_rad)."""
+
+    def __init__(self, rolle_m0: float = 8.0, rolle_m1: float = 30.0, rolle_n1: float = 1600.0,
+                 rolle_m2: float = 5.0, t_oben: float = 4.0, n_wieder: float = 2000.0, **kw):
+        self.t_oben, self.n_wieder = t_oben, n_wieder
+        self.rad_ab = False
+        super().__init__(rolle_m0=rolle_m0, rolle_m1=rolle_m1, rolle_n1=rolle_n1, rolle_m2=rolle_m2, **kw)
+
+    def reset(self):
+        super().reset()
+        self.rad_ab = False
+
+    def loss_total(self, w_roll: float) -> float:
+        rad = 0.0 if self.rad_ab or w_roll <= 0 else self.loss_ab0 + self.loss_ab1 * w_roll
+        return self.loss_rolle(w_roll) + rad
+
+    def step(self, dt: float):
+        if self.phase in ("hold", "wot"):
+            self.kupplung_offen = False
+            super().step(dt)                                   # wie SimEngine, mit Rad auf der Rolle
+            if self.phase == "coast":
+                self.phase, self.t_phase = "oben", 0.0
+            self.n_motor = self.w_roll * self.ratio * 60.0 / (2 * math.pi)
+            return
+        n_e = self.w_roll * self.ratio * 60.0 / (2 * math.pi)
+        loss = self.loss_total(self.w_roll)
+        if self.phase == "oben":
+            t_eng = min(self.torque_wot(n_e), max(0.0, 0.05 * (self.n_lift - n_e) + loss / self.ratio))
+            self.n_motor = n_e
+            if self.t_phase >= self.t_oben:
+                self.phase, self.t_phase, self.rad_ab = "frei", 0.0, True
+        else:                                                  # frei: Rad abgehoben, Gas weg
+            t_eng = 0.0
+            self.n_motor += (1500.0 - self.n_motor) * min(1.0, dt / 0.3)
+            if n_e < self.n_wieder:
+                self.phase, self.t_phase, self.rad_ab = "hold", 0.0, False
+        self.kupplung_offen = self.rad_ab                       # frame(): Zuendung = Motor im Leerlauf
+        self.w_roll = max(0.0, self.w_roll + (t_eng * self.ratio - loss) / self.inertia * dt)
+        self.t += dt
+        self.t_phase += dt
+
+
+def rad_ab_engine(**kw) -> RadAbEngine:
+    """Simulator fuer den Ausrollversuch-Assistenten (Rad abheben, Rolle laeuft frei aus)."""
+    return RadAbEngine(**kw)
 
 
 def open_sim(port: str, replay_file: str = ""):
     """Portname -> (Ersatz fuer den seriellen Port, abgespielter Lauf oder None).
-    SIM[:mega|:mega300|:ausrollen][:stoerung], SIM:basis[:ohne|:wlan|:stoerung], SIM:zange; replay_file spielt einen Lauf ab."""
+    SIM[:mega|:mega300|:ausrollen|:rolle][:stoerung], SIM:basis[:ohne|:wlan|:stoerung], SIM:zange; replay_file spielt einen Lauf ab."""
     if replay_file:
         source = ReplaySource(replay_file)
         return SimSerial(source=source), source
@@ -2439,5 +2597,7 @@ def open_sim(port: str, replay_file: str = ""):
     mega = "mega" in parts or "mega300" in parts
     if "ausrollen" in parts:
         return SimSerial(engine=ausroll_engine(), faults=FAULT_PRESET if "stoerung" in parts else None), None
+    if "rolle" in parts:
+        return SimSerial(engine=rad_ab_engine(), faults=FAULT_PRESET if "stoerung" in parts else None), None
     return SimSerial(engine=SimEngine(rate=61.0) if mega else None, mega=mega, diag="mega300" not in parts,
                      faults=FAULT_PRESET if "stoerung" in parts else None), None

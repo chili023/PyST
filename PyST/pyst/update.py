@@ -1,8 +1,8 @@
 """
 Nach neuer Software und Firmware suchen, ohne Oberfläche.
 
-PyST: Version aus `main` des öffentlichen Repositorys, nur Meldung, installiert wird nichts.
-Firmware: `manifest.json` im Branch `firmware`: je Ziel Version, Datei, Größe, SHA-256 und Signatur (128 Hex-Zeichen, wie
+PyST: Version aus `main` (im Expertenmodus anderer Branch) des öffentlichen Repositorys, nur Meldung, installiert wird nichts.
+Firmware: `manifest.json` im Branch `firmware` (einstellbar): je Ziel Version, Datei, Größe, SHA-256 und Signatur (128 Hex-Zeichen, wie
 im Kopf der Datei). Fehlt der Branch oder das Netz, liefern die Abfragen None: PyST bleibt still.
 Heruntergeladene Dateien gelten erst nach Prüfung von Größe und SHA-256, die signierten (Basis-STM, Zange, Basis-ESP)
 zusätzlich nach Ziel im Kopf, Format, Signatur und bekanntem Schlüssel (fw_keys.py); geflasht wird nur auf Knopfdruck.
@@ -17,13 +17,17 @@ import tempfile
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from . import bootproto, fw_keys
 
 RAW = "https://raw.githubusercontent.com/chili023/PyST"
-VERSION_URL = f"{RAW}/main/PyST/pyst/__init__.py"
-FIRMWARE_URL = f"{RAW}/firmware"
+SOFTWARE_ZWEIG = "main"                  # Standard; im Expertenmodus einstellbar (settings["update_zweig"])
+FIRMWARE_ZWEIG = "firmware"
+VERSION_URL = f"{RAW}/{SOFTWARE_ZWEIG}/PyST/pyst/__init__.py"
+FIRMWARE_URL = f"{RAW}/{FIRMWARE_ZWEIG}"
+BRANCHES_URL = "https://api.github.com/repos/chili023/PyST/branches?per_page=100"
+_ZWEIG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
 MANIFEST_NAME = "manifest.json"
 MANIFEST_MAX = 64 * 1024
 FILE_MAX = 8 * 1024 * 1024
@@ -105,10 +109,37 @@ def _fetch(url: str, limit: int, timeout: float) -> bytes:
     return data
 
 
-def latest_pyst(timeout: float = TIMEOUT_S) -> Optional[str]:
-    """Version von PyST in `main`; None ohne Netz."""
+def zweig_ok(name: str) -> bool:
+    """Gueltiger Branch-Name fuer die Update-Quelle (Expertenmodus): Buchstaben, Ziffern, . _ - /, kein „..“."""
+    return bool(name) and bool(_ZWEIG.match(name)) and ".." not in name and not name.endswith(("/", ".lock"))
+
+
+def version_url(zweig: str = SOFTWARE_ZWEIG) -> str:
+    return f"{RAW}/{zweig}/PyST/pyst/__init__.py"
+
+
+def firmware_url(zweig: str = FIRMWARE_ZWEIG) -> str:
+    return f"{RAW}/{zweig}"
+
+
+def zweige(timeout: float = TIMEOUT_S) -> Optional[List[str]]:
+    """Branches des oeffentlichen Repositorys (GitHub-API, ohne Anmeldung); None ohne Netz."""
     try:
-        text = _fetch(VERSION_URL, MANIFEST_MAX, timeout).decode("utf8", "replace")
+        data = json.loads(_fetch(BRANCHES_URL, 256 * 1024, timeout).decode("utf8"))
+    except (OSError, UnicodeDecodeError, UpdateError, ValueError):
+        return None
+    if not isinstance(data, list):
+        return None
+    return sorted({d["name"] for d in data if isinstance(d, dict) and isinstance(d.get("name"), str)
+                   and zweig_ok(d["name"])})
+
+
+def latest_pyst(timeout: float = TIMEOUT_S, zweig: str = SOFTWARE_ZWEIG) -> Optional[str]:
+    """Version von PyST im Branch zweig (Standard `main`); None ohne Netz oder bei ungueltigem Branch."""
+    if not zweig_ok(zweig):
+        return None
+    try:
+        text = _fetch(version_url(zweig), MANIFEST_MAX, timeout).decode("utf8", "replace")
     except (OSError, UpdateError):
         return None
     hit = re.search(r'^__version__\s*=\s*"([0-9.]+)"', text, re.M)

@@ -15,7 +15,7 @@ Weitere Simulator-Ports wählt man unter **Einstellungen › Verbindung › Port
 
 ## 2. Mit dem Prüfstand verbinden
 
-![Messen, nicht verbunden](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_messen_getrennt.png)
+![Messen, nicht verbunden](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_getrennt.png)
 
 1. Messelektronik per USB anstecken (PyST-Basis, Arduino Mega mit PST 3.x oder STM32 F446).
 2. **STM32 (F446, Nucleo) und Arduino Mega** sucht PyST alle 5 s und verbindet sich selbst
@@ -29,7 +29,7 @@ Weitere Simulator-Ports wählt man unter **Einstellungen › Verbindung › Port
 Hat man von Hand **Trennen** gedrückt, verbindet PyST nicht von selbst wieder. Nach dem Flashen sucht PyST wieder.
 Die Basis per WLAN verbindet man unter **Einstellungen › WiFi** mit **PC per WLAN verbinden**.
 
-![Messen, verbunden und bereit](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_messen_bereit.png)
+![Messen, verbunden und bereit](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_bereit.png)
 
 ## 3. Prüfstand einstellen (einmal)
 
@@ -42,7 +42,8 @@ Unter **Einstellungen › Rolle/Lauf** eintragen:
 | Rollenträgheit J [kgm²] | Trägheit der Rolle |
 | Zündung [Imp/U] | Zündimpulse je Kurbelwellenumdrehung |
 | Übersetzung nKW/nRolle | Motordrehzahl ÷ Rollendrehzahl, siehe [Übersetzung](Übersetzung.md) |
-| n vom Gas [1/min] | Schwelle für das Laufende, **muss über der Haltedrehzahl liegen** |
+| Start: steigt über [s] / Start: Anstieg mind. [1/min] | Laufbeginn: nach GO beginnt die Messung, sobald die Drehzahl so lange und so viel steigt (Standard 1,0 s / 150 1/min) |
+| n vom Gas [1/min] | ab hier wird auf fallende Drehzahl (= Laufende) geprüft, **muss über der Haltedrehzahl liegen** |
 | n Stop [1/min] (0 = aus) | ab hier zeigt PyST **GAS WEG** und beendet die Kurve |
 
 Die Filter in Sekunden (Standard 1,75 s / 0,75 s) passen sich der Messfrequenz selbst an.
@@ -56,16 +57,23 @@ Siehe [Fahrzeuge und Setups](Fahrzeuge-und-Setups.md).
 
 ## 5. Der erste Lauf
 
-1. Motor im Messgang **unter** *n vom Gas* halten.
-2. **START (F1)** drücken. PyST liest das Klima (wenn eingeschaltet) und zeigt **„GO – Vollgas!“** (grün).
-3. Vollgas. Über *n vom Gas* steht **„Messung … 1/min“** (gelb), die Live-Kurve wächst schwarz bzw. weiß mit.
-4. Bei *n Stop* erscheint **GAS WEG** (rot), zusätzlich groß über dem Diagramm. Gas weg.
-5. PyST wertet aus. Das Ergebnis steht im Feld oben (z. B. „32.0 PS bei 10000 1/min“), unter dem Diagramm und rechts unten
-   unter **ERGEBNIS**. Mit **Auto-Speichern** landet der Lauf sofort in der Datenbank.
+1. Motor im Messgang ruhig halten (**unter** *n vom Gas*).
+2. **START (F1)** drücken. Ist das Setup unverändert, fragt PyST kurz „Setup unverändert – Änderungen eintragen?“:
+   nichts umgebaut → **Unverändert starten** (Enter oder F1), sonst die neuen Werte eintragen und **Übernehmen und
+   starten**. Abschaltbar, siehe [Messen](Messen.md#start-nachfrage).
+3. **„Klima wird gemessen …“** (grau, groß über dem Diagramm): PyST liest Temperatur und Luftdruck frisch vom Sensor
+   (wenn eingeschaltet, höchstens 3 s). Drehzahl weiter halten.
+4. **„GO – Vollgas!“** (grün, auch groß): Vollgas geben. Sobald die Drehzahl **1 s lang steigt**, beginnt die
+   Messung – die Kurve beginnt am Anfang dieser Sekunde. Das große GO verschwindet, im Statusfeld steht
+   **„Messung …“** (gelb), die Live-Kurve wächst schwarz bzw. weiß mit.
+5. Bei *n Stop* erscheint **GAS WEG** (rot), groß über dem Diagramm. Gas weg.
+6. PyST wertet aus. Pmax und Mmax stehen groß über dem Diagramm (weg mit Klick oder Esc), außerdem im Feld oben
+   (z. B. „32.0 PS bei 10000 1/min“), unter dem Diagramm und rechts unten unter **ERGEBNIS**. Mit **Auto-Speichern**
+   landet der Lauf sofort in der Datenbank.
 
 **Abbrechen (Esc)** geht jederzeit (derselbe Knopf wie START, im Lauf rot).
 
-![Messen während eines Laufs](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_messen_lauf.png)
+![Messen während eines Laufs](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_messen_lauf.png)
 
 Weiter: [Messen](Messen.md) · [Auswertung](Auswertung.md)
 
@@ -76,10 +84,11 @@ Weiter: [Messen](Messen.md) · [Auswertung](Auswertung.md)
 | Port | Verhalten |
 |---|---|
 | `SIM:161802` | echter Lauf 26.05.26 16:18 (Standard für `--sim`) |
-| `SIM` | synthetischer Motor, F446 1.1.0 mit PST-Diag 1 |
+| `SIM` | synthetischer Motor, F446 1.2.0 mit PST-Diag 1 und Analogeingängen |
 | `SIM:stoerung` | dasselbe mit Störungen an Zündung und Rolle |
 | `SIM:ausrollen` | nach dem Lauf Kupplung gezogen (für den [Ausrollversuch](Ausrollversuch.md)) |
-| `SIM:mega` | Arduino-Mega-Sketch 3.1.0 mit PST-Diag 1 |
+| `SIM:rolle` | Rad wird abgehoben, Rolle läuft frei aus (für die Rollen-Kalibrierung im [Ausrollversuch](Ausrollversuch.md)) |
+| `SIM:mega` | Arduino-Mega-Sketch 3.2.0 mit PST-Diag 1 und Analogeingängen |
 | `SIM:mega300`, `SIM:mega300:stoerung` | alter Mega 3.0.0 ohne Diagnose, optional mit Störungen |
 | `SIM:basis` | PyST-Basis mit gekoppelter Funk-Zange und Steckdosen |
 | `SIM:basis:stoerung` | Basis mit Paketverlust und Zangen-Abbrüchen |

@@ -27,5 +27,7 @@ int protocol_streaming(void);
 /* fuer diag.c (#RUN, #RATE, #SET) */
 void protocol_run(int on);                         /* Arduino-Protokoll starten/stoppen */
 void protocol_settings_changed(void);              /* Rate/Filter neu anwenden */
+/* true, solange Binaertelegramme der STM-LabVIEW laufen (dann keine A-Zeilen) */
+int protocol_binary(void);
 
 #endif /* PROTOCOL_H */

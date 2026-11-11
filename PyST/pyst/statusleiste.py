@@ -1,7 +1,9 @@
 """
 Statusleiste unten (44 px): drei farbige Felder „PST Basis“ | „PST Zange/Mega“ | „PST/Lambda ECU“, je mit Symbol
-(✔ ⚠ ✖ –), Geraetename und Text – die Farbe steht nie allein. Rechts Kurzmeldungen und der Umschalter
-☀ Tag | ☾ Nacht | Auto.
+(✔ ⚠ ✖ –), Geraetename und Text – die Farbe steht nie allein. Rechts Kurzmeldungen, der Knopf „PDF-Bericht“
+(PdfKnopf: Bericht von dem, was gerade im Diagramm steht, Signal Statusleiste.pdf_gewuenscht), daneben „Lauf speichern“
+(SpeichernKnopf, Ctrl+S: nur aktiv mit ungespeichertem Lauf, Signal speichern_gewuenscht) und der Umschalter
+☀ | ☾ | ◐ (Tag, Nacht, Automatisch) als kleine Piktogramm-Knoepfe.
 
 Ablauf: Das Hauptfenster sammelt reihum eine Momentaufnahme (Eingang) aus Verbindung, Zange, Lambda und ECU,
 zustaende(eingang) macht daraus {Feld: (Stufe, Text)} (rein, ohne Qt testbar), Statusleiste.set_zustaende zeigt es.
@@ -80,7 +82,7 @@ def basis_zustand(e: Eingang) -> Tuple[str, str]:
     if e.board == "zange_usb":
         return theme.AUS, "nicht verbunden (Zange per USB)"
     if e.bootloader:
-        return theme.WARNUNG, "im Bootloader – Firmware unter Einstellungen › Firmware aufspielen"
+        return theme.WARNUNG, "im Bootloader – Firmware unter Einstellungen › Software & Firmware aufspielen"
     teile = ["verbunden " + port_art(e.port)]
     if e.fw:
         teile.append(_fw(e.fw))
@@ -274,8 +276,15 @@ class StatusFeld(QtWidgets.QFrame):
         self._kuerzen()
 
 
+# Piktogramme des Umschalters: (Wahl, Zeichen, Tooltip)
+THEMA_KNOEPFE = ((theme.TAG, "☀", "Tag (hell)"), (theme.NACHT, "☾", "Nacht (dunkel)"),
+                 (theme.AUTO, "◐", "Automatisch (folgt dem Farbschema des Systems)"))
+KNOPF_PX = 30                          # Breite eines Piktogramm-Knopfs
+
+
 class ThemaUmschalter(QtWidgets.QWidget):
-    """☀ Tag | ☾ Nacht | Auto – setzt theme.manager().setze(wahl); zeigt die gespeicherte Wahl."""
+    """☀ | ☾ | ◐ (Tag, Nacht, Automatisch) als kleine Piktogramm-Knoepfe – setzt theme.manager().setze(wahl);
+    die gespeicherte Wahl ist hervorgehoben (Akzentflaeche), der Text steht im Tooltip."""
 
     def __init__(self):
         super().__init__()
@@ -285,12 +294,13 @@ class ThemaUmschalter(QtWidgets.QWidget):
         self.knoepfe: Dict[str, QtWidgets.QToolButton] = {}
         self.gruppe = QtWidgets.QButtonGroup(self)
         self.gruppe.setExclusive(True)
-        for wahl, text in ((theme.TAG, "☀ Tag"), (theme.NACHT, "☾ Nacht"), (theme.AUTO, "Auto")):
+        for wahl, zeichen, text in THEMA_KNOEPFE:
             b = QtWidgets.QToolButton()
-            b.setText(text)
+            b.setText(zeichen)
             b.setCheckable(True)
-            b.setToolTip("Darstellung (auch im Menü Ansicht › Darstellung)" +
-                         ("; Auto folgt dem Farbschema des Systems" if wahl == theme.AUTO else ""))
+            b.setFixedSize(KNOPF_PX, HOEHE - 12)
+            b.setToolTip(f"Darstellung: {text} – auch im Menü Ansicht › Darstellung")
+            b.setAccessibleName(f"Darstellung {text}")
             b.clicked.connect(lambda _c=False, w=wahl: theme.manager().setze(w))
             self.gruppe.addButton(b)
             self.knoepfe[wahl] = b
@@ -308,13 +318,134 @@ class ThemaUmschalter(QtWidgets.QWidget):
             rad = ("border-top-left-radius: 4px; border-bottom-left-radius: 4px;" if i == 0 else
                    "border-top-right-radius: 4px; border-bottom-right-radius: 4px;" if i == len(keys) - 1 else "")
             b.setStyleSheet(f"QToolButton {{ background: {T['accent'] if on else T['panel']};"
-                            f" color: {T['accent_text'] if on else T['text']}; border: 1px solid {T['border']};"
-                            f" padding: 5px 10px; font-size: 13px; font-weight: {700 if on else 500}; {rad} }}")
+                            f" color: {T['accent_text'] if on else T['text']};"
+                            f" border: 1px solid {T['accent_border'] if on else T['border']};"
+                            f" padding: 0px; font-size: 16px; font-weight: {800 if on else 500}; {rad} }}")
+
+
+def pdf_symbol(farbe: str, px: int = 18) -> QtGui.QIcon:
+    """Kleines Blatt mit Eselsohr und Zeilen (Symbol des Knopfs „PDF-Bericht“) in der Schriftfarbe."""
+    pm = QtGui.QPixmap(px * 2, px * 2)
+    pm.setDevicePixelRatio(2.0)
+    pm.fill(QtCore.Qt.transparent)
+    p = QtGui.QPainter(pm)
+    p.setRenderHint(QtGui.QPainter.Antialiasing)
+    pen = QtGui.QPen(QtGui.QColor(farbe), 1.4)
+    p.setPen(pen)
+    w, h, ohr = px * 0.62, px * 0.84, px * 0.22
+    x0, y0 = (px - w) / 2, (px - h) / 2
+    blatt = QtGui.QPolygonF([QtCore.QPointF(x0, y0), QtCore.QPointF(x0 + w - ohr, y0),
+                             QtCore.QPointF(x0 + w, y0 + ohr), QtCore.QPointF(x0 + w, y0 + h),
+                             QtCore.QPointF(x0, y0 + h)])
+    p.drawPolygon(blatt)
+    p.drawPolyline(QtGui.QPolygonF([QtCore.QPointF(x0 + w - ohr, y0), QtCore.QPointF(x0 + w - ohr, y0 + ohr),
+                                    QtCore.QPointF(x0 + w, y0 + ohr)]))
+    for k in range(3):
+        y = y0 + h * (0.45 + 0.17 * k)
+        p.drawLine(QtCore.QPointF(x0 + w * 0.2, y), QtCore.QPointF(x0 + w * (0.8 if k < 2 else 0.55), y))
+    p.end()
+    return QtGui.QIcon(pm)
+
+
+class PdfKnopf(QtWidgets.QToolButton):
+    """„PDF-Bericht“ mit Blatt-Symbol: Bericht von dem, was gerade im Diagramm zu sehen ist (das Hauptfenster
+    entscheidet je Reiter, gui.on_pdf_aktiv)."""
+
+    def __init__(self):
+        super().__init__()
+        self.setText("PDF-Bericht")
+        self.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self.setFixedHeight(HOEHE - 12)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setToolTip("PDF-Bericht von dem, was gerade im Diagramm zu sehen ist: Läufe, Referenzen und "
+                        "Mittelwerte (auch Ø automatisch), Achsgrenzen, Kurven, Fahrzeug/Setup, Klima, Ergebnisse.\n"
+                        "Im Reiter Auswertung deren Felder, sonst das Diagramm aus Messen.")
+        theme.bei_wechsel(self, lambda _t: self._stil())
+
+    def _stil(self):
+        T = theme.tokens()
+        self.setIcon(pdf_symbol(T["text"]))
+        self.setIconSize(QtCore.QSize(18, 18))
+        self.setStyleSheet(f"QToolButton {{ background: {T['panel']}; color: {T['text']}; border: 1px solid "
+                           f"{T['border']}; border-radius: 4px; padding: 0px 8px 0px 4px; font-size: 13px; "
+                           f"font-weight: 600; }} QToolButton:hover {{ border-color: {T['accent_border']}; }}")
+
+
+def speichern_symbol(farbe: str, px: int = 18) -> QtGui.QIcon:
+    """Diskette mit Haekchen (Symbol des Knopfs „Lauf speichern“) in der Schriftfarbe."""
+    pm = QtGui.QPixmap(px * 2, px * 2)
+    pm.setDevicePixelRatio(2.0)
+    pm.fill(QtCore.Qt.transparent)
+    p = QtGui.QPainter(pm)
+    p.setRenderHint(QtGui.QPainter.Antialiasing)
+    p.setPen(QtGui.QPen(QtGui.QColor(farbe), 1.4))
+    s, ecke = px * 0.78, px * 0.2
+    x0 = y0 = (px - s) / 2
+    p.drawPolygon(QtGui.QPolygonF([QtCore.QPointF(x0, y0), QtCore.QPointF(x0 + s - ecke, y0),
+                                   QtCore.QPointF(x0 + s, y0 + ecke), QtCore.QPointF(x0 + s, y0 + s),
+                                   QtCore.QPointF(x0, y0 + s)]))
+    p.drawRect(QtCore.QRectF(x0 + s * 0.25, y0, s * 0.42, s * 0.28))          # Schieber oben
+    pen = QtGui.QPen(QtGui.QColor(farbe), 1.8)
+    pen.setCapStyle(QtCore.Qt.RoundCap)
+    pen.setJoinStyle(QtCore.Qt.RoundJoin)
+    p.setPen(pen)
+    p.drawPolyline(QtGui.QPolygonF([QtCore.QPointF(x0 + s * 0.27, y0 + s * 0.66),                # Haekchen
+                                    QtCore.QPointF(x0 + s * 0.44, y0 + s * 0.82),
+                                    QtCore.QPointF(x0 + s * 0.75, y0 + s * 0.47)]))
+    p.end()
+    return QtGui.QIcon(pm)
+
+
+class SpeichernKnopf(QtWidgets.QToolButton):
+    """„Lauf speichern“ mit Disketten-Symbol neben „PDF-Bericht“: aktiv nur, wenn eine ungespeicherte Kurve da ist
+    (set_aktiv), sonst grau mit Tooltip „Kein ungespeicherter Lauf“. Schmale Statusleiste: nur „Speichern“."""
+    TEXT, TEXT_KURZ = "Lauf speichern", "Speichern"
+    TIP_AN = "Letzten Lauf speichern (Ctrl+S) – mit Notiz und Setup-Werten, danach steht er in der Liste Läufe"
+    TIP_AUS = "Kein ungespeicherter Lauf"
+
+    def __init__(self):
+        super().__init__()
+        self.setText(self.TEXT)
+        self.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self.setFixedHeight(HOEHE - 12)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self.setAccessibleName("Lauf speichern")
+        self.set_aktiv(False)
+        theme.bei_wechsel(self, lambda _t: self._stil())
+
+    def set_aktiv(self, an: bool):
+        """Aktiv/grau mit passendem Tooltip (laeuft im Takt des Laufs mit: nur bei einer Aenderung neu gestalten)."""
+        if bool(an) == self.isEnabled() and self.styleSheet():
+            return
+        self.setEnabled(bool(an))
+        self.setToolTip(self.TIP_AN if an else self.TIP_AUS)
+        self._stil()
+
+    def set_kurz(self, kurz: bool):
+        t = self.TEXT_KURZ if kurz else self.TEXT
+        if self.text() != t:
+            self.setText(t)
+
+    def _stil(self):
+        T = theme.tokens()
+        an = self.isEnabled()
+        self.setIcon(speichern_symbol(T["text"] if an else T["dim"]))
+        self.setIconSize(QtCore.QSize(18, 18))
+        self.setStyleSheet(f"QToolButton {{ background: {T['panel']}; color: {T['text']}; border: 1px solid "
+                           f"{T['accent_border'] if an else T['border']}; border-radius: 4px; padding: 0px 8px 0px 4px;"
+                           f" font-size: 13px; font-weight: {700 if an else 600}; }}"
+                           f" QToolButton:disabled {{ color: {T['dim']}; }}"
+                           f" QToolButton:hover {{ border-color: {T['accent_border']}; }}")
 
 
 class Statusleiste(QtWidgets.QWidget):
-    """Inhalt der Statusleiste des Hauptfensters: drei StatusFelder, Kurzmeldung, ThemaUmschalter.
-    einbauen(statusbar): als dauerhaftes Widget einsetzen; Kurzmeldungen (showMessage) erscheinen rechts."""
+    """Inhalt der Statusleiste des Hauptfensters: drei StatusFelder, Kurzmeldung, PdfKnopf, ThemaUmschalter.
+    einbauen(statusbar): als dauerhaftes Widget einsetzen; Kurzmeldungen (showMessage) erscheinen rechts.
+    pdf_gewuenscht: Knopf „PDF-Bericht“ gedrueckt (das Hauptfenster erzeugt den Bericht); speichern_gewuenscht:
+    Knopf „Lauf speichern“ gedrueckt."""
+    pdf_gewuenscht = QtCore.Signal()
+    speichern_gewuenscht = QtCore.Signal()
+    KURZ_UNTER = 1400                      # schmaler: „Speichern“ statt „Lauf speichern“
 
     def __init__(self):
         super().__init__()
@@ -332,11 +463,22 @@ class Statusleiste(QtWidgets.QWidget):
         self.meldung.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
         theme.rolle(self.meldung, "neben")
         lay.addWidget(self.meldung)
+        self.pdf_knopf = PdfKnopf()
+        self.pdf_knopf.clicked.connect(lambda _c=False: self.pdf_gewuenscht.emit())
+        lay.addWidget(self.pdf_knopf)
+        self.speichern_knopf = SpeichernKnopf()
+        self.speichern_knopf.clicked.connect(lambda _c=False: self.speichern_gewuenscht.emit())
+        lay.addWidget(self.speichern_knopf)
+        lay.addSpacing(2)
         self.umschalter = ThemaUmschalter()
         lay.addWidget(self.umschalter)
         self.setFixedHeight(HOEHE)
         self.zust: Dict[str, Tuple[str, str]] = {}
         self.set_zustaende(zustaende(Eingang()))
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self.speichern_knopf.set_kurz(self.width() < self.KURZ_UNTER)
 
     def einbauen(self, sb: QtWidgets.QStatusBar):
         sb.setSizeGripEnabled(False)

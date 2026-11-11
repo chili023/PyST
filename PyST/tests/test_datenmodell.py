@@ -218,7 +218,7 @@ class AnsichtJeFahrzeug(unittest.TestCase):
         self.assertEqual(p[1]["kanal"], "ecu:coolant")                    # unbekannt -> Standard des Platzes
         self.assertEqual((p[1]["min"], p[1]["max"]), (0.0, 130.0))
         self.assertEqual(p[2]["kanal"], "egt2")
-        self.assertEqual(p[3]["kanal"], "v")                              # nicht angegeben -> Standard
+        self.assertEqual(len(p), 3)                                       # so viele Plaetze wie gespeichert
         self.assertEqual(db.live_plaetze(self.v2)[0]["kanal"], "egt1")
         db.set_live_plaetze(None, [{"kanal": "n", "min": 0, "max": 12000, "zonen": []}])
         self.assertEqual(db.live_plaetze(self.v2)[0]["kanal"], "n")
@@ -226,6 +226,26 @@ class AnsichtJeFahrzeug(unittest.TestCase):
         # Standardliste wird beim Lesen nicht veraendert
         db.live_plaetze(None)[0]["zonen"].append([0, 1, "ok"])
         self.assertEqual(dbm.LIVE_STANDARD[0]["zonen"][0], [200.0, 850.0, "ok"])
+
+    def test_live_plaetze_variabel(self):
+        """0 … LIVE_MAX Plaetze je Fahrzeug; gespeicherte Listen aelterer Versionen (5 Plaetze) gelten weiter."""
+        db = self.db
+        alt = [dict(p) for p in dbm.LIVE_STANDARD]
+        alt[4] = {"kanal": "egt2", "min": 200.0, "max": 900.0, "zonen": []}
+        db.set_vehicle_pref(self.v1, "live", alt)                          # wie von 1.4.1 gespeichert
+        p = db.live_plaetze(self.v1)
+        self.assertEqual([x["kanal"] for x in p], ["egt1", "ecu:coolant", "lam", "v", "egt2"])
+        acht = p + [{"kanal": k, "min": 0, "max": 10, "zonen": []} for k in ("ratio", "rate", "", "ign")][:3]
+        db.set_live_plaetze(self.v1, acht)
+        self.assertEqual(len(db.live_plaetze(self.v1)), 8)
+        self.assertEqual(db.live_plaetze(self.v1)[6]["kanal"], "rate")
+        db.set_live_plaetze(self.v1, [])
+        self.assertEqual(db.live_plaetze(self.v1), [])                    # 0 Plaetze bleiben 0
+        db.set_live_plaetze(self.v1, [{"kanal": "n", "min": 0, "max": 1, "zonen": []}] * 20)
+        self.assertEqual(len(db.live_plaetze(self.v1)), dbm.LIVE_MAX)
+        # unbrauchbarer Eintrag ab Platz 6: leerer Platz
+        db.set_vehicle_pref(self.v1, "live", [{"kanal": "egt1"}] * 5 + ["kaputt"])
+        self.assertEqual(db.live_plaetze(self.v1)[5]["kanal"], "")
 
     def test_gesperrte_plaetze_und_aufraeumen(self):
         db = self.db

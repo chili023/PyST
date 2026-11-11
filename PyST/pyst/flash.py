@@ -1627,8 +1627,10 @@ def find_dfu_util() -> Optional[List[str]]:
 
 
 def f446_stflash_command(tool: List[str], image: Image) -> List[str]:
+    """--connect-under-reset: der ST-LINK haelt NRST, bis er verbunden ist. Ohne das meldete st-flash am Nucleo mit
+    fremder Firmware „Failed to enter SWD mode“ (10.11.2026); beim Nucleo ist NRST immer verdrahtet."""
     addr, path = image.files[0]
-    return tool + ["--reset", "write", path, hex(addr)]
+    return tool + ["--connect-under-reset", "--reset", "write", path, hex(addr)]
 
 
 def dfu_command(tool: List[str], image: Image) -> List[str]:

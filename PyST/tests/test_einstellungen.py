@@ -131,7 +131,7 @@ class Befehlszeilen(unittest.TestCase):
     def test_stflash_und_dfu(self):
         img = flash.Image(flash.F446, "/x", files=[(0x08000000, "/x/f.bin")], main="/x/f.bin")
         self.assertEqual(flash.f446_stflash_command(["st-flash"], img),
-                         ["st-flash", "--reset", "write", "/x/f.bin", "0x8000000"])
+                         ["st-flash", "--connect-under-reset", "--reset", "write", "/x/f.bin", "0x8000000"])
         self.assertEqual(flash.dfu_command(["dfu-util"], img),
                          ["dfu-util", "-a", "0", "-s", "0x08000000:leave", "-D", "/x/f.bin"])
 
@@ -177,8 +177,8 @@ class Befehlszeilen(unittest.TestCase):
             with mock.patch.object(flash, "nucleo_laufwerke", lambda muster=None: ["/media/u/NODE_F446RE"]):
                 self.assertEqual(flash.build_command(flash.F446, t, None)[1], [])          # kopieren
                 with mock.patch.object(flash, "find_stflash", lambda: ["st-flash"]):
-                    self.assertEqual(flash.build_command(flash.F446_STLINK, t, None)[1][:3],
-                                     ["st-flash", "--reset", "write"])
+                    self.assertEqual(flash.build_command(flash.F446_STLINK, t, None)[1][:4],
+                                     ["st-flash", "--connect-under-reset", "--reset", "write"])
             with mock.patch.object(flash, "nucleo_laufwerke", lambda muster=None: []), \
                     mock.patch.object(flash, "find_stflash", lambda: None):
                 with mock.patch.object(flash, "find_dfu_util", lambda: ["dfu-util"]):
@@ -395,6 +395,162 @@ class FirmwareSeite(unittest.TestCase):
         er = p._erkennen(FakeLink(stm=True, port="SIM:stm"))
         self.assertEqual(er["f446"], "USB (Simulator)")
 
+    def angeschlossen(self):
+        return {k: v.angeschlossen for k, v in self.page.karten.items()}
+
+    def test_ohne_geraete_ausgegraut(self):
+        """Nichts angeschlossen: alle Karten ausgegraut, nur die verfügbare Version, Knopf aus mit Tooltip."""
+        p = self.page
+        self.remote(**{flash.MEGA: "3.2.0", flash.BASIS_STM: "0.4.0"})
+        p.installiert = {flash.MEGA: "3.1.0"}                  # zuletzt gesehen, jetzt abgezogen
+        p._ports({}, None)
+        self.assertEqual(self.angeschlossen(), dict.fromkeys(("basis", "zange", "mega", "f446"), False))
+        for key, k in p.karten.items():
+            self.assertIn("nicht angeschlossen", k.erkannt.text())
+            self.assertFalse(k.b_los.isEnabled(), key)
+            self.assertEqual(k.b_los.toolTip(), self.flash_page.ANSCHLIESSEN[key])
+            self.assertIn("Nicht angeschlossen", k.toolTip())
+            self.assertTrue(k.neu.isHidden())
+        self.assertEqual(p.karten["basis"].b_los.toolTip(), "Basis per USB anschließen")
+        k = p.karten["mega"]
+        self.assertEqual((k.installiert.text(), k.verfuegbar.text()), ("–", "3.2.0"))
+        self.assertIn("Nicht angeschlossen", k.unten.text())
+        self.assertEqual(p.updates_offen(), [])
+        self.assertFalse(p.b_alle.isEnabled())
+
+    def test_ausgrauen_ueber_das_thema(self):
+        """Ausgegraut: Fensterfläche und Schrift „dim“ des aktiven Themas, angeschlossen wieder Kachel und Text."""
+        from pyst import theme
+        k = self.page.karten["mega"]
+        self.page._ports({}, None)
+        T = theme.tokens()
+        self.assertIn(T["win"], k.styleSheet())
+        self.assertIn(T["dim"], k.titel.styleSheet())
+        self.assertIn(T["dim"], k.verfuegbar.styleSheet())
+        self.page._ports({"mega": ["/dev/ttyACM1"]}, None)
+        self.assertIn(T["panel"], k.styleSheet())
+        self.assertIn(T["text"], k.titel.styleSheet())
+        self.assertGreaterEqual(theme.kontrast(T["dim"], T["win"]), 4.5)
+
+    def test_angeschlossen_aus_ports(self):
+        """Zustand je Gerät aus den (gepatchten) Port-Listen; die Ports werden nur aufgelistet, nicht geöffnet."""
+        p = self.page
+        self.remote(**{flash.MEGA: "3.2.0", flash.F446: "1.2.0", flash.BASIS_STM: "0.4.0", flash.ZANGE: "0.4.0"})
+        listen = {"basis_ports": [], "zange_ports": [], "mega_ports": [], "f446_ports": []}
+        patches = [mock.patch.object(flash, name, lambda name=name: list(listen[name])) for name in listen]
+        patches += [mock.patch.object(flash, "nucleo_laufwerke", lambda muster=None: list(listen.get("nucleo", []))),
+                    mock.patch.object(flash, "open_serial", lambda *_a, **_k: self.fail("Port geöffnet"))]
+        for pa in patches:
+            pa.start()
+            self.addCleanup(pa.stop)
+
+        def lesen():
+            p._ports(p._suche_ports(), None)
+            return self.angeschlossen()
+
+        self.assertFalse(any(lesen().values()))
+        listen["basis_ports"] = ["/dev/ttyACM0"]
+        self.assertEqual(lesen(), {"basis": True, "zange": False, "mega": False, "f446": False})
+        listen["zange_ports"] = ["/dev/ttyACM2"]
+        self.assertTrue(lesen()["zange"])
+        listen["mega_ports"] = ["/dev/ttyACM1"]
+        self.assertTrue(lesen()["mega"])
+        self.assertTrue(p.karten["mega"].b_los.isEnabled())
+        self.assertFalse(lesen()["f446"])
+        listen["nucleo"] = ["/media/u/NODE_F446RE"]                    # nur das Laufwerk
+        self.assertTrue(lesen()["f446"])
+        listen["nucleo"], listen["f446_ports"] = [], ["/dev/ttyACM3"]   # nur der ST-Link-Port
+        self.assertTrue(lesen()["f446"])
+        self.assertEqual(p.karten["f446"].b_los.toolTip(), "")
+
+    def test_angeschlossen_aus_verbindung(self):
+        """Verbindung des Hauptfensters: Basis per WLAN, Zange per Funk (gekoppelt), Simulator als Mega."""
+        p = self.page
+        p.ports = {}
+        basis = FakeLink(port="tcp://pyst-basis.local:2323")
+        basis.is_basis, basis.is_tcp = True, True
+        self.link = basis
+        p._anzeigen()
+        self.assertEqual(self.angeschlossen(), {"basis": True, "zange": False, "mega": False, "f446": False})
+        self.assertIn("WLAN", p.karten["basis"].erkannt.text())
+        self.assertIn("nur per USB", p.karten["basis"].hinweis.text())
+        p.get_zange_state = lambda: "ok"                               # Zange per Funk da
+        p.get_zange = lambda: "Zange 1"
+        p._anzeigen()
+        self.assertTrue(p.karten["zange"].angeschlossen)
+        self.assertIn("Funk (Zange 1)", p.karten["zange"].erkannt.text())
+        p.get_zange_state = lambda: "weg"
+        p._anzeigen()
+        self.assertFalse(p.karten["zange"].angeschlossen)
+        basis.ign_source = "zange"                                     # gekoppelt laut Basis
+        p._anzeigen()
+        self.assertTrue(p.karten["zange"].angeschlossen)
+        self.link = FakeLink(stm=False, port="SIM:161802")
+        p._anzeigen()
+        self.assertEqual(self.angeschlossen(), {"basis": False, "zange": False, "mega": True, "f446": False})
+        self.assertIn("Simulator", p.karten["mega"].erkannt.text())
+
+    def test_experte_zeilen_abgeblendet_aber_bedienbar(self):
+        p = self.page
+        p.schalter.setChecked(True)
+        self.remote(**{flash.MEGA: "3.2.0", flash.F446: "1.2.0"})
+        p._ports({}, None)
+        for key, z in p.zeilen.items():
+            self.assertFalse(z.angeschlossen, key)
+            self.assertEqual(z.name.property("rolle"), "dim")
+            self.assertTrue(z.b_datei.isEnabled())
+            if z.erst:
+                self.assertTrue(z.b_erst.isEnabled())
+        self.assertTrue(p.zeilen["mega"].b_los.isEnabled())             # Erstflash ohne Verbindung
+        self.assertTrue(p.zeilen["f446"].b_los.isEnabled())
+        self.assertIn("nicht angeschlossen", p.zeilen["basis_stm"].zustand.text())
+        p._ports({"mega": ["/dev/ttyACM1"], "basis": ["/dev/ttyACM0"]}, None)
+        for key in ("mega", "basis_stm", "basis_esp", "lambda"):
+            self.assertTrue(p.zeilen[key].angeschlossen, key)
+            self.assertEqual(p.zeilen[key].name.property("rolle"), "")
+        self.assertFalse(p.zeilen["f446"].angeschlossen)
+
+    def test_software_kachel(self):
+        from pyst import __version__
+        p = self.page
+        k = p.pyst_karte
+        self.assertEqual(k.titel.text(), "PyST (Software)")
+        self.assertEqual(k.installiert.text(), __version__)
+        self.assertIn("Noch nicht gesucht", k.unten.text())
+        self.assertTrue(k.b_los.isEnabled())
+        p.set_datenordner(os.path.join(os.path.expanduser("~"), "PyST"))
+        self.assertIn("Datenordner ~", k.unter.text())
+        p._pyst_seen("99.0.0", __version__)
+        self.assertIn("Update verfügbar: 99.0.0", k.erkannt.text())
+        self.assertEqual(k.verfuegbar.text(), "99.0.0")
+        self.assertFalse(k.neu.isHidden())
+        self.assertIn("git pull", k.unten.text())
+        self.assertIn("ZIP", k.unten.text())
+        self.assertEqual(k.b_los.property("rolle"), "primaer")
+        p._pyst_seen(__version__, __version__)
+        self.assertIn("aktuell", k.erkannt.text())
+        self.assertTrue(k.neu.isHidden())
+        p._pyst_seen(None, __version__)
+        self.assertIn("nicht abrufbar", k.unten.text())
+        self.assertEqual(k.installiert.text(), __version__)
+        p.schalter.setChecked(True)                                    # auch im Expertenmodus sichtbar
+        self.assertFalse(k.isHidden())
+
+    def test_verbindungswechsel(self):
+        p = self.page
+        p.resize(1200, 700)
+        p.show()
+        self.app.processEvents()
+        aufrufe = []
+        with mock.patch.object(p, "_refresh", lambda: aufrufe.append("refresh")), \
+                mock.patch.object(p, "_anzeigen", lambda: aufrufe.append("anzeigen")):
+            self.link = FakeLink()
+            p.verbindung_geaendert()
+            p.verbindung_geaendert("ok")                               # gleiche Verbindung, nur Zange
+            p.hide()
+            p.verbindung_geaendert()                                   # Reiter nicht sichtbar: nichts
+        self.assertEqual(aufrufe, ["refresh", "anzeigen"])
+
     def test_ablauf_laden_dann_flashen(self):
         p = self.page
         self.remote(**{flash.MEGA: "3.2.0"})
@@ -540,8 +696,16 @@ class Unterreiter(unittest.TestCase):
     def test_reiter(self):
         t = self.w.settings_tabs
         self.assertEqual([t.tabText(i) for i in range(t.count())],
-                         ["Rolle/Lauf", "Verbindung", "Zange", "Lambda", "ECU", "Firmware", "WiFi"])
-        self.assertIs(t.widget(5), self.w.page_flash)
+                         ["Rolle/Lauf", "Verbindung", "Zange", "Lambda", "Analogeingänge", "ECU", "Software && Firmware",
+                          "WiFi"])
+        self.assertIs(t.widget(6), self.w.page_flash)
+        self.assertIs(self.w.seiten["firmware"], self.w.page_flash)     # Schlüssel bleibt (gespeicherter Reiter)
+        from pyst import __version__
+        k = self.w.page_flash.pyst_karte
+        self.assertEqual(k.installiert.text(), __version__)
+        self.assertIn("Datenordner ~", k.unter.text())                  # Datenordner des Hauptfensters, kurz
+        self.w._zange_state = "ok"                                      # Zustand der Seite Zange kommt an
+        self.assertEqual(self.w.page_flash.get_zange_state(), "ok")
         self.w.show_page(self.w.page_kalib)                         # Unterseite: Reiter Rolle/Lauf
         self.assertIs(t.currentWidget(), self.w.page_settings)
 

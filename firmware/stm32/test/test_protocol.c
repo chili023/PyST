@@ -5,6 +5,8 @@
  *      src/fmt.c test/test_protocol.c -lm -o /tmp/tp
  * Ab 1.1.0 laufen dieselben Pruefungen wie bei 1.0.0 (Normalmodus byte-identisch);
  * PST-Diag 1 wird in test/test_diag.c geprueft.
+ * Aufruf mit "ai": Sitzung wie PyST sie fuehrt (#?, #AI 10, Telegramme N und D mit A-Zeilen, #AI 0);
+ * PyST/tests/test_firmware_analog.py schickt diese Ausgabe durch den Parser von PyST.
  */
 #include <stdio.h>
 #include <string.h>
@@ -60,6 +62,36 @@ static void send_cmd(const char *c, size_t n)
     protocol_poll();
 }
 
+/* ms Millisekunden Hauptschleife, alle 1000/60 ms ein Telegramm */
+static void run_ms(int ms, float ign, float roll)
+{
+    static uint32_t acc;
+    for (int i = 0; i < ms; i++) {
+        tick++;
+        protocol_poll();
+        acc += 60u;
+        if (acc >= 1000u) {
+            acc -= 1000u;
+            capture_frame_t f;
+            memset(&f, 0, sizeof f);
+            f.rate_hz = (float)rate_mhz / 1000.0f;
+            f.ign_hz = ign;
+            f.roll_hz = roll;
+            f.tick_us = 1.0f / 90.0f;
+            f.ign_w.hz = ign;
+            f.ign_w.n = 1;
+            f.ign_w.periods = 1;
+            f.ign_w.pmin = f.ign_w.pmax = 1800000u;
+            f.roll_w.hz = roll;
+            f.roll_w.n = 12;
+            f.roll_w.periods = 12;
+            f.roll_w.pmin = 124000u;
+            f.roll_w.pmax = 124200u;
+            protocol_on_frame(&f);
+        }
+    }
+}
+
 static void frames(int n, float ign, float roll)
 {
     for (int i = 0; i < n; i++) {
@@ -76,7 +108,18 @@ int main(int argc, char **argv)
 {
     settings_defaults(&g_set);
     protocol_init();
-    if (argc > 1 && strcmp(argv[1], "legacy") == 0) {
+    if (argc > 1 && strcmp(argv[1], "ai") == 0) {
+        tick = 4294966000u;                /* ms-Zaehler laeuft waehrend der Sitzung ueber */
+        send_cmd("#?\n", 3);
+        send_cmd("#AI 10\n", 7);
+        send_cmd("m", 1);
+        run_ms(1000, 50.0f, 725.5f);
+        send_cmd("#MODE D\n", 8);
+        run_ms(1000, 50.0f, 725.5f);
+        send_cmd("#AI 0\n", 6);
+        run_ms(500, 50.0f, 725.5f);
+        send_cmd("s", 1);
+    } else if (argc > 1 && strcmp(argv[1], "legacy") == 0) {
         send_cmd("tttttttt", 8);
         send_cmd("eeeeeeee", 8);
         send_cmd("m3101001", 8);

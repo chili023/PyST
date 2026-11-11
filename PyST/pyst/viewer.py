@@ -3,7 +3,7 @@ Auswerter im Stil von MegaLogViewer (Reiter Auswertung, Entwurf v3 vom 08.11.202
 
 Aufbau:
 - Kopfzeile: X-Achse, Felder, nur Kurvenbereich, Layout (Speichern / Speichern unter … / Löschen),
-  rechts Importieren …, PDF-Bericht …, CSV-Export …
+  rechts Importieren (Menü: Dateien … / Ordner mit Unterordnern …), PDF-Bericht …, CSV-Export …
 - links die SeitenLeiste „Läufe & Kanäle“ (32-px-Streifen, Overlay nach 300 ms, Anpinnen, Zustand gespeichert):
   Läufe auswählen (Fahrzeug -> Läufe nach Datum oder Setup, auch Mittelwerte) -> „Hinzufügen“, In der Auswertung,
   Kanäle je Feld. Fahrzeug- und Setup-Daten lassen sich direkt bearbeiten.
@@ -18,6 +18,7 @@ Aufbau:
   (CSV-Export liefert die gemittelten Kurven, Ausrollversuch/Kanäle des Hauptfensters bekommen sie nicht).
 """
 import json
+import math
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -25,7 +26,7 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import mittelwert as mw
-from . import physics
+from . import analog, physics
 from . import theme
 from .channels import Channel
 from .cursorwerte import CursorSpalte, KachelDaten, bereich_runden, dez_fuer, wert_bei
@@ -115,6 +116,7 @@ class LogViewer(QtWidgets.QWidget):
         self.rows: Dict[int, object] = {}       # run_id -> RunRow (bei jedem Neuladen aufgefrischt)
         self.bez: Dict[int, str] = {}           # run_id -> „16:24“ / „Ø Ref.“
         self.cursor_idx = 0
+        self._cursor_frei: Optional[float] = None    # Maus: X frei ueber alle Laeufe; None = Telegramm des ersten
         self.color_of: Dict[str, str] = {}
         # Layout: Kanaele je Feld bleiben erhalten, auch wenn ein geladener Lauf einen Kanal nicht hat
         self.pane_channels: List[List[str]] = [list(p) for p in DEFAULT_PANES]
@@ -137,6 +139,7 @@ class LogViewer(QtWidgets.QWidget):
         cl.addWidget(self.leiste)
         self.glw = pg.GraphicsLayoutWidget()
         self.glw.setBackground(theme.farbe("plot"))
+        theme.ganz_neu_zeichnen(self.glw)                # keine Reste der Cursorlinie (Mac/Retina)
         cl.addWidget(self.glw, 1)
         self.hint = theme.rolle(QtWidgets.QLabel(HINWEIS), "neben")
         self.hint.setWordWrap(True)
@@ -146,6 +149,8 @@ class LogViewer(QtWidgets.QWidget):
         self.seitenleiste.set_zustand(self._meta_json("viewer_seitenleiste", {}))
         self.seitenleiste.angepinnt_geaendert.connect(
             lambda _an: self.db.set_meta("viewer_seitenleiste", json.dumps(self.seitenleiste.zustand())))
+        self.seitenleiste.breite_geaendert.connect(
+            lambda _b: self.db.set_meta("viewer_seitenleiste", json.dumps(self.seitenleiste.zustand())))
 
         self.right_tabs = QtWidgets.QTabWidget()
         self.cursor = CursorSpalte()
@@ -167,10 +172,11 @@ class LogViewer(QtWidgets.QWidget):
 
         self.plots: List[pg.PlotItem] = []
         self.lines: List[pg.InfiniteLine] = []
-        self._cursor_timer = QtCore.QTimer(self)
-        self._cursor_timer.setSingleShot(True)
-        self._cursor_timer.setInterval(25)
-        self._cursor_timer.timeout.connect(self._update_cursor)
+        # rechte Spalte „Werte am Cursor“ wie in Messen: bei jeder Mausbewegung sofort nur die Zahlen tauschen
+        # (_cursor_werte). Bereiche, Kanalauswahl und Maxima baut _update_cursor nur, wenn sich Laeufe/Felder aendern.
+        # Frueher startete jede Bewegung einen 25-ms-Timer neu: bei laufender Maus blieb rechts alles stehen und
+        # sprang erst beim Anhalten (Testrueckmeldung 10.11.2026).
+        self._cursor_plan: Optional[dict] = None
         theme.bei_wechsel(self, self._thema, sofort=False)
         self.glw.scene().sigMouseMoved.connect(self._mouse_moved)
         for sig in (self.xaxis.currentIndexChanged, self.only_seg.toggled, self.panes_spin.valueChanged):
@@ -230,8 +236,15 @@ class LogViewer(QtWidgets.QWidget):
         bar.add_gruppe(self.layout_save_btn, self.layout_save_as_btn, self.layout_del_btn)
         bar.addStretch(1)
         # Import und Export (vom Hauptfenster verbunden), mit vollem Text
-        self.import_btn = QtWidgets.QPushButton("Importieren …")
-        self.import_btn.setToolTip("LabVIEW-XML oder PyST-Läufe in die Datenbank übernehmen")
+        # Menue am Knopf: einzelne Dateien oder ein ganzer Ordner mit Unterordnern (ordner_import)
+        self.import_btn = QtWidgets.QPushButton("Importieren")
+        self.import_btn.setToolTip("Alte Messungen in die Datenbank übernehmen: LabVIEW-XML (PST 3.x), PyST-Läufe "
+                                   "(lauf.json, .pyst), Terminal-Mitschnitte – einzelne Dateien oder ein ganzer "
+                                   "Ordner mit Unterordnern")
+        menue = QtWidgets.QMenu(self.import_btn)
+        self.import_dateien = menue.addAction("Dateien …")
+        self.import_ordner = menue.addAction("Ordner mit Unterordnern …")
+        self.import_btn.setMenu(menue)
         self.pdf_btn = QtWidgets.QPushButton("PDF-Bericht …")
         self.pdf_btn.setToolTip("Leistungsdiagramm mit den im Reiter Messen angehakten Läufen und deren Setups")
         self.csv_knopf = QtWidgets.QPushButton("CSV-Export …")
@@ -989,6 +1002,7 @@ class LogViewer(QtWidgets.QWidget):
         self.glw.clear()
         self.plots, self.lines = [], []
         self._bereiche, self._live = {}, None
+        self._cursor_plan = None
         runs = self._runs_shown()
         multi = len(runs) > 1
         colors = {rid: self._farbe(rid) for rid in runs}
@@ -1065,6 +1079,16 @@ class LogViewer(QtWidgets.QWidget):
             pi.addItem(line, ignoreBounds=True)
             self.plots.append(pi)
             self.lines.append(line)
+        # Fahne unten an der Cursorlinie (unterstes Feld): genaue Drehzahl bzw. Zeit am Cursor
+        self.cursor_fahne = None
+        if self.lines:
+            T = theme.tokens()
+            self.cursor_fahne = pg.InfLineLabel(self.lines[-1], "", movable=False, position=0.04,
+                                                anchors=[(0.5, 1), (0.5, 1)], color=T["text"],
+                                                fill=pg.mkBrush(T["panel"]), border=pg.mkPen(T["border"]))
+            f = self.cursor_fahne.textItem.font()
+            f.setBold(True)
+            self.cursor_fahne.textItem.setFont(f)
         for p, f in enumerate(FELD_HOEHEN[:n_panes]):          # oberes Feld groesser (Entwurf: 5 : 3 : 2)
             self.glw.ci.layout.setRowStretchFactor(p, f)
         if self.plots:
@@ -1080,7 +1104,7 @@ class LogViewer(QtWidgets.QWidget):
     def _mouse_moved(self, pos):
         for pi in self.plots:
             if pi.sceneBoundingRect().contains(pos):
-                self._set_cursor_x(pi.vb.mapSceneToView(pos).x())
+                self._set_cursor_x(pi.vb.mapSceneToView(pos).x(), frei=True)
                 return
 
     def _primary(self) -> Optional[int]:
@@ -1089,15 +1113,32 @@ class LogViewer(QtWidgets.QWidget):
         echte = [r for r in runs if not self._ist_mw(r)]
         return (echte or runs or [None])[0]
 
-    def _set_cursor_x(self, x: float):
+    def _x_bereich(self) -> Optional[Tuple[float, float]]:
+        """Kleinstes und groesstes X aller angezeigten Laeufe (der Cursor darf ueberall dazwischen stehen)."""
+        lo, hi = math.inf, -math.inf
+        for rid in self._runs_shown():
+            xa = self._x(rid)
+            if xa is not None and len(xa):
+                ok = np.isfinite(xa)
+                if ok.any():
+                    lo, hi = min(lo, float(np.min(xa[ok]))), max(hi, float(np.max(xa[ok])))
+        return (lo, hi) if lo <= hi else None
+
+    def _set_cursor_x(self, x: float, frei: bool = False):
+        """Cursor an X. frei=True (Maus): genau dort, ueber den ganzen Bereich aller Laeufe – auch wenn der erste
+        Lauf vorher endet; sonst auf das naechste Telegramm des ersten Laufs."""
         rid = self._primary()
         xa = self._x(rid) if rid is not None else None
         if xa is None or not len(xa) or not np.isfinite(xa).any():
             return
         self.cursor_idx = int(np.nanargmin(np.abs(xa - x)))
+        b = self._x_bereich() if frei else None
+        self._cursor_frei = min(max(float(x), b[0]), b[1]) if b else None
         self._place_cursor()
 
     def cursor_x(self) -> Optional[float]:
+        if self._cursor_frei is not None:
+            return self._cursor_frei
         rid = self._primary()
         xa = self._x(rid) if rid is not None else None
         if xa is None or not len(xa):
@@ -1110,14 +1151,22 @@ class LogViewer(QtWidgets.QWidget):
         xa = self._x(rid) if rid is not None else None
         if xa is not None and len(xa):
             self.cursor_idx = max(0, min(len(xa) - 1, self.cursor_idx))
-            x = float(xa[self.cursor_idx])
-            if np.isfinite(x):
-                for line in self.lines:
-                    line.setPos(x)
-        self._cursor_timer.start()
+        x = self.cursor_x()
+        if x is not None and np.isfinite(x):
+            for line in self.lines:
+                line.setPos(x)
+            if getattr(self, "cursor_fahne", None) is not None:
+                zeit = self._x_key() == "Zeit"
+                self.cursor_fahne.setText(f"{zahl(x, 2)} s" if zeit else f"{zahl(x)} 1/min")
+        if self._cursor_plan is None:
+            self._update_cursor()
+        else:
+            self._cursor_werte()
 
     def keyPressEvent(self, ev: QtGui.QKeyEvent):
         if ev.key() in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Right):
+            if self._cursor_frei is not None:               # von der Mausstelle aus auf Telegramme des ersten Laufs
+                self._set_cursor_x(self._cursor_frei)
             self.cursor_idx += -1 if ev.key() == QtCore.Qt.Key_Left else 1
             self._place_cursor()
         else:
@@ -1181,25 +1230,18 @@ class LogViewer(QtWidgets.QWidget):
                           lo, hi, 2 if zeit else 0)
         # Kanaele
         daten = []
-        for _std, name in self._kachel_kanaele():
+        plan_kacheln = []
+        for i, (_std, name) in enumerate(self._kachel_kanaele()):
             if not name:
                 daten.append(KachelDaten(""))
                 continue
-            laeufe = []
-            for rid in runs:
-                c = self.data[rid][0].get(name)
-                x = self._x(rid)
-                y = None if c is None else c.values[self._slice(rid)]
-                if rid == prim and y is not None and len(y) and x_at is not None:
-                    v = float(y[min(self.cursor_idx, len(y) - 1)])
-                    laeufe.append((self._basis(self.rows[rid]), self.bez.get(rid, ""), v if np.isfinite(v) else None))
-                else:
-                    laeufe += laufwerte_am_cursor([(self._basis(self.rows[rid]), self.bez.get(rid, ""), x, y,
-                                                    self._ist_mw(rid))], x_at)
+            laeufe = self._laufwerte(name, runs, prim, x_at)
+            plan_kacheln.append((i, name))
             unit = self._unit(name)
             blo, bhi, zonen = self._balken(name, runs)
             daten.append(KachelDaten(name, unit, dez_fuer(unit, bhi - blo), blo, bhi, zonen, laeufe))
-        kanaele = [Kanal(n, n, self._unit(n), "ECU" if n.endswith("(ECU)") else "PST", dez_fuer(self._unit(n)))
+        kanaele = [Kanal(n, n, self._unit(n), "ECU" if n.endswith("(ECU)") else
+                         analog.GRUPPE if n.endswith(analog.SUFFIX) else "PST", dez_fuer(self._unit(n)))
                    for n in getattr(self, "_alle_namen", [])]
         self.cursor.set_kacheln(daten, kanaele)
         # Maxima je Lauf
@@ -1211,6 +1253,39 @@ class LogViewer(QtWidgets.QWidget):
                 v = getattr(row, k)
                 maxima[k].append((self._basis(row), self.bez.get(rid, ""), None if dauer or not v else float(v)))
         self.cursor.set_maxima(maxima)
+        self._cursor_plan = {"runs": list(runs), "dez": 2 if zeit else 0, "kacheln": plan_kacheln}
+
+    def _laufwerte(self, name: str, runs: Sequence[int], prim: Optional[int],
+                   x_at: Optional[float]) -> List[Tuple[str, str, Optional[float]]]:
+        """[(Basisfarbe, Bezeichnung, Wert am Cursor)] eines Kanals fuer die angezeigten Laeufe."""
+        laeufe = []
+        for rid in runs:
+            c = self.data[rid][0].get(name)
+            x = self._x(rid)
+            y = None if c is None else c.values[self._slice(rid)]
+            if rid == prim and self._cursor_frei is None and y is not None and len(y) and x_at is not None:
+                v = float(y[min(self.cursor_idx, len(y) - 1)])
+                laeufe.append((self._basis(self.rows[rid]), self.bez.get(rid, ""), v if np.isfinite(v) else None))
+            else:
+                laeufe += laufwerte_am_cursor([(self._basis(self.rows[rid]), self.bez.get(rid, ""), x, y,
+                                                self._ist_mw(rid))], x_at)
+        return laeufe
+
+    def _cursor_werte(self):
+        """Bei jeder Mausbewegung (wie Messen): nur die Zahlen am Cursor – X-Kachel und Laufzeilen der Kacheln."""
+        plan = self._cursor_plan
+        runs = self._runs_shown()
+        if plan is None or plan["runs"] != runs:
+            self._update_cursor()
+            return
+        x_at = self.cursor_x()
+        k = self.cursor.x_kachel
+        k.wert.setText(zahl(x_at, plan["dez"]))
+        k.balken.set_marken([(x_at, "@cursor")] if x_at is not None else [])
+        prim = self._primary()
+        for i, name in plan["kacheln"]:
+            if i < len(self.cursor.kacheln):
+                self.cursor.kacheln[i].set_laeufe(self._laufwerte(name, runs, prim, x_at))
 
     # ------------------------------------------------------------ Setup-Vergleich
     def _fill_setup_table(self):

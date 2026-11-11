@@ -4,9 +4,10 @@ Dialog „Mittelwert bilden“ der Auswertung (Entwurf entwurf_auswertung_mittel
 Quelllaeufe (mindestens 2, abwaehlbar) mit Setup und Schnellwerten – abweichende Werte gelb und eine gelbe Warnung
 („Die Setups der Quellläufe unterscheiden sich: Zündzeitpunkt 17 (16:18) / 18 (16:19, 16:23). Trotzdem mitteln?“),
 Drehzahlraster (Standard 50 1/min), oben weglassen (300 1/min), Streuband min–max / ± σ / kein Band, Vorschau
-(Quelllaeufe duenn, Mittelwert dick, Band halbtransparent) und „Speichern als Lauf“ (Name, Fahrzeug, Setup, Notiz,
-„im Messfenster als Referenz anbieten“). Gerechnet wird mit mittelwert.mitteln, gespeichert mit
-mittelwert.speichern.
+(Quelllaeufe duenn, Mittelwert dick, Band halbtransparent) und „Speichern als Lauf“ (Name, Fahrzeug, Setup, Notiz).
+Gerechnet wird mit mittelwert.mitteln, gespeichert mit mittelwert.speichern; in Messen kommt jeder gespeicherte
+Mittelwert ueber „＋“ der Seitenleiste Läufe ins Diagramm (der fruehere Haken „im Messfenster als Referenz anbieten“
+ist weg, 1.4.2). Messen kann auch selbst mitteln: Haken „Ø automatisch mitteln“ (messen_page.AUTO_MITTEL).
 
 Die Kanaele kommen aus der Auswertung (channels.run_channels, Namen wie „Leistung“): die bekannten bekommen die
 Schluessel von mittelwert.kurven_aus_ergebnis (n, ps, nm, lam, afr, egt1, egt2, ps_rad), damit Messen den Mittelwert
@@ -288,8 +289,10 @@ class MittelwertDialog(QtWidgets.QDialog):
         fl.addRow("Fahrzeug", r3)
         self.notiz = QtWidgets.QLineEdit()
         fl.addRow("Notiz", self.notiz)
-        self.referenz = QtWidgets.QCheckBox("im Messfenster als Referenz anbieten („Referenz laden …“)")
-        fl.addRow("", self.referenz)
+        hinweis = theme.rolle(QtWidgets.QLabel("Gespeicherte Mittelwerte lassen sich in Messen über „＋“ der "
+                                               "Seitenleiste Läufe als Referenz ins Diagramm legen."), "neben")
+        hinweis.setWordWrap(True)
+        fl.addRow("", hinweis)
         lay.addWidget(g)
         self.fehler_label = theme.rolle(QtWidgets.QLabel(""), "banner_fehler")
         self.fehler_label.setWordWrap(True)
@@ -425,7 +428,7 @@ class MittelwertDialog(QtWidgets.QDialog):
                 einheiten.setdefault(k, u)
         self.rid = mw.speichern(self.db, r, name, vehicle_id=self.fahrzeug.currentData(),
                                 setup_id=self.setup.currentData(), notiz=self.notiz.text().strip(),
-                                setup_werte=werte, sichtbar=self.referenz.isChecked())
+                                setup_werte=werte)
         row = self.db.run(self.rid)
         if row is not None:
             zusatz_schreiben(row.ordner, einheiten={k: v for k, v in einheiten.items() if k in r.werte or k == "n"},

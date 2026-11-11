@@ -196,6 +196,81 @@ class Download(unittest.TestCase):
             self.assertEqual(os.listdir(t), [])
 
 
+class Zweige(unittest.TestCase):
+    """Update-Quelle: Branch fuer Software und Firmware (Expertenmodus)."""
+
+    def test_namen_und_adressen(self):
+        for ok in ("main", "firmware", "release/1.4.2", "ui6/start", "v1.4.1", "feature_x-2"):
+            self.assertTrue(update.zweig_ok(ok), ok)
+        for falsch in ("", "../main", "a..b", "/main", "main/", "x y", "main?a=1", "a\nb", "x.lock", "-main"):
+            self.assertFalse(update.zweig_ok(falsch), falsch)
+        self.assertEqual(update.version_url(), update.VERSION_URL)
+        self.assertEqual(update.firmware_url(), update.FIRMWARE_URL)
+        self.assertEqual(update.version_url("release/1.4.2"),
+                         "https://raw.githubusercontent.com/chili023/PyST/release/1.4.2/PyST/pyst/__init__.py")
+        self.assertIsNone(update.latest_pyst(zweig="../x"))               # ungueltig: gar nicht erst abfragen
+
+    def test_zweige_von_github(self):
+        class Antwort:
+            def __init__(self, data):
+                self.data = data
+
+            def read(self, n):
+                return self.data[:n]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        data = json.dumps([{"name": "main"}, {"name": "release/1.4.2"}, {"name": "../boese"}, {"x": 1},
+                           {"name": "firmware"}]).encode()
+        with mock.patch.object(update.urllib.request, "urlopen", lambda *a, **k: Antwort(data)):
+            self.assertEqual(update.zweige(), ["firmware", "main", "release/1.4.2"])
+        with mock.patch.object(update.urllib.request, "urlopen", lambda *a, **k: Antwort(b"kein json")):
+            self.assertIsNone(update.zweige())
+
+    def test_seite_einstellen_speichern_und_alte_ergebnisse_verwerfen(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6 import QtWidgets
+        from pyst.flash_page import FlashPage
+        app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        settings, saved = {}, []
+        page = FlashPage(settings, lambda: saved.append(1), lambda: None, lambda: None)
+        page.timer.stop()
+        page.check_updates = lambda v: None                               # kein Netz im Test
+        self.assertEqual((page.sw_zweig, page.fw_zweig), ("main", "firmware"))
+        self.assertIn("› firmware", page.quelle.text())
+        self.assertTrue(page.set_zweige("release/1.4.2", "firmware-test"))
+        self.assertEqual(settings["update_zweig"], {"software": "release/1.4.2", "firmware": "firmware-test"})
+        self.assertEqual(page.update_base, update.firmware_url("firmware-test"))
+        self.assertIn("PyST aus release/1.4.2", page.quelle.text())
+        self.assertIn("Test-Branch", page.zweig_hinweis.text())
+        self.assertTrue(saved)
+        self.assertFalse(page.set_zweige("../x", "firmware"))            # ungueltig: bleibt beim alten
+        self.assertEqual(page.sw_zweig, "release/1.4.2")
+        self.assertEqual(page.zweig_sw.currentText(), "release/1.4.2")
+        self.assertIn("Ungültig", page.zweig_hinweis.text())
+        # Ergebnis aus dem alten Branch kommt zu spaet: verwerfen, neu suchen
+        neu = []
+        page.check_updates = lambda v: neu.append(v)
+        page._pyst_ergebnis(("main", "9.9.9"), "1.4.2")
+        self.assertEqual(neu, ["1.4.2"])
+        self.assertIsNone(page.pyst_remote)
+        page._pyst_ergebnis(("release/1.4.2", "1.4.3"), "1.4.2")
+        self.assertEqual(page.pyst_remote, "1.4.3")
+        self.assertIn("git checkout release/1.4.2", page.pyst_karte.unten.text())
+        # nach Neustart wieder da, Standard-Knopf loescht den Eintrag
+        page2 = FlashPage(settings, lambda: None, lambda: None, lambda: None)
+        page2.timer.stop()
+        page2.check_updates = lambda v: None
+        self.assertEqual((page2.sw_zweig, page2.fw_zweig), ("release/1.4.2", "firmware-test"))
+        page2.b_zweig_std.click()
+        self.assertNotIn("update_zweig", settings)
+        self.assertEqual(page2.update_base, update.FIRMWARE_URL)
+        app.processEvents()
+
+
 class Oberflaeche(unittest.TestCase):
     """Reiter Firmware: Anzeige und Download, im Offscreen-Betrieb gegen den lokalen Server."""
 

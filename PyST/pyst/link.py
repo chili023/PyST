@@ -12,6 +12,8 @@ Zeilenende \\n, \\r oder \\r\\n; unbekannte Zeilen und zusaetzliche Felder werde
 
 PyST-Basis (docs/04_PST_Diag_1.md §10, basis.py): '#CAP' mit 'ign=zange|none' und 'hw=…', angehaengte D-Felder
 'ign_peak_mv;ign_src', Ereigniszeilen 'E;…', Antworten '#ZANGE/#NET/#DOSE/#PAIR', Logzeilen 'L;…' der USB-Zange.
+Analogeingaenge (analog.py): Zeilen 'A;<t_ms>;AI1=…' (Vorschlag '#AI <hz>') bzw. '#STAT' der Basis; der letzte Wert
+haengt an den folgenden Telegrammen (Frame.ain).
 Ports: seriell (USB), Simulator ('SIM…') oder TCP zur Basis per WLAN ('tcp://192.168.4.1:2323',
 'tcp://pyst-basis.local').
 """
@@ -33,7 +35,7 @@ except ImportError:  # nur Simulator moeglich
     serial = None
     list_ports = None
 
-from . import auth
+from . import analog, auth
 from .auth import AuthError, AuthNoReply, KeyStore
 from .basis import (BASIS_AP_IP, BASIS_MDNS_NAME, BASIS_TCP_PORT, ZANGE_USB_ID, BasisCommands, _f, _i, parse_event,
                     parse_log_line, parse_zange)
@@ -68,6 +70,7 @@ class Frame:
     egt2: float = 0.0
     diag: Optional[Dict[str, float]] = None   # Zusatzfelder des D-Telegramms (diag.DIAG_FIELDS), sonst None
                                               # PyST-Basis zusaetzlich 'ign_peak_mv', 'ign_src'
+    ain: Optional[Dict[str, float]] = None    # Analogeingaenge (Rohwert V bzw. mA je Eingang, analog.py), sonst None
 
 
 # Simulator-Varianten: Portname -> Beschreibung
@@ -75,7 +78,8 @@ SIM_VARIANTS = [
     (SIM_PORT, "Simulator: synthetischer Motor (PST-Diag 1)"),
     (SIM_PORT + ":stoerung", "Simulator: synthetischer Motor mit Störungen (Zündung/Rolle, PST-Diag 1)"),
     (SIM_PORT + ":ausrollen", "Simulator: synthetischer Motor, nach dem Lauf Kupplung gezogen (Ausrollversuch)"),
-    (SIM_PORT + ":mega", "Simulator: Arduino-Mega-Sketch 3.1.0 (PST-Diag 1)"),
+    (SIM_PORT + ":rolle", "Simulator: Rad wird abgehoben, Rolle läuft frei aus (Rollen-Kalibrierung)"),
+    (SIM_PORT + ":mega", "Simulator: Arduino-Mega-Sketch 3.2.0 (PST-Diag 1)"),
     (SIM_PORT + ":mega300", "Simulator: alter Arduino-Mega-Sketch 3.0.0 (ohne Diagnose)"),
     (SIM_PORT + ":mega300:stoerung", "Simulator: alter Mega 3.0.0 mit Störungen (ohne Diagnose)"),
     (SIM_PORT + ":basis", "Simulator: PyST-Basis mit gekoppelter Funk-Zange und Steckdosen"),
@@ -295,7 +299,7 @@ def parse_line(line: str, t: float):
     """Eine empfangene Zeile einordnen -> (Art, Inhalt):
     'F' normales Telegramm (Frame), 'D' Diagnose-Telegramm (Frame mit diag), 'B' Burst-Flanke,
     '#' Antwort/Status (Text), 'E' Ereignis der Basis (basis.BasisEvent), 'L' Logzeile der Zange
-    (basis.LogEntry), 'T' sonstiger Text (Info, Klima), None = leer."""
+    (basis.LogEntry), 'A' Analogwerte ((t_ms, {Eingang: Wert})), 'T' sonstiger Text (Info, Klima), None = leer."""
     line = line.strip()
     if not line:
         return None
@@ -311,6 +315,9 @@ def parse_line(line: str, t: float):
     if line.startswith("B;"):
         e = parse_burst_edge(line)
         return ("B", e) if e is not None else ("T", line)
+    if line.startswith("A;"):
+        a = analog.parse_a_line(line)
+        return ("A", a) if a is not None else ("T", line)
     if line.startswith("#"):
         return "#", line
     fr = parse_frame(line, t)
@@ -413,6 +420,10 @@ class DynoLink(BasisCommands):
         self.bad_lines = 0                                    # Zeilen, an denen _line() gescheitert ist
         self.foreign_replies = 0                              # verworfene #OK/#ERR anderer Befehle
         self.last_frame_t = 0.0
+        self.analog: Dict[str, float] = {}                    # letzte Analogwerte (Eingang -> V bzw. mA)
+        self.analog_einheit: Dict[str, str] = {}              # Einheit je Eingang, wenn das Geraet sie nennt
+        self.analog_t = 0.0                                   # PC-Zeit dieser Werte
+        self.ai_hz = 0                                        # mit '#AI <hz>' eingeschaltet (0 = aus)
         self.is_stm = True      # nach info(): False = Arduino-Mega-Sketch ('m' schaltet um, kein 's')
         self._last_cycle: Optional[int] = None
         self._stop = False
@@ -472,6 +483,10 @@ class DynoLink(BasisCommands):
                 self.ensure_stopped()
                 if self.has_diag and self.mode != "N":
                     self.command("#MODE N", timeout=0.3)
+                if self.has_diag and self.ai_hz:
+                    # F446 startet beim Oeffnen des Ports nicht neu: A-Zeilen aus, bevor LabVIEW den Port bekommt
+                    self.command("#AI 0", timeout=0.3)
+                    self.ai_hz = 0
             except Exception:
                 pass
             finally:
@@ -524,6 +539,8 @@ class DynoLink(BasisCommands):
         if kind in ("F", "D"):
             self._count(obj.cycle)
             self.last_frame_t = obj.t
+            if self.analog and obj.t - self.analog_t <= analog.HALTEN_S:
+                obj.ain = self.analog                         # gleiches dict fuer alle Telegramme bis zum naechsten Wert
             if kind == "D" and obj.diag and math.isfinite(obj.diag.get("t_ms", math.nan)):
                 off = obj.t - obj.diag["t_ms"] / 1000.0           # kleinster Versatz = geringste Laufzeit
                 if self._ms_offset is None or off < self._ms_offset or off - self._ms_offset > 1.0:
@@ -543,6 +560,8 @@ class DynoLink(BasisCommands):
             _put(self.events, obj)
         elif kind == "L":
             _put(self.log_lines, obj)
+        elif kind == "A":
+            self.set_analog(obj[1])
         elif kind == "#":
             if obj.startswith("#ZANGE;"):
                 st = parse_zange(obj)
@@ -569,6 +588,35 @@ class DynoLink(BasisCommands):
                 _put(self.replies, obj)
         else:
             _put(self.text_lines, obj)
+
+    # --- Analogeingaenge (analog.py)
+    def set_analog(self, werte: Dict[str, float], einheiten: Optional[Dict[str, str]] = None):
+        """Neue Analogwerte (aus A-Zeile oder '#STAT'): gelten ab jetzt fuer die folgenden Telegramme."""
+        self.analog = dict(werte)                             # neues dict: Telegramme davor behalten ihre Werte
+        if einheiten:
+            self.analog_einheit.update(einheiten)
+        self.analog_t = time.time()
+
+    def analog_frisch(self) -> Dict[str, float]:
+        """Letzte Analogwerte, wenn sie nicht aelter als analog.HALTEN_S sind, sonst {}."""
+        return self.analog if self.analog and time.time() - self.analog_t <= analog.HALTEN_S else {}
+
+    def analog_ein(self, hz: int = analog.AI_RATE_HZ) -> bool:
+        """Vorschlag PST-Diag 1: A-Zeilen mit hz einschalten (0 = aus). Nur wenn '#CAP' 'ai=' nennt."""
+        if not analog.caps_eingaenge(self.caps):
+            return False
+        ok = self.ok(self.command(f"#AI {int(hz)}", timeout=0.5))
+        if ok:
+            self.ai_hz = int(hz)
+        return ok
+
+    def analog_stat(self) -> Dict[str, float]:
+        """PyST-Basis: AI1/AI2 aus '#STAT' lesen und uebernehmen; {} ohne Antwort."""
+        lines = self.command("#STAT", timeout=1.0, done=lambda l: l.startswith("#STAT;u12") or l.startswith("#ERR"))
+        werte, einheiten = analog.parse_stat(lines)
+        if werte:
+            self.set_analog(werte, einheiten)
+        return werte
 
     def _tick_ns(self, text: Optional[str]) -> float:
         """Taktdauer aus dem Burst-Kopf, sonst aus '#CAP', sonst 62,5 ns (Mega)."""
@@ -832,13 +880,14 @@ class DynoLink(BasisCommands):
             self.drain_frames()
             self.last_frame_t = 0.0              # sonst gilt er noch 0,5 s als "sendet"
 
-    def climate(self) -> Optional[Tuple[float, float, float]]:
-        """Klimadaten wie LabVIEW ('e'); stoppt eine laufende Ausgabe. -> (degC, mbar, %)"""
+    def climate(self, timeout: float = 0.7) -> Optional[Tuple[float, float, float]]:
+        """Klimadaten wie LabVIEW ('e', die Firmware liest den Sensor dabei neu); stoppt eine laufende Ausgabe.
+        -> (degC, mbar, %), None = keine Antwort binnen timeout [s]."""
         with self._cmd_lock:
             self.ensure_stopped()
             self._flush()
             self.send("e")
-            end = time.time() + 0.7
+            end = time.time() + timeout
             while time.time() < end:                  # zurueck, sobald die Antwort da ist
                 try:
                     line = self.text_lines.get(timeout=0.02)

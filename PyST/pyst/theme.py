@@ -538,10 +538,18 @@ def plotitem_stil(pi, thema: Optional[str] = None):
         legend.setPen(pg.mkPen(T["border"]))
 
 
+def ganz_neu_zeichnen(view):
+    """Diagramm bei jeder Aenderung ganz neu zeichnen statt nur den geaenderten Bereich. Sonst bleiben auf dem Mac
+    (Retina, Kantenglaettung) Reste der Cursorlinie und Faehnchen stehen und die Raender flackern."""
+    if isinstance(view, QtWidgets.QGraphicsView):
+        view.setViewportUpdateMode(QtWidgets.QGraphicsView.FullViewportUpdate)
+
+
 def diagramm(widget, nachher: Optional[Callable[[str], None]] = None):
     """pg.PlotWidget oder pg.GraphicsLayoutWidget im Thema darstellen, auch nach jedem Wechsel:
     Hintergrund = Diagrammflaeche, alle PlotItems mit plotitem_stil. nachher(thema) danach (eigene Farben)."""
     import pyqtgraph as pg
+    ganz_neu_zeichnen(widget)
 
     def anwenden(th: str):
         widget.setBackground(THEMES[th]["plot"])

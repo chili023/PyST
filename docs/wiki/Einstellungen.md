@@ -1,9 +1,10 @@
 # Einstellungen
 
-Der Reiter **Einstellungen** hat sieben Unterreiter:
+Der Reiter **Einstellungen** hat acht Unterreiter:
 
 **[Rolle/Lauf](#rollelauf)** · **[Verbindung](#verbindung)** · **[Zange](#zange)** · **[Lambda](#lambda)** ·
-**[ECU](#ecu)** · **[Firmware](#firmware)** · **[WiFi](#wifi)**
+**[Analogeingänge](#analogeingänge)** · **[ECU](#ecu)** · **[Software & Firmware](#software--firmware)** ·
+**[WiFi](#wifi)**
 
 Alle Einstellungen speichert PyST sofort in `~/PyST/einstellungen.json`.
 
@@ -11,7 +12,7 @@ Alle Einstellungen speichert PyST sofort in `~/PyST/einstellungen.json`.
 
 ## Rolle/Lauf
 
-![Einstellungen Rolle/Lauf](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_einst_rolle.png)
+![Einstellungen Rolle/Lauf](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_einst_rolle.png)
 
 ### Prüfstand
 
@@ -28,9 +29,24 @@ Alle Einstellungen speichert PyST sofort in `~/PyST/einstellungen.json`.
 |---|---|
 | **Übersetzung aus** | **von Hand (eingetragen/eingemessen)** oder **Funkenmessung (jeder Lauf)**, siehe [Übersetzung](Übersetzung.md) |
 | **Übersetzung nKW/nRolle** | Wert bzw. Startwert (Standard 6,85). Knöpfe **Übersetzung einmessen …** und **Live abgleichen …** |
-| **n vom Gas [1/min]** | Standard 4000. Ab hier prüft PyST auf fallende Drehzahl (= Laufende). Muss über der Haltedrehzahl liegen |
+| **Start: steigt über [s]** | Standard 1,0. Laufbeginn: nach GO beginnt die Messung, sobald die Motordrehzahl (Rolle × Übersetzung) so lange durchgehend steigt. Die Kurve beginnt am Anfang dieses Zeitfensters |
+| **Start: Anstieg mind. [1/min]** | Standard 150. Um so viel muss die Motordrehzahl im Zeitfenster mindestens steigen, damit Halten mit Messrauschen nicht als Start gilt |
+| **n vom Gas [1/min]** | Standard 4000. Ab hier prüft PyST auf fallende Drehzahl (= Laufende). Startet den Lauf **nicht** mehr (seit 1.4.2 startet er mit dem Drehzahlanstieg). Muss über der Haltedrehzahl liegen |
 | **n Stop [1/min] (0 = aus)** | Standard 8000. Ab hier GAS WEG |
-| **Bei geändertem Setup vor START nachfragen** | Rückfrage beim Start, wenn die SETUP-WERTE geändert und nicht gespeichert sind (Standard: an) |
+| **Vor START nachfragen, ob sich das Setup geändert hat** | Ist in SETUP-WERTE nichts geändert, zeigt START kurz das Fenster „Setup unverändert – Änderungen eintragen?“ (Standard: an). Die Zangentaste „Neuer Lauf“ fragt nie. Siehe [Messen](Messen.md#start-nachfrage) |
+| **Nach dem Lauf Notiz/Setup-Fenster zeigen** | Standard an: nach dem Lauf ein Fenster „Lauf fertig“ mit Pmax/Mmax groß, Notiz, Setup-Werten des Laufs und „Als neues Setup speichern“ (das große Ergebnis kommt dann nicht dazu); ohne Auto-Speichern wird dort gespeichert. Nicht modal, START/F1/Zangentaste gehen weiter. Aus: speichern mit **Lauf speichern** unten rechts (Ctrl+S). Eintrag `"nach_lauf_fenster"`. Siehe [Messen](Messen.md#nach-dem-lauf-fenster-lauf-fertig) |
+
+### Anzeige beim Messen
+
+Unter der Gruppe Prüfstand. Dieselben Schalter stehen im Menü **Ansicht**.
+
+| Schalter | Standard | Wirkung |
+|---|---|---|
+| **Ergebnis groß nach dem Lauf** | an | nach dem Lauf Pmax und Mmax groß über dem Diagramm (weg mit START, Klick oder Esc); nur wenn das Fenster „Lauf fertig“ aus ist, sonst steht die Leistung dort |
+| **Anweisungen groß (GO, GAS WEG …)** | an | Anweisung für den Fahrer groß über dem Diagramm: nach START „Klima wird gemessen …“, dann GO – Vollgas! bis die Drehzahl 1 s lang steigt (Laufbeginn), während der Messung nichts, am Laufende GAS WEG! bzw. GAS WEG – KUPPLUNG ZIEHEN! (Ausrollversuch), danach das Ergebnis. Aus: nur das große „GAS WEG“ |
+| **Legende im Diagramm** | aus | Legende aller Läufe (Farbe, Datum/Zeit, Setup bzw. Notiz). Mittelwerte stehen immer in der Legende |
+
+Bilder und Einzelheiten: [Messen](Messen.md#statusfeld).
 
 ### Filter
 
@@ -48,7 +64,7 @@ LabVIEW-Standard 35/15 bei 20 Hz = 1,75 s / 0,75 s.“ Details: [Rechenweg](Rech
 | Feld | Bedeutung |
 |---|---|
 | Lufttemperatur [°C], Luftdruck [mbar] | für die Korrektur nach DIN 70020 |
-| **vor jedem Lauf vom Sensor lesen** | BME280 der Messelektronik beim START lesen (Standard: an) |
+| **vor jedem Lauf vom Sensor lesen** | nach jedem START frisch vom BME280/BMP280 der Messelektronik lesen: Phase „Klima wird gemessen …“ vor GO, höchstens 3 s; ohne Antwort gilt der eingetragene Wert („Klima: eingetragener Wert“ im Ergebnis). Standard: an. Aus: kein Lesen, gleich GO |
 | **Klima jetzt lesen** | sofort lesen |
 | „DIN 70020 k = …“ | Korrekturfaktor zu den eingetragenen Werten |
 
@@ -58,8 +74,17 @@ Geräte-Einstellungen.
 ### Verluste (Werte für die Rechnung)
 
 Verlustmoment **M0 [Nm]**, **M1 [Nm]**, **bei Rollendrehzahl n1 [1/min]** und **quadratisch m2 [Nm/(1000/min)²]**.
-Darunter steht, woher die Werte kommen (Ausrollversuch oder von Hand). Rechts daneben die Gruppe **Verluste –
-Ausrollversuch**, beschrieben unter [Ausrollversuch](Ausrollversuch.md).
+Darunter steht, woher die Werte kommen (Ausrollversuch oder von Hand). Rechts daneben die Gruppe
+**Verluste – Ausrollversuch**:
+
+- **Rollen-Kalibrierung (Ausrollen ohne Rad):** Anzeige „Rollen-Kalibrierung: vom …, Verlust bei … 1/min = … Nm /
+  … PS“ bzw. „noch nicht kalibriert“ und der Knopf **Rollen-Kalibrierung (Assistent) …**. Einmalig je Prüfstand:
+  Rad abheben, nur die Rolle auslaufen lassen. Die Kalibrierung gilt für den Prüfstand (nicht je Fahrzeug), steht in
+  `einstellungen.json` unter `"rollen_kalibrierung"` und geht nicht in M0/M1.
+- **Ausrollversuch nach dem Lauf** mit dem Haken **Ausrollversuch nach jedem Lauf**: misst die Verluste gesamt, mit
+  Kalibrierung aufgeteilt in Rolle und Reifen/Kette/Getriebe.
+
+Beides ist unter [Ausrollversuch](Ausrollversuch.md) beschrieben.
 
 ---
 
@@ -150,8 +175,24 @@ Knöpfe **Lesen** und **Übernehmen**.
 
 ### Firmware
 
-Der Wideband-Controller (F042) wird über die Basis geflasht: Einstellungen › Firmware, Expertenmodus, Zeile Lambda
-(F042). Knopf **Zur Firmware …**.
+Der Wideband-Controller (F042) wird über die Basis geflasht: Einstellungen › Software & Firmware, Expertenmodus,
+Zeile Lambda (F042). Knopf **Zur Firmware …**.
+
+---
+
+## Analogeingänge
+
+![Einstellungen Analogeingänge](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_einst_analog.png)
+
+Analogeingänge von PyST-Basis (AI1/AI2 an X6), STM32 F446 (ADC1 = PB0, ADC2 = PA1) und Arduino Mega (A0 … A15)
+benennen und umrechnen. Oben das **Gerät** (vorgewählt das verbundene), darunter je Eingang eine Zeile mit **Aktiv**,
+**Name**, **Einheit**, **Umrechnung**, **Spannung** und **Wert** (live). Die Umrechnung des markierten Eingangs:
+**keine (V)**, **2-Punkt** (z. B. 0,5 V = 0 bar, 4,5 V = 10 bar) oder **Faktor/Offset** (W = a · U + b), dazu
+**Balken von / bis**, **Nachkommastellen** und **Vorlage ▾**. Aktive Kanäle stehen in den Live-Kacheln (Gruppe
+„Analog“), im unteren Diagramm und in der Auswertung.
+
+Die Basis liefert ihre Werte heute etwa einmal je Sekunde. Mega 3.1.0 und F446 1.1.0 senden noch keine Analogwerte.
+Alles Weitere: [Analogeingänge](Analogeingänge.md).
 
 ---
 
@@ -197,14 +238,20 @@ Firmware“.
 
 ---
 
-## Firmware
+## Software & Firmware
 
-![Einstellungen Firmware](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_einst_firmware.png)
+![Software & Firmware, Kundenansicht](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_einst_firmware.png)
 
-Firmware der Basis, der Zange, des Arduino Mega und des STM32 (F446) aktualisieren. Ausführlich unter
-[Firmware und Updates](Firmware-und-Updates.md).
+Früher hieß der Unterreiter „Firmware“. Ganz oben steht die Kachel **PyST (Software)** mit der installierten und der
+verfügbaren Version von PyST (aus GitHub, Branch `main`), dazu der Datenordner und der Knopf **Release-Seite …**
+(bei einer neuen Version **Update laden …**). Installiert wird nichts, das Update macht man mit `git pull` oder dem
+ZIP von der Release-Seite.
 
-![Firmware Expertenmodus](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v141_einst_firmware_experte.png)
+Darunter die Firmware der Basis, der Zange, des Arduino Mega und des STM32 (F446). Geräte, die nicht angeschlossen
+sind, stehen ausgegraut mit gestricheltem Rand und „– nicht angeschlossen“; ihr Knopf ist aus und sagt im Tooltip,
+was zu tun ist. Ausführlich unter [Firmware und Updates](Firmware-und-Updates.md).
+
+![Software & Firmware, Expertenmodus](https://raw.githubusercontent.com/chili023/PyST/main/docs/bilder/v142_einst_firmware_experte.png)
 
 ---
 
@@ -239,3 +286,4 @@ WLAN-Steckdosen (Shelly, Tasmota, ESPHome) für Lüfter, Absaugung, Heizlüfter.
 - `einstellungen.json` wird atomar geschrieben: ein Absturz beim Speichern lässt die alte Datei stehen.
 - Der zuletzt offene Reiter und Unterreiter werden gespeichert.
 - Kanal-Setups der ECU liegen in `einstellungen.json` unter `rusefi` und lassen sich als Datei weitergeben.
+- Eingeklappte Zeile SETUP-WERTE (Messen): `"setup_werte_eingeklappt"` (Standard `false`).

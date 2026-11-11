@@ -1,4 +1,4 @@
-**[PyST 1.4.1](Home.md)**
+**[PyST 1.4.2](Home.md)**
 
 **Start**
 - [Installation](Installation.md)
@@ -17,6 +17,7 @@
 
 **Einrichten**
 - [Einstellungen](Einstellungen.md)
+- [Analogeingänge](Analogeingänge.md)
 - [PyST-Basis und Zange](PyST-Basis-und-Zange.md)
 - [Firmware und Updates](Firmware-und-Updates.md)
 - [Darstellung](Darstellung.md)
