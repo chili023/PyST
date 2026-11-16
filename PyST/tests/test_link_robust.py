@@ -296,6 +296,65 @@ class TcpAbriss(unittest.TestCase):
         self.assertTrue(neu.ok(neu.command("#RUN 0")))
 
 
+class DauermessungUndLauf(unittest.TestCase):
+    """Kunde 16.11.2026 (Mega 3.2.0, Windows): Lauf waehrend der Dauermessung stockt, Klima T=0 / p=500."""
+
+    def test_klima_nur_im_messbereich(self):
+        self.assertEqual(link.parse_climate("21.5;96512;45.3"), (21.5, 965.12, 45.3))
+        self.assertEqual(link.parse_climate("21.5;96512"), (21.5, 965.12, 0.0))      # BMP280 ohne Feuchte
+        self.assertIsNone(link.parse_climate("0.00;0.00;0.00"))     # BME280 ohne Kalibrierdaten
+        self.assertIsNone(link.parse_climate("0.000;0.000;23;1.02;0"))   # Bruchstueck eines Telegramms
+        self.assertIsNone(link.parse_climate("21.5;96512;45.3;7"))
+        self.assertIsNone(link.parse_climate("Version 3.2.0"))
+        self.assertIsNone(link.parse_climate("150;96512;40"))
+
+    def test_klima_ueberspringt_unsinn(self):
+        lk = link.DynoLink(link.SIM_PORT + ":mega")
+        try:
+            lk.info()
+            eng = lk.ser.engine
+            echt = eng.climate_line
+            eng.climate_line = lambda: "0.0;0;0.0"                # Mega 3.2.0, BME280 antwortet nicht
+            t0 = time.time()
+            self.assertIsNone(lk.climate(timeout=3.0))           # Lauf rechnet dann mit den eingetragenen Werten
+            self.assertLess(time.time() - t0, 1.0)               # und wartet nicht den ganzen Timeout ab
+            eng.climate_line = echt
+            c = lk.climate(timeout=1.0)
+            self.assertIsNotNone(c)
+            self.assertGreater(c[1], 500.0)
+        finally:
+            lk.close()
+
+    def test_lauf_im_normalmodus_auch_waehrend_dauermessung(self):
+        """Die Dauermessung schaltet den Mega auf 'D'; der Leistungslauf rechnet trotzdem mit dem Normaltelegramm."""
+        from pyst import physics, runner
+        lk = link.DynoLink(link.SIM_PORT + ":mega")
+        try:
+            lk.info()
+            self.assertTrue(lk.set_mode("D"))
+            ctrl = runner.RunController(lk, physics.DynoParams(), auto_climate=False)
+            ctrl.start()
+            self.assertEqual(lk.mode, "N")
+            ctrl.abort()
+        finally:
+            lk.close()
+
+    def test_keepalive_nimmt_dem_lauf_keine_telegramme(self):
+        lk = link.DynoLink(link.SIM_PORT + ":mega")
+        try:
+            lk.info()
+            self.assertTrue(lk.start())
+            self.assertTrue(wait_until(lambda: lk.frames.qsize() > 5))
+            vorher, verloren = lk.frames.qsize(), lk.lost
+            lk.last_frame_t = 0.0                                 # „sendet nicht“ -> Keepalive greift
+            self.assertTrue(lk.keepalive())
+            self.assertGreaterEqual(lk.frames.qsize(), vorher)
+            self.assertEqual(lk.lost, verloren)
+            lk.ensure_stopped()
+        finally:
+            lk.close()
+
+
 class Zahlen(unittest.TestCase):
     def test_nicht_endliche_telegramme(self):
         self.assertIsNone(link.parse_frame("inf;1;2;3", 0.0))

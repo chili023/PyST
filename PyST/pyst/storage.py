@@ -140,6 +140,7 @@ def save_run(ctrl, vehicle: str = "", firmware: str = "", base_dir: str = "") ->
         # woher T/p kommen: "Sensor 14:30:05" (frisch nach START gelesen) bzw. "eingetragen (…)"
         "klima_quelle": getattr(ctrl, "klima_quelle", ""),
         "klima_zeit": _zeit_iso(getattr(ctrl, "klima_zeit", 0.0)),
+        "klima_warnung": getattr(ctrl, "klima_warnung", ""),
         # Laufbeginn: Drehzahl stieg start_anstieg_s lang, die Daten beginnen am Anfang dieses Fensters
         "laufbeginn": _zeit_iso(getattr(ctrl, "run_start_t", 0.0)),
         "com_verloren": ctrl.link.lost,
@@ -282,6 +283,11 @@ def _load_pyst_files(read: Callable[[str], Optional[str]], names: List[str], nam
         if not parts:
             raise ValueError(f"{name}: keine Messdaten (roh.csv/teil_*.csv)")
         cols = {k: np.concatenate(v) for k, v in parts.items()}
+    if any(k not in cols for k in ("n_rolle_1_min", "dt_s", "n_zuendung_1_min", "afr", "egt1_c")):
+        # roh.csv nur mit Kopfzeile (Dauermessung ohne ein Telegramm): leer laden statt KeyError
+        if meta.get("art", "lauf") != "dauermessung":
+            raise ValueError(f"{name}: roh.csv ohne Messdaten")
+        cols = {**{k: np.array([], float) for k in ROH_HEADER}, **cols}
     p = physics.DynoParams(**{k: v for k, v in meta["parameter"].items()
                               if k in physics.DynoParams.__dataclass_fields__})
     r = {

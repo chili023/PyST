@@ -91,8 +91,7 @@ def lauf_zeile(win, row, platz: str = "") -> Dict[str, str]:
         "name": name,
         "fahrzeug": _setup_text(win, row.vehicle_id, row.setup_id) + (f"\n{werte}" if werte else ""),
         "ergebnis": ergebnis,
-        "klima": "" if p is None else
-        f"{p.temp_c:.1f} °C, {p.p_mbar:.0f} mbar\nk = {physics.din70020(p.temp_c, p.p_mbar):.3f}",
+        "klima": "" if p is None else physics.klima_text(p),
         "details": ("" if p is None else
                     f"i = {p.ratio:.3f}, J = {p.inertia:.2f}\n{physics.filter_text(p, row.rate)}")
         + (f"\n{res.verlust_text()}" if res is not None and res.verluste else "")
@@ -160,7 +159,7 @@ def live_zeile(win) -> Optional[Dict[str, str]]:
         "name": "Letzter Lauf\nnicht gespeichert",
         "fahrzeug": _setup_text(win, win.vehicle_combo.currentData(), win.setup_combo.currentData()),
         "ergebnis": f"{d['ps'][jp]:.1f} PS bei {d['n'][jp]:.0f} 1/min\n{d['nm'][jm]:.1f} Nm bei {d['n'][jm]:.0f} 1/min",
-        "klima": f"{p.temp_c:.1f} °C, {p.p_mbar:.0f} mbar\nk = {physics.din70020(p.temp_c, p.p_mbar):.3f}",
+        "klima": physics.klima_text(p),
         "details": f"i = {p.ratio:.3f}, J = {p.inertia:.2f}",
         "art": "live",
     }

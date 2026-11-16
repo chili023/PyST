@@ -196,6 +196,51 @@ def _kurz(v: float) -> str:
     return zahl(v, 0 if a >= 100 else (1 if a >= 10 else 2))
 
 
+def fahnen_legen(liste: List[dict], r: QtCore.QRectF, cx: float, grundschrift: QtGui.QFont) -> List[dict]:
+    """Fähnchen eines Diagramms anordnen (Messen und Auswertung): rechts vom Cursor (am rechten Rand links davon),
+    nicht ueberlappend; passen sie nicht in eine Spalte, abwechselnd rechts und links, notfalls kleinere Schrift.
+    liste: [{"farbe", "voll", "vor", "nach", "zahlen": [Text], "ys": [y]}], r: Diagrammflaeche, cx: Cursor (Pixel)."""
+    if not liste:
+        return []
+    for g in liste:
+        g["text"] = g["vor"] + " / ".join(dict.fromkeys(g["zahlen"])) + g["nach"]
+        g["y0"] = sum(g["ys"]) / len(g["ys"])
+    liste.sort(key=lambda g: g["y0"])
+    hoehe = r.height() - 2
+    px, spalten = 12, 1
+    for px in (12, 11, 10):
+        h = px + 7
+        if len(liste) * (h + 2) <= hoehe:
+            spalten = 1
+            break
+        spalten = 2
+        if (len(liste) + 1) // 2 * (h + 2) <= hoehe:
+            break
+    h = px + 7
+    font = QtGui.QFont(grundschrift)
+    font.setPixelSize(px)
+    font.setBold(True)
+    fm = QtGui.QFontMetrics(font)
+    for g in liste:
+        g["w"] = fm.horizontalAdvance(g["text"]) + 12
+    if spalten == 1:
+        rechts = cx + 10 + max(g["w"] for g in liste) <= r.right()
+        seiten = [("rechts" if rechts else "links", liste)]
+    else:
+        seiten = [("rechts", liste[0::2]), ("links", liste[1::2])]
+    out = []
+    for seite, teil in seiten:
+        ys = fahnen_verteilen([g["y0"] - h / 2 for g in teil], h, r.top() + 1, r.bottom() - 1)
+        for g, y in zip(teil, ys):
+            x = cx + 10 if seite == "rechts" else cx - 10 - g["w"]
+            x = min(max(x, r.left() + 1), r.right() - g["w"] - 1)
+            weiss = theme.kontrast(g["farbe"], "#ffffff") >= theme.kontrast(g["farbe"], "#000000")
+            out.append({"x": x, "y": y, "w": g["w"], "h": h, "text": g["text"], "farbe": g["farbe"],
+                        "voll": g["voll"], "px": px, "schrift": "#ffffff" if weiss else "#000000",
+                        "punkt": (cx, g["y0"])})
+    return out
+
+
 class CursorFahnen(QtWidgets.QWidget):
     """Ebene ueber dem Diagramm (Maus geht durch): zeichnet die Fähnchen, die DynoPlot._fahnen_setzen berechnet.
     fahnen: [{"x", "y", "w", "h", "text", "farbe", "voll", "px", "schrift", "punkt": (x, y)}] in Widget-Koordinaten."""
@@ -1157,47 +1202,7 @@ class DynoPlot(pg.GraphicsLayoutWidget):
         self.fahnen.setzen(fahnen)
 
     def _fahnen_legen(self, liste: List[dict], r: QtCore.QRectF, cx: float) -> List[dict]:
-        """Fähnchen eines Diagramms anordnen: rechts vom Cursor (am rechten Rand links davon), nicht ueberlappend;
-        passen sie nicht in eine Spalte, abwechselnd rechts und links, notfalls kleinere Schrift."""
-        if not liste:
-            return []
-        for g in liste:
-            g["text"] = g["vor"] + " / ".join(dict.fromkeys(g["zahlen"])) + g["nach"]
-            g["y0"] = sum(g["ys"]) / len(g["ys"])
-        liste.sort(key=lambda g: g["y0"])
-        hoehe = r.height() - 2
-        px, spalten = 12, 1
-        for px in (12, 11, 10):
-            h = px + 7
-            if len(liste) * (h + 2) <= hoehe:
-                spalten = 1
-                break
-            spalten = 2
-            if (len(liste) + 1) // 2 * (h + 2) <= hoehe:
-                break
-        h = px + 7
-        font = QtGui.QFont(self.font())
-        font.setPixelSize(px)
-        font.setBold(True)
-        fm = QtGui.QFontMetrics(font)
-        for g in liste:
-            g["w"] = fm.horizontalAdvance(g["text"]) + 12
-        if spalten == 1:
-            rechts = cx + 10 + max(g["w"] for g in liste) <= r.right()
-            seiten = [("rechts" if rechts else "links", liste)]
-        else:
-            seiten = [("rechts", liste[0::2]), ("links", liste[1::2])]
-        out = []
-        for seite, teil in seiten:
-            ys = fahnen_verteilen([g["y0"] - h / 2 for g in teil], h, r.top() + 1, r.bottom() - 1)
-            for g, y in zip(teil, ys):
-                x = cx + 10 if seite == "rechts" else cx - 10 - g["w"]
-                x = min(max(x, r.left() + 1), r.right() - g["w"] - 1)
-                weiss = theme.kontrast(g["farbe"], "#ffffff") >= theme.kontrast(g["farbe"], "#000000")
-                out.append({"x": x, "y": y, "w": g["w"], "h": h, "text": g["text"], "farbe": g["farbe"],
-                            "voll": g["voll"], "px": px, "schrift": "#ffffff" if weiss else "#000000",
-                            "punkt": (cx, g["y0"])})
-        return out
+        return fahnen_legen(liste, r, cx, self.font())
 
     def values_at(self, key: str, n_rpm: float) -> Optional[Dict[str, float]]:
         d = self.data.get(key)

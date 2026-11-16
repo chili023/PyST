@@ -142,6 +142,7 @@ class RunController:
         self.go_timeout_s = GO_TIMEOUT_S
         self.klima_quelle = ""             # woher T/p des Laufs kommen (lauf.json, Ergebnis)
         self.klima_zeit = 0.0              # Zeitpunkt der Sensorantwort (0 = kein Sensorwert)
+        self.klima_warnung = ""            # Hinweis an den Kunden: Sensor stumm / Klima unplausibel (sonst "")
         self._klima_antwort: Optional[tuple] = None
         self._klima_fertig = threading.Event()
         self._t_go = 0.0
@@ -161,6 +162,7 @@ class RunController:
         self.ecu_data = None
         self.climate = None
         self.klima_zeit = 0.0
+        self.klima_warnung = ""
         self.run_start_t = 0.0
         self._t_start = time.time()
         if self.auto_climate:
@@ -171,8 +173,7 @@ class RunController:
             self.state = KLIMA
             threading.Thread(target=self._klima_lesen, args=(fertig,), daemon=True, name="pyst-klima").start()
             return
-        self.klima_quelle = "eingetragen (Sensor aus)"
-        self.message = ""
+        self._klima_eingetragen("Sensor aus")
         self._messung_starten()
         self._go()
 
@@ -194,9 +195,13 @@ class RunController:
             fertig.set()
 
     def _messung_starten(self):
+        # Lauf immer im Standardmodus des Geraets: Mega/F446 'N' (LabVIEW-identisches Telegramm, Frequenz aus dem
+        # Ringspeicher) – auch waehrend einer Dauermessung, die das Geraet auf 'D' geschaltet hat (Kunde 16.11.2026:
+        # Lauf im Modus D stockte); Basis mit Zange 'D' (Zuendstaerke mit aufzeichnen). Danach schaltet die
+        # Dauermessung selbst wieder auf 'D' (oszi.OsziPage.poll).
         dm = getattr(self.link, "default_mode", "N")
-        if dm != "N" and self.link.mode != dm:
-            self.link.set_mode(dm)                    # Basis mit Zange: Zuendstaerke mit aufzeichnen
+        if getattr(self.link, "has_diag", False) and getattr(self.link, "mode", dm) != dm:
+            self.link.set_mode(dm)
         self.link.start()
 
     def _klima_uebernehmen(self):
@@ -210,10 +215,30 @@ class RunController:
             self.message = f"Klima: {self.climate[0]:.1f} °C, {self.climate[1]:.1f} mbar{feuchte} vom Sensor"
         else:
             self.climate = None
-            self.klima_quelle = "eingetragen (kein Sensorwert)"
-            self.message = (f"Klima: eingetragener Wert {self.params.temp_c:.1f} °C, {self.params.p_mbar:.1f} mbar "
-                            "– kein Sensorwert")
+            self._klima_eingetragen("kein Sensorwert")
         self._go()
+
+    def _klima_eingetragen(self, grund: str):
+        """Ohne Sensorwert: plausible eingetragene Werte nehmen, sonst nicht korrigieren (k = 1, physics.ka_von).
+        Antwortet der Sensor nicht oder ist die Eingabe unplausibel, steht der Hinweis in klima_warnung/message."""
+        p = self.params
+        if physics.klima_plausibel(p.temp_c, p.p_mbar):
+            self.klima_quelle = f"eingetragen ({grund})"
+            if grund == "Sensor aus":
+                self.klima_warnung = ""
+                self.message = ""
+                return
+            self.klima_warnung = (f"⚠ Klimasensor (BME280) antwortet nicht – gerechnet mit eingetragenem Klima "
+                                  f"{p.temp_c:.1f} °C, {p.p_mbar:.0f} mbar. Adresse bme_addr prüfen (0x76/0x77).")
+        else:
+            self.klima_quelle = f"nicht korrigiert ({grund}, Eingabe unplausibel)"
+            sensor = ("Klimasensor (BME280) antwortet nicht, " if grund == "kein Sensorwert"
+                      else "Klimasensor aus, ")
+            self.klima_warnung = (f"⚠ {sensor}eingetragenes Klima {p.temp_c:.1f} °C, {p.p_mbar:.0f} mbar ist "
+                                  f"unplausibel – Leistung NICHT korrigiert (k = 1). Klima in den Einstellungen "
+                                  f"eintragen" + (" oder bme_addr prüfen (0x76/0x77)." if grund == "kein Sensorwert"
+                                                  else "."))
+        self.message = self.klima_warnung
 
     def _go(self):
         del self.frames[:]
@@ -227,6 +252,8 @@ class RunController:
             return f"Klima: {p.temp_c:.1f} °C, {p.p_mbar:.0f} mbar vom Sensor ({self.klima_quelle[7:]})"
         if self.klima_quelle:
             grund = "Sensor aus" if "Sensor aus" in self.klima_quelle else "kein Sensorwert"
+            if not physics.klima_plausibel(p.temp_c, p.p_mbar):
+                return f"Klima: NICHT korrigiert (k = 1), Eingabe {p.temp_c:.1f} °C, {p.p_mbar:.0f} mbar unplausibel ({grund})"
             return f"Klima: eingetragener Wert {p.temp_c:.1f} °C, {p.p_mbar:.0f} mbar ({grund})"
         return ""
 

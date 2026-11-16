@@ -406,6 +406,27 @@ class DauerAndShare(unittest.TestCase):
             self.assertIn("Fehler Rolle", ch)
             self.assertFalse(any(f.startswith("teil_") for f in os.listdir(folder)))
 
+    def test_recorder_ohne_telegramm(self):
+        """Dauermessung ohne ein Telegramm (roh.csv nur Kopfzeile): laedt leer statt KeyError 'n_rolle_1_min';
+        ein normaler Lauf ohne Daten meldet einen lesbaren Fehler."""
+        import json
+        with tempfile.TemporaryDirectory() as d:
+            rec = Recorder(d, physics.DynoParams(), port="SIM", diag=True)
+            rec.add_marker("nur Marker", 0.0)
+            folder = rec.close()
+            run = storage.load_any(folder)
+            self.assertEqual(run["kind"], "dauermessung")
+            self.assertEqual(len(run["dt"]), 0)
+            self.assertEqual(run["markers"], [(0.0, "nur Marker")])
+            meta = os.path.join(folder, "lauf.json")
+            with open(meta, encoding="utf-8") as fh:
+                m = json.load(fh)
+            m["art"] = "lauf"
+            with open(meta, "w", encoding="utf-8") as fh:
+                json.dump(m, fh)
+            with self.assertRaisesRegex(ValueError, "ohne Messdaten"):
+                storage.load_any(folder)
+
     def _db_with_runs(self, d):
         from pyst.db import Database
         db = Database(os.path.join(d, "quelle", "pyst.db"))

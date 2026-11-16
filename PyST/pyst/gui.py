@@ -496,8 +496,16 @@ class SettingsPage(QtWidgets.QScrollArea):
         self.loss_label.setText(text)
 
     def update_ka(self):
-        ka = physics.din70020(self.fields["temp_c"].value(), self.fields["p_mbar"].value())
-        self.ka_label.setText(f"DIN 70020 k = {ka:.3f}")
+        t, p = self.fields["temp_c"].value(), self.fields["p_mbar"].value()
+        if physics.klima_plausibel(t, p):
+            self.ka_label.setText(f"DIN 70020 k = {physics.din70020(t, p):.3f}")
+            theme.stufe(self.ka_label, "")
+        else:
+            lo_t, hi_t = physics.KLIMA_PLAUSIBEL_T_C
+            lo_p, hi_p = physics.KLIMA_PLAUSIBEL_P_MBAR
+            self.ka_label.setText(f"⚠ Klima unplausibel – Leistung wird NICHT korrigiert (k = 1).\n"
+                                  f"Plausibel: {lo_t:.0f} … {hi_t:.0f} °C, {lo_p:.0f} … {hi_p:.0f} mbar")
+            theme.stufe(self.ka_label, theme.FEHLER)
 
     def update_filter_label(self, rate: Optional[float] = None):
         if rate:
@@ -723,6 +731,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.page_oszi = OsziPage(self.settings, lambda: save_settings(self.settings), lambda: self.link,
                                   lambda: self.page_settings.params(), self.db.runs_dir,
                                   lambda: self.vehicle_combo.currentText() if self.vehicle_combo.currentData() else "")
+        self.page_oszi.lauf_aktiv = lambda: bool(self.ctrl and self.ctrl.state in ACTIVE)
         self.tabs.addTab(self._build_measure(), "Messen")
         self.tabs.addTab(self.page_db, "Fahrzeuge && Setups")
         self.tabs.addTab(self.viewer, "Auswertung")
@@ -1211,6 +1220,12 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.cache.put(rid, entry)
         if fehler is not None:
             self.db.update_run(rid, fehler=fehler)
+        if res is not None and row.ka and abs(row.ka - res.ka) > 1e-3:
+            # gespeicherter Hoechstwert mit anderem k (vor 1.4.4: unplausibles Klima wie 0 °C / 500 mbar ging mit
+            # k = 1,96 in die Rechnung) -> Liste und Laufleiste zeigen ab jetzt den neu gerechneten Wert
+            log.info("Lauf %s: k %.3f -> %.3f, Hoechstwerte neu", rid, row.ka, res.ka)
+            self.db.update_run(rid, p_max=res.p_max, n_pmax=res.n_pmax, m_max=res.m_max, n_mmax=res.n_mmax,
+                               ka=res.ka)
         return entry
 
     def _viewer_channels(self, rid):
@@ -1502,7 +1517,8 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
             s.fields["p_mbar"].setValue(self.ctrl.params.p_mbar)
             self._klima_gelesen(c)
         elif self.ctrl.state == WAIT:
-            self.statusBar().showMessage(self.ctrl.klima_text(), 8000)
+            warnung = getattr(self.ctrl, "klima_warnung", "")
+            self.statusBar().showMessage(warnung or self.ctrl.klima_text(), 30000 if warnung else 8000)
         self.result_label.setText(self.ctrl.message)
 
     def on_abort(self):
@@ -1527,7 +1543,9 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
                 self.page_kalib.show_result(coast, self._coast_label(None))
             return
         klima = self.ctrl.klima_text()
-        self.result_label.setText(r.summary() + f"\nEnde: {self.ctrl.message or r.end_reason}   |   "
+        warnung = getattr(self.ctrl, "klima_warnung", "")
+        self.result_label.setText((f"{warnung}\n" if warnung else "")
+                                  + r.summary() + f"\nEnde: {(self.ctrl.message if self.ctrl.message != warnung else '') or r.end_reason}   |   "
                                   f"{len(self.ctrl.frames)} Telegramme, {self.link.lost} verloren"
                                   + (f"   |   {klima}" if klima else "")
                                   + (f"\n{ratio_text}" if ratio_text else "")
@@ -1537,6 +1555,10 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
                              "#b8e6b8")
         else:
             self._set_status(f"{r.p_max:.1f} PS bei {r.n_pmax:.0f} 1/min", "#b8e6b8")
+        if warnung:                                       # Kunde muss es sehen: Zustand gelb statt gruen
+            kurz = "Klima NICHT korrigiert" if "NICHT" in warnung else "ohne Klimasensor"
+            self._set_status(f"{r.p_max:.1f} PS bei {r.n_pmax:.0f} 1/min  ·  ⚠ {kurz}", theme.WARNUNG)
+            self.statusBar().showMessage(warnung, 60000)
         self._lauf_merken(self.ctrl)                      # Stand fuer „Lauf fertig“ und „Lauf speichern“
         rid = None
         if self.autosave.isChecked():

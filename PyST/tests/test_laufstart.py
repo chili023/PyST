@@ -233,10 +233,56 @@ class Ablauf(unittest.TestCase):
         self.assertIsNone(ctrl.climate)
         self.assertEqual((p.temp_c, p.p_mbar), (24.0, 1001.0))
         self.assertEqual(ctrl.klima_quelle, "eingetragen (kein Sensorwert)")
-        self.assertIn("eingetragener Wert", ctrl.message)
+        self.assertIn("antwortet nicht", ctrl.message)                 # Kunde wird gewarnt
+        self.assertIn("bme_addr", ctrl.klima_warnung)
+        self.assertIn("eingetragenem Klima 24.0 °C, 1001 mbar", ctrl.klima_warnung)
         self.assertIn("eingetragener Wert", ctrl.klima_text())
         self.assertIn("kein Sensorwert", ctrl.klima_text())
         ctrl.abort()
+
+    def test_klima_stumm_und_eingabe_unplausibel_nicht_korrigiert(self):
+        """Kunde 16.11.2026: BME stumm, im Feld 0 °C / 500 mbar -> nicht korrigieren (k = 1), deutlich warnen."""
+        L = FakeLink(sim_frames(SimEngine(), 25), klima_dauer=10.0)
+        p = physics.DynoParams(n_stop=0, temp_c=0.0, p_mbar=500.0)
+        ctrl = runner.RunController(L, p, auto_climate=True)
+        ctrl.klima_timeout_s = 0.2
+        ctrl.start()
+        self.assertTrue(bis(lambda: (ctrl.poll() or True) and ctrl.state != runner.KLIMA, 3.0))
+        self.assertTrue(ctrl.klima_quelle.startswith("nicht korrigiert"))
+        self.assertIn("NICHT korrigiert (k = 1)", ctrl.klima_warnung)
+        self.assertIn("bme_addr", ctrl.klima_warnung)
+        self.assertIn("NICHT korrigiert", ctrl.klima_text())
+        self._lauf(ctrl)
+        self.assertEqual(ctrl.state, runner.DONE)
+        self.assertEqual(ctrl.result.ka, 1.0)
+        import json
+        import tempfile
+        from pyst import storage
+        with tempfile.TemporaryDirectory() as d:
+            ordner = storage.save_run(ctrl, base_dir=d)
+            with open(os.path.join(ordner, "lauf.json"), encoding="utf-8") as fh:
+                meta = json.load(fh)
+        self.assertIn("NICHT korrigiert", meta["klima_warnung"])
+        self.assertEqual((meta["parameter"]["temp_c"], meta["parameter"]["p_mbar"]), (0.0, 500.0))  # Eingabe bleibt
+
+    def test_sensor_aus_plausibel_ohne_warnung_unplausibel_mit(self):
+        ctrl = runner.RunController(FakeLink([]), physics.DynoParams(temp_c=22.0, p_mbar=980.0), auto_climate=False)
+        ctrl.start()
+        self.assertEqual(ctrl.klima_warnung, "")
+        ctrl = runner.RunController(FakeLink([]), physics.DynoParams(temp_c=20.0, p_mbar=500.0), auto_climate=False)
+        ctrl.start()
+        self.assertIn("NICHT korrigiert", ctrl.klima_warnung)
+        self.assertNotIn("antwortet nicht", ctrl.klima_warnung)
+
+    def test_plausibilisierer(self):
+        self.assertTrue(physics.klima_plausibel(20.0, 1013.0))
+        self.assertTrue(physics.klima_plausibel(-10.0, 750.0))
+        for t, pm in ((0.0, 500.0), (0.0, 0.0), (20.0, 1200.0), (80.0, 1000.0), (float("nan"), 1000.0), (None, 1)):
+            self.assertFalse(physics.klima_plausibel(t, pm), (t, pm))
+        self.assertEqual(physics.ka_von(physics.DynoParams(temp_c=0.0, p_mbar=500.0)), 1.0)
+        self.assertAlmostEqual(physics.ka_von(physics.DynoParams(temp_c=18.4, p_mbar=987.6)),
+                               physics.din70020(18.4, 987.6))
+        self.assertIn("nicht korrigiert", physics.klima_text(physics.DynoParams(temp_c=0.0, p_mbar=500.0)))
 
     def test_klima_aus_keine_phase(self):
         L = FakeLink([])

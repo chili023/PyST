@@ -334,6 +334,51 @@ class Auswertung(unittest.TestCase):
         v._set_cursor_x(5000.0, frei=True)
         self.assertEqual(len(k.laeufe), 1)
 
+    def test_skala_links_zeigt_echte_werte(self):
+        """Die normierten Kurven bekommen links die Teilung des gewaehlten Kanals in echten Einheiten."""
+        v = self.v
+        v.add_runs(self.ids[:1])
+        pump(0.1)
+        self.assertEqual(v.achse_kanal_von(0), "Leistung")                # ohne Klick: erster Kanal mit Daten
+        ax = v.plots[0].getAxis("left")
+        lo, hi = ax.bereich
+        werte = [lo + t * (hi - lo) for _sp, ticks in ax.tickValues(0.0, 1.0, 300) for t in ticks]
+        self.assertTrue(werte)
+        for w in werte:                                                   # runde Teilung in PS
+            self.assertAlmostEqual(w, round(w * 4) / 4, places=6)
+        self.assertIn("Leistung [PS]", ax.labelText)
+
+    def test_kurve_anklicken_wechselt_skala(self):
+        v = self.v
+        v.add_runs(self.ids[:1])
+        pump(0.1)
+        v.achse_waehlen(0, "Drehmoment")
+        self.assertEqual(v.achse_kanal_von(0), "Drehmoment")
+        ax = v.plots[0].getAxis("left")
+        self.assertEqual(ax.bereich, v._feld_bereiche[0]["Drehmoment"])
+        self.assertIn("Drehmoment [Nm]", ax.labelText)
+        self.assertEqual(v.achse_kanal_von(1), "Lambda")                  # anderes Feld unberuehrt
+        v.add_runs(self.ids[1:2])                                          # neu zeichnen: Wahl bleibt
+        pump(0.1)
+        self.assertEqual(v.achse_kanal_von(0), "Drehmoment")
+        self.assertIn("Drehmoment [Nm]", v.plots[0].getAxis("left").labelText)
+
+    def test_fahnen_am_cursor_wie_daten(self):
+        """Ein Fähnchen je Kurve an der Cursorstelle mit den Zahlen aus den Daten."""
+        v = self.v
+        v.add_runs(self.ids[:1])
+        pump(0.1)
+        rid = self.ids[0]
+        v._set_cursor_x(6000)
+        v._update_cursor()
+        pump(0.05)
+        self.assertEqual(v.fahnen_texte(), [f"{zahl(6000 / 300 + rid / 2, 1)} PS", f"{zahl(20.0 + rid, 1)} Nm",
+                                            "0,90 λ"])
+        v._set_cursor_x(8000)
+        v._update_cursor()
+        pump(0.05)
+        self.assertEqual(v.fahnen_texte()[0], f"{zahl(8000 / 300 + rid / 2, 1)} PS")
+
     def test_cursor_folgt_maus_ueber_den_ersten_lauf_hinaus(self):
         """Zwei Laeufe, der zweite dreht hoeher: der Cursor geht bis ans Ende des zweiten; der erste zeigt dort „–“,
         unten an der Linie steht die genaue Drehzahl."""
