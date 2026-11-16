@@ -44,8 +44,11 @@ def run_payload(label: str, run: Dict[str, Any], res, ch: Dict[str, Any], p: phy
     """Daten eines Laufs fuer die HTML-Datei (Kurve ueber Drehzahl bzw. bei Dauermessungen ueber der Zeit)."""
     out: Dict[str, Any] = {"label": label, "fahrzeug": vehicle, "setup": setup, "notiz": notiz,
                            "datum": datum, "kenn": {}, "fehler": {k: round(v, 1) for k, v in (fehler or {}).items()}}
-    out["kenn"]["klima"] = (f"{p.temp_c:.1f} °C · {p.p_mbar:.0f} mbar · k = {physics.din70020(p.temp_c, p.p_mbar):.3f}"
-                            .replace(".", ",") + " (DIN 70020)")
+    if physics.klima_plausibel(p.temp_c, p.p_mbar):
+        out["kenn"]["klima"] = (f"{p.temp_c:.1f} °C · {p.p_mbar:.0f} mbar · k = {physics.din70020(p.temp_c, p.p_mbar):.3f}"
+                                .replace(".", ",") + " (DIN 70020)")
+    else:
+        out["kenn"]["klima"] = physics.klima_text(p, " · ").replace(".", ",")
     if res is not None and res.full_ps is not None and len(res.n):
         seg = res.segment
         idx = _thin(len(res.n))

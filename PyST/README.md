@@ -1,4 +1,4 @@
-# PyST 1.4.3
+# PyST 1.4.4
 
 Bedienung mit Bildern: [Wiki](https://github.com/chili023/PyST/wiki)
 

@@ -2,7 +2,7 @@
 
 Open-Source-Leistungsprüfstand (Rollenprüfstand):
 
-- **PyST 1.4.3** – PC-Software in Python/Qt für **Mac, Linux (Raspberry Pi) und Windows**.
+- **PyST 1.4.4** – PC-Software in Python/Qt für **Mac, Linux (Raspberry Pi) und Windows**.
   Rechnet wie LabVIEW 3.2.1 (an echten Läufen geprüft: gleiche Pmax und n(Pmax)), mit Datenbank für
   Fahrzeuge/Setups/Läufe, Auswerter im Stil von MegaLogViewer, PDF/CSV-Export, Import von LabVIEW-Läufen.
 - **Neue Oberfläche (1.4.1):** Tag-, Nacht- und Auto-Thema mit geprüftem Kontrast, Statusleiste mit farbigen Feldern
@@ -17,6 +17,9 @@ Open-Source-Leistungsprüfstand (Rollenprüfstand):
 - **Neu in 1.4.3 (Fehlerbehebung):** Leistungslauf während einer laufenden Dauermessung stockte und endete nicht,
   Klima 0 °C / 500 mbar bei nicht antwortendem Sensor, Dauermessung ohne Telegramm ließ sich nicht speichern. Siehe
   [Release Notes 1.4.3](docs/RELEASE_NOTES_1.4.3.md).
+- **Neu in 1.4.4:** Klima-Plausibilisierung (unplausibles Klima wird nicht korrigiert, deutliche Warnung bei stummem
+  Klimasensor), in der Auswertung Skala links für die angeklickte Kurve und Fähnchen am Cursor. Siehe
+  [Release Notes 1.4.4](docs/RELEASE_NOTES_1.4.4.md).
 - **PyST-Basis mit Funk-Zündzange:** Klima, Lambda, EGT, Funk-Zange mit frei belegbaren Tasten, WLAN, WLAN-Steckdosen
   (Gebläse/Absaugung automatisch), signierte Firmware-Updates direkt aus PyST.
 - **PST-STM32-Firmware** – neue Firmware für die Messelektronik auf **STM32F446RE (Nucleo-64)**.

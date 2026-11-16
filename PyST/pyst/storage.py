@@ -140,6 +140,7 @@ def save_run(ctrl, vehicle: str = "", firmware: str = "", base_dir: str = "") ->
         # woher T/p kommen: "Sensor 14:30:05" (frisch nach START gelesen) bzw. "eingetragen (…)"
         "klima_quelle": getattr(ctrl, "klima_quelle", ""),
         "klima_zeit": _zeit_iso(getattr(ctrl, "klima_zeit", 0.0)),
+        "klima_warnung": getattr(ctrl, "klima_warnung", ""),
         # Laufbeginn: Drehzahl stieg start_anstieg_s lang, die Daten beginnen am Anfang dieses Fensters
         "laufbeginn": _zeit_iso(getattr(ctrl, "run_start_t", 0.0)),
         "com_verloren": ctrl.link.lost,

@@ -46,6 +46,34 @@ def din70020(temp_c: float, p_mbar: float) -> float:
     return (1013.0 / p_mbar) * ((temp_c + 273.15) / 293.15) ** 0.5
 
 
+# Klima, mit dem eine Leistungskorrektur noch Sinn ergibt (Pruefstand von Meereshoehe bis ~3000 m, Halle bis Hitze).
+# Ausserhalb: nicht korrigieren (k = 1). Kunde 16.11.2026: BME antwortete nicht, im Feld standen 0 °C / 500 mbar
+# (alte Sensor-Antwort „0;0“, auf das Feldminimum begrenzt) -> k = 1,96, PS und Nm fast doppelt.
+KLIMA_PLAUSIBEL_T_C = (-30.0, 55.0)
+KLIMA_PLAUSIBEL_P_MBAR = (700.0, 1100.0)
+
+
+def klima_plausibel(temp_c: float, p_mbar: float) -> bool:
+    try:
+        t, p = float(temp_c), float(p_mbar)
+    except (TypeError, ValueError):
+        return False
+    return (KLIMA_PLAUSIBEL_T_C[0] <= t <= KLIMA_PLAUSIBEL_T_C[1]
+            and KLIMA_PLAUSIBEL_P_MBAR[0] <= p <= KLIMA_PLAUSIBEL_P_MBAR[1])
+
+
+def ka_von(p) -> float:
+    """Korrekturfaktor, mit dem gerechnet wird: DIN 70020 bei plausiblem Klima, sonst 1 (nicht korrigiert)."""
+    return din70020(p.temp_c, p.p_mbar) if klima_plausibel(p.temp_c, p.p_mbar) else 1.0
+
+
+def klima_text(p, trenner: str = "\n") -> str:
+    """„18.4 °C, 988 mbar⏎k = 1.012“ bzw. bei unplausiblem Klima der Hinweis, dass nicht korrigiert wurde."""
+    if klima_plausibel(p.temp_c, p.p_mbar):
+        return f"{p.temp_c:.1f} °C, {p.p_mbar:.0f} mbar{trenner}k = {din70020(p.temp_c, p.p_mbar):.3f}"
+    return f"nicht korrigiert (k = 1){trenner}Klima {p.temp_c:.1f} °C, {p.p_mbar:.0f} mbar unplausibel"
+
+
 def loss_torque(n_roll: np.ndarray, m0: float, m1: float, n1: float, m2: float = 0.0) -> np.ndarray:
     """Verlustmoment an der Rolle [Nm]: Mv = M0 + n * (M1 - M0) / n1 (+ m2 * n/1000 * (n - n1)/1000).
     m2 = 0: linear wie LabVIEW. Der quadratische Anteil verschwindet bei n = 0 und n = n1."""
@@ -295,7 +323,7 @@ def evaluate(n_roll_raw, dt_raw, p: DynoParams, n_meas_raw=None, afr_raw=None, e
     afr_raw = np.asarray(afr_raw, dtype=float) if afr_raw is not None else zeros
     egt_raw = np.asarray(egt_raw, dtype=float) if egt_raw is not None else zeros
 
-    ka = din70020(p.temp_c, p.p_mbar)
+    ka = ka_von(p)                                 # unplausibles Klima: nicht korrigieren
     i = p.ratio
     dq = int(p.dq)
     n_roll_f = filter_roll(n_roll_raw, int(p.ma))
