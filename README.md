@@ -2,7 +2,7 @@
 
 Open-Source-Leistungsprüfstand (Rollenprüfstand):
 
-- **PyST 1.4.2** – PC-Software in Python/Qt für **Mac, Linux (Raspberry Pi) und Windows**.
+- **PyST 1.4.3** – PC-Software in Python/Qt für **Mac, Linux (Raspberry Pi) und Windows**.
   Rechnet wie LabVIEW 3.2.1 (an echten Läufen geprüft: gleiche Pmax und n(Pmax)), mit Datenbank für
   Fahrzeuge/Setups/Läufe, Auswerter im Stil von MegaLogViewer, PDF/CSV-Export, Import von LabVIEW-Läufen.
 - **Neue Oberfläche (1.4.1):** Tag-, Nacht- und Auto-Thema mit geprüftem Kontrast, Statusleiste mit farbigen Feldern
@@ -14,6 +14,9 @@ Open-Source-Leistungsprüfstand (Rollenprüfstand):
   12 Live-Felder, **Rollen-Kalibrierung** (einmal mit abgehobenem Rad, teilt den Ausrollversuch in Rolle und
   Reifen/Kette/Getriebe auf) und Unterreiter
   **Software & Firmware** mit der PyST-Version. Siehe [Release Notes 1.4.2](docs/RELEASE_NOTES_1.4.2.md).
+- **Neu in 1.4.3 (Fehlerbehebung):** Leistungslauf während einer laufenden Dauermessung stockte und endete nicht,
+  Klima 0 °C / 500 mbar bei nicht antwortendem Sensor, Dauermessung ohne Telegramm ließ sich nicht speichern. Siehe
+  [Release Notes 1.4.3](docs/RELEASE_NOTES_1.4.3.md).
 - **PyST-Basis mit Funk-Zündzange:** Klima, Lambda, EGT, Funk-Zange mit frei belegbaren Tasten, WLAN, WLAN-Steckdosen
   (Gebläse/Absaugung automatisch), signierte Firmware-Updates direkt aus PyST.
 - **PST-STM32-Firmware** – neue Firmware für die Messelektronik auf **STM32F446RE (Nucleo-64)**.
@@ -94,7 +97,7 @@ docs/                  Roadmap, Zündsignal-Diagnose, Firmware-Messung, Protokol
 ## Dokumentation
 
 - **[Wiki](https://github.com/chili023/PyST/wiki)** – alle Funktionen der Oberfläche mit Bildern (Kopie: [docs/wiki](docs/wiki/Home.md))
-- [Release Notes 1.4.2](docs/RELEASE_NOTES_1.4.2.md) · [1.4.1](docs/RELEASE_NOTES_1.4.1.md)
+- [Release Notes 1.4.3](docs/RELEASE_NOTES_1.4.3.md) · [1.4.2](docs/RELEASE_NOTES_1.4.2.md) · [1.4.1](docs/RELEASE_NOTES_1.4.1.md)
 - [INSTALL.md](INSTALL.md) – Installation Mac / Linux / Windows, Flashen STM32 und Mega
 - [PyST/README.md](PyST/README.md) – Bedienung, Rechenweg, Kommandozeile
 - [firmware/stm32/README.md](firmware/stm32/README.md) – Firmware, Protokoll, Anschlussbelegung, Einstellungen

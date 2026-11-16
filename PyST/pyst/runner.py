@@ -194,9 +194,13 @@ class RunController:
             fertig.set()
 
     def _messung_starten(self):
+        # Lauf immer im Standardmodus des Geraets: Mega/F446 'N' (LabVIEW-identisches Telegramm, Frequenz aus dem
+        # Ringspeicher) – auch waehrend einer Dauermessung, die das Geraet auf 'D' geschaltet hat (Kunde 16.11.2026:
+        # Lauf im Modus D stockte); Basis mit Zange 'D' (Zuendstaerke mit aufzeichnen). Danach schaltet die
+        # Dauermessung selbst wieder auf 'D' (oszi.OsziPage.poll).
         dm = getattr(self.link, "default_mode", "N")
-        if dm != "N" and self.link.mode != dm:
-            self.link.set_mode(dm)                    # Basis mit Zange: Zuendstaerke mit aufzeichnen
+        if getattr(self.link, "has_diag", False) and getattr(self.link, "mode", dm) != dm:
+            self.link.set_mode(dm)
         self.link.start()
 
     def _klima_uebernehmen(self):

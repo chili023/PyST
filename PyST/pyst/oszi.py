@@ -69,6 +69,7 @@ SETTING_HELP = {
     "pullup": "interne Pull-up-Widerstände an den Eingängen (0/1)",
     "thermo": "Thermoelement vorhanden (0/1) – ändert das normale Telegramm (EGT)",
     "bme_addr": "I²C-Adresse des Klimasensors (hex, 76 oder 77)",
+    "afr_addr": "I²C-Adresse des Lambda-Controllers Spartan 2 OEM (Standard 1); antwortet er nicht, meldet der Mega AFR 20,0",
     "ring_ign": "Ringspeicher Zündung: Mittelung über so viele Perioden",
     "ring_roll": "Ringspeicher Rolle: Mittelung über so viele Perioden",
     "ign_lockout_pct": "Doppelimpulsfilter Zündung: Periode kürzer als (100 − x) % der letzten wird verworfen (0 = aus)",
@@ -228,6 +229,9 @@ class OsziPage(QtWidgets.QWidget):
         self.armed = True
         self._last_keepalive = 0.0
         self._last_draw = 0.0
+        # Leistungslauf aktiv (setzt das Hauptfenster): dann gehoert die Ausgabe dem Lauf (Klima 'e', Start, Stopp),
+        # die Dauermessung zeichnet nur mit und stoesst die Ausgabe nicht an
+        self.lauf_aktiv: Callable[[], bool] = lambda: False
         self.selected = [c for c in settings.get("oszi_kanaele", DEFAULT_LIVE) if c in LIVE_CHANNELS] or DEFAULT_LIVE
 
         root = QtWidgets.QVBoxLayout(self)
@@ -755,7 +759,14 @@ class OsziPage(QtWidgets.QWidget):
             link.check_burst_timeout()
         if link is not None and link._burst is not None and link._burst.n:
             self.b_state.setText(f"Burst-Ausgabe: {len(link._burst.edges)} / {link._burst.n} Flanken …")
-        if self.rec is not None and link is not None and not link.streaming() \
+        if self.rec is not None and link is not None and link.has_diag and self.mode_d.isChecked() \
+                and link.mode != "D" and not self.lauf_aktiv() and time.time() - self._last_keepalive > 2.0:
+            self._last_keepalive = time.time()            # Lauf vorbei: Dauermessung wieder mit Diagnose-Telegramm
+            try:
+                link.set_mode("D")
+            except Exception:
+                pass
+        if self.rec is not None and link is not None and not link.streaming() and not self.lauf_aktiv() \
                 and time.time() - self._last_keepalive > 2.0:
             self._last_keepalive = time.time()            # Ausgabe am Laufen halten (Autostopp der Firmware)
             link.keepalive()

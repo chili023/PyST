@@ -723,6 +723,7 @@ class MainWindow(MessenMixin, QtWidgets.QMainWindow):
         self.page_oszi = OsziPage(self.settings, lambda: save_settings(self.settings), lambda: self.link,
                                   lambda: self.page_settings.params(), self.db.runs_dir,
                                   lambda: self.vehicle_combo.currentText() if self.vehicle_combo.currentData() else "")
+        self.page_oszi.lauf_aktiv = lambda: bool(self.ctrl and self.ctrl.state in ACTIVE)
         self.tabs.addTab(self._build_measure(), "Messen")
         self.tabs.addTab(self.page_db, "Fahrzeuge && Setups")
         self.tabs.addTab(self.viewer, "Auswertung")

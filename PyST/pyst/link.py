@@ -327,6 +327,37 @@ def parse_line(line: str, t: float):
     return "T", line
 
 
+KLIMA_T_C = (-40.0, 85.0)          # Messbereich BME280 [°C]
+KLIMA_P_MBAR = (300.0, 1100.0)     # Messbereich BME280 [mbar]
+
+
+def climate_fields(line: str) -> Optional[Tuple[float, float, float]]:
+    """Zeile im Format der Klima-Antwort auf 'e' ("T;P[Pa];H" bzw. "T;P") -> (degC, mbar, %), sonst None.
+    Prueft nur das Format, nicht den Messbereich (parse_climate)."""
+    parts = line.strip().split(";")
+    if not 2 <= len(parts) <= 3:
+        return None
+    try:
+        t, p = float(parts[0]), float(parts[1]) / 100.0
+        h = float(parts[2]) if len(parts) > 2 else 0.0
+    except ValueError:
+        return None
+    return t, p, h
+
+
+def plausible_climate(c: Tuple[float, float, float]) -> bool:
+    t, p, h = c
+    return KLIMA_T_C[0] <= t <= KLIMA_T_C[1] and KLIMA_P_MBAR[0] <= p <= KLIMA_P_MBAR[1] and 0.0 <= h <= 100.0
+
+
+def parse_climate(line: str) -> Optional[Tuple[float, float, float]]:
+    """Klima-Antwort -> (degC, mbar, %), nur Werte im Messbereich des BME280, sonst None. Ein Sensor, der nicht
+    antwortet oder nicht hochgekommen ist, liefert beim Mega "0.0;0;0.0" (0 °C / 0 Pa) – das darf nie als Klima in
+    die Leistung eingehen (Kunde 16.11.2026: T 0 °C, p auf 500 mbar begrenzt)."""
+    c = climate_fields(line)
+    return c if c is not None and plausible_climate(c) else None
+
+
 def command_word(cmd: str) -> str:
     """'#ZANGE SET tasten 1' -> 'ZANGE'"""
     parts = cmd.lstrip("#").split()
@@ -893,14 +924,13 @@ class DynoLink(BasisCommands):
                     line = self.text_lines.get(timeout=0.02)
                 except queue.Empty:
                     continue
-                parts = line.split(";")
-                if len(parts) >= 2:
-                    try:
-                        t, p = float(parts[0]), float(parts[1]) / 100.0
-                        h = float(parts[2]) if len(parts) > 2 else 0.0
-                        return t, p, h
-                    except ValueError:
-                        continue
+                c = climate_fields(line)
+                if c is None:
+                    continue
+                if plausible_climate(c):
+                    return c
+                log.warning("Klimawert ausserhalb des Messbereichs verworfen (Sensor?): %r", line[:60])
+                return None                           # die Antwort ist da, nur unbrauchbar: nicht weiter warten
             return None
 
     def drain_events(self) -> list:
@@ -931,7 +961,14 @@ class DynoLink(BasisCommands):
         if not self._cmd_lock.acquire(blocking=False):
             return False
         try:
-            return self.start(timeout=0.3)
+            # anders als start(): Telegramme in der Warteschlange und die Zaehler bleiben (die Dauermessung bzw. ein
+            # Lauf liest sie noch); nur die Zyklusfolge beginnt neu, ein Neustart zaehlt nicht als Verlust
+            self._last_cycle = None
+            if self.has_diag:
+                return self.ok(self.command("#RUN 1", timeout=0.3))
+            if self.is_stm or not self.streaming():
+                self.send("m")
+            return True
         finally:
             self._cmd_lock.release()
 
