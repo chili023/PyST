@@ -282,6 +282,11 @@ def _load_pyst_files(read: Callable[[str], Optional[str]], names: List[str], nam
         if not parts:
             raise ValueError(f"{name}: keine Messdaten (roh.csv/teil_*.csv)")
         cols = {k: np.concatenate(v) for k, v in parts.items()}
+    if any(k not in cols for k in ("n_rolle_1_min", "dt_s", "n_zuendung_1_min", "afr", "egt1_c")):
+        # roh.csv nur mit Kopfzeile (Dauermessung ohne ein Telegramm): leer laden statt KeyError
+        if meta.get("art", "lauf") != "dauermessung":
+            raise ValueError(f"{name}: roh.csv ohne Messdaten")
+        cols = {**{k: np.array([], float) for k in ROH_HEADER}, **cols}
     p = physics.DynoParams(**{k: v for k, v in meta["parameter"].items()
                               if k in physics.DynoParams.__dataclass_fields__})
     r = {

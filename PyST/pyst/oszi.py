@@ -12,6 +12,7 @@ Reiter „Oszi / Dauermessung“: die Messelektronik als Messwerkzeug (Zündung 
 - Geraete-Einstellungen (#GET/#SET/#SAVE/#DEFAULTS) ohne Neu-Flashen.
 """
 import os
+import shutil
 import time
 from collections import deque
 from typing import Callable, Dict, List, Optional
@@ -593,11 +594,21 @@ class OsziPage(QtWidgets.QWidget):
     def stop_recording(self):
         if self.rec is None:
             return
+        n = self.rec.n
         folder = self.rec.close()
         self.rec = None
         self.rec_btn.setText("●  Dauermessung starten")
         if self.link is not None and self.link.has_diag and self.link.mode != self.link.default_mode:
             self.link.set_mode(self.link.default_mode)
+        if n == 0:                                   # kein Telegramm: nichts zum Auswerten, Ordner wieder weg
+            shutil.rmtree(folder, ignore_errors=True)
+            self.rec_label.setText("nicht gespeichert: keine Daten vom Messboard")
+            QtWidgets.QMessageBox.warning(
+                self, "Dauermessung",
+                "Während der Dauermessung kam kein einziges Telegramm vom Messboard an – es wurde nichts "
+                "gespeichert.\n\nIst das Messboard verbunden und sendet es (Statusleiste unten, Anzeige "
+                "„keine Daten!“ neben der Aufnahmezeit)?")
+            return
         self.rec_label.setText(f"gespeichert: {os.path.basename(folder)}")
         self.saved.emit(folder)
 
