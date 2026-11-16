@@ -37,7 +37,7 @@ from .lauf_dialog import LaufSetupDialog
 from .laufleiste import Eintrag, LaufLeiste, datum_text, reihenfolge, schnellwert_zellen, zeit_text
 from .mittelwert_dialog import (BAND_ARTEN, BAND_STANDARD, MittelwertDialog, band_text, fuell_band,
                                 kanaele_aus_mittelwert, zusatz_lesen, zusatz_schreiben)
-from .plots import run_color_basis
+from .plots import CursorFahnen, _kurz, fahnen_legen, run_color_basis
 from .umbruch import UmbruchLayout
 
 PALETTE = ["#c62828", "#1f5fbf", "#2e7d32", "#ef6c00", "#6a1b9a", "#00838f", "#ad1457", "#4e342e",
@@ -55,7 +55,42 @@ BAND_ALPHA = 70
 # Live-Kanal je Fahrzeug (db.live_plaetze) -> Kanal der Auswertung: Balkenbereich und Zonen der Kacheln
 LIVE_ZU_KANAL = {"egt1": "EGT 1", "egt2": "EGT 2", "lam": "Lambda", "v": "Geschwindigkeit", "n": "Drehzahl Motor",
                  "ign": "Drehzahl Zündung", "rate": "Messfrequenz"}
-HINWEIS = "Maus = Cursor · ←/→ = ein Telegramm weiter · Mausrad = Zoom · ziehen = verschieben"
+HINWEIS = ("Maus = Cursor · ←/→ = ein Telegramm weiter · Mausrad = Zoom · ziehen = verschieben · "
+           "Kurve anklicken = ihre Skala links")
+SKALA_BREITE = 58                                                      # Platz fuer die Zahlen der linken Skala
+KLICK_BREITE = 8                                                       # Kurve anklickbar in so vielen Pixeln
+
+
+class SkalaAchse(pg.AxisItem):
+    """Linke Achse eines Feldes. Die Kurven liegen normiert (0 … 1) im Feld, jede auf ihren eigenen Bereich; die
+    Achse zeigt die echten Werte des gewaehlten Kanals (bereich = (lo, hi)) mit runder Teilung. Ohne Bereich leer."""
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.bereich: Optional[Tuple[float, float]] = None
+
+    def set_bereich(self, bereich: Optional[Tuple[float, float]]):
+        self.bereich = bereich if bereich and bereich[1] > bereich[0] else None
+        self.setStyle(showValues=self.bereich is not None)
+        self.picture = None
+        self.update()
+
+    def tickValues(self, minVal, maxVal, size):
+        if self.bereich is None:
+            return []
+        lo, hi = self.bereich
+        s = hi - lo
+        ticks = super().tickValues(lo + minVal * s, lo + maxVal * s, size)
+        return [(sp / s, [(v - lo) / s for v in vals]) for sp, vals in ticks]
+
+    def tickStrings(self, values, scale, spacing):
+        if self.bereich is None:
+            return ["" for _ in values]
+        lo, hi = self.bereich
+        s = hi - lo
+        schritt = spacing * s
+        dez = max(0, -int(math.floor(math.log10(schritt)))) if schritt > 0 else 0
+        return [zahl(lo + v * s, min(dez, 4)) for v in values]
 
 
 # ============================================================================================== reine Funktionen
@@ -177,6 +212,14 @@ class LogViewer(QtWidgets.QWidget):
         # Frueher startete jede Bewegung einen 25-ms-Timer neu: bei laufender Maus blieb rechts alles stehen und
         # sprang erst beim Anhalten (Testrueckmeldung 10.11.2026).
         self._cursor_plan: Optional[dict] = None
+        # Skala und Fähnchen: je Feld die Kurven (echte Werte, Bereich, Farbe) und der Kanal der linken Skala
+        self._kurven: List[List[dict]] = []
+        self._feld_bereiche: List[Dict[str, Tuple[float, float]]] = []
+        self.achse_kanal: Dict[int, str] = {}          # Feld -> zuletzt angeklickter Kanal
+        self.fahnen = CursorFahnen(self.glw)           # Werte am Cursor als Fähnchen je Kurve (wie Messen)
+        self._fahnen_takt = QtCore.QTimer(self)
+        self._fahnen_takt.setSingleShot(True)
+        self._fahnen_takt.timeout.connect(self._fahnen_setzen)
         theme.bei_wechsel(self, self._thema, sofort=False)
         self.glw.scene().sigMouseMoved.connect(self._mouse_moved)
         for sig in (self.xaxis.currentIndexChanged, self.only_seg.toggled, self.panes_spin.valueChanged):
@@ -1001,6 +1044,7 @@ class LogViewer(QtWidgets.QWidget):
     def _redraw(self):
         self.glw.clear()
         self.plots, self.lines = [], []
+        self._kurven, self._feld_bereiche = [], []
         self._bereiche, self._live = {}, None
         self._cursor_plan = None
         runs = self._runs_shown()
@@ -1011,13 +1055,13 @@ class LogViewer(QtWidgets.QWidget):
         prev = None
         n_panes = self.panes_spin.value()
         for p in range(n_panes):
-            pi = self.glw.addPlot(row=p, col=0)
+            pi = self.glw.addPlot(row=p, col=0, axisItems={"left": SkalaAchse(orientation="left")})
             theme.plotitem_stil(pi)
             pi.setMenuEnabled(False)
             pi.hideButtons()
             pi.showGrid(x=True, y=True, alpha=0.35)
-            pi.getAxis("left").setStyle(showValues=False)
-            pi.getAxis("left").setWidth(12)
+            pi.getAxis("left").set_bereich(None)
+            pi.getAxis("left").setWidth(SKALA_BREITE)
             for ax in ("top", "right"):                         # geschlossener Rahmen
                 pi.showAxis(ax)
                 pi.getAxis(ax).setStyle(showValues=False, tickLength=0)
@@ -1044,6 +1088,7 @@ class LogViewer(QtWidgets.QWidget):
                 key = self._unit(n) or n
                 o = ranges.get(key)
                 ranges[key] = r if o is None else (min(o[0], r[0]), max(o[1], r[1]))
+            kurven: List[dict] = []
             for ci, n in enumerate(names):
                 rng = ranges.get(self._unit(n) or n)
                 if rng is None:
@@ -1061,10 +1106,16 @@ class LogViewer(QtWidgets.QWidget):
                         if b is not None:
                             fuell_band(pi, x, (b[0] - lo) / (hi - lo), (b[1] - lo) / (hi - lo), colors[rid],
                                        BAND_ALPHA)
-                    y = (c.values[self._slice(rid)] - lo) / (hi - lo)
+                    werte = np.asarray(c.values[self._slice(rid)], float)
+                    y = (werte - lo) / (hi - lo)
                     style = STYLES[ci % 4] if multi else QtCore.Qt.SolidLine
-                    pi.plot(x, y, pen=pg.mkPen(color, width=LINIE_MW if ist_mw else LINIE, style=style),
-                            connect="finite")
+                    item = pi.plot(x, y, pen=pg.mkPen(color, width=LINIE_MW if ist_mw else LINIE, style=style),
+                                   connect="finite")
+                    item.setCurveClickable(True, width=KLICK_BREITE)
+                    item.sigClicked.connect(lambda _it, *_a, feld=p, kanal=n: self.achse_waehlen(feld, kanal))
+                    kurven.append({"kanal": n, "rid": rid, "x": np.asarray(x, float), "werte": werte, "lo": lo,
+                                   "hi": hi, "einheit": self._unit(n), "farbe": color,
+                                   "voll": style == QtCore.Qt.SolidLine, "item": item})
             # Marker der Dauermessung (Text nur im obersten Feld)
             if self._x_key() == "Zeit" and not self.only_seg.isChecked():
                 for rid in runs:
@@ -1079,6 +1130,11 @@ class LogViewer(QtWidgets.QWidget):
             pi.addItem(line, ignoreBounds=True)
             self.plots.append(pi)
             self.lines.append(line)
+            self._kurven.append(kurven)
+            self._feld_bereiche.append({n: ranges[self._unit(n) or n] for n in names if (self._unit(n) or n) in ranges})
+            self._achse_setzen(p)
+            pi.vb.sigRangeChanged.connect(lambda *_a: self._fahnen_takt.start(0))
+            pi.vb.sigResized.connect(lambda *_a: self._fahnen_takt.start(0))
         # Fahne unten an der Cursorlinie (unterstes Feld): genaue Drehzahl bzw. Zeit am Cursor
         self.cursor_fahne = None
         if self.lines:
@@ -1162,6 +1218,80 @@ class LogViewer(QtWidgets.QWidget):
             self._update_cursor()
         else:
             self._cursor_werte()
+        self._fahnen_setzen()
+
+    # ------------------------------------------------------------ Skala links und Fähnchen
+    def achse_waehlen(self, feld: int, kanal: str):
+        """Kurve angeklickt: die linke Skala des Feldes zeigt ab jetzt diesen Kanal."""
+        self.achse_kanal[feld] = kanal
+        self._achse_setzen(feld)
+
+    def achse_kanal_von(self, feld: int) -> Optional[str]:
+        """Kanal, dessen Werte die linke Skala des Feldes zeigt: der angeklickte, sonst der erste mit Daten."""
+        if feld >= len(self._feld_bereiche):
+            return None
+        bereiche = self._feld_bereiche[feld]
+        k = self.achse_kanal.get(feld)
+        if k in bereiche:
+            return k
+        return next((n for n in self._selected_channels(feld) if n in bereiche), None)
+
+    def _achse_setzen(self, feld: int):
+        if feld >= len(self.plots):
+            return
+        pi = self.plots[feld]
+        ax = pi.getAxis("left")
+        kanal = self.achse_kanal_von(feld)
+        if kanal is None:
+            ax.set_bereich(None)
+            pi.setLabel("left", "")
+            return
+        ax.set_bereich(self._feld_bereiche[feld][kanal])
+        einheit = self._unit(kanal)
+        multi = len(self._runs_shown()) > 1
+        farbe = theme.farbe("text") if multi else self._kfarbe(kanal)
+        pi.setLabel("left", f"{kanal} [{einheit}]" if einheit else kanal, color=farbe)
+        ax.setTextPen(pg.mkPen(farbe))
+
+    def _fahnen_setzen(self):
+        """Fähnchen aller Kurven am Cursor (je Feld), Werte aus den echten Daten, nicht aus der ausgeduennten Linie."""
+        x = self.cursor_x() if self.plots else None
+        if x is None or not np.isfinite(x):
+            self.fahnen.setzen([])
+            return
+        fahnen = []
+        for feld, (pi, kurven) in enumerate(zip(self.plots, self._kurven)):
+            vb = pi.vb
+            r = QtCore.QRectF(self.glw.mapFromScene(vb.mapRectToScene(vb.boundingRect())).boundingRect())
+            if r.width() < 20 or r.height() < 12:
+                continue
+            je_einheit: Dict[str, set] = {}
+            for k in kurven:
+                je_einheit.setdefault(k["einheit"], set()).add(k["kanal"])
+            gruppen: Dict[tuple, dict] = {}
+            for k in kurven:
+                xs, werte = k["x"], k["werte"]
+                ok = np.isfinite(xs) & np.isfinite(werte)
+                if not ok.any() or x < np.min(xs[ok]) or x > np.max(xs[ok]):
+                    continue
+                j = int(np.argmin(np.where(ok, np.abs(xs - x), np.inf)))
+                v = float(werte[j])
+                yn = (v - k["lo"]) / (k["hi"] - k["lo"])
+                pt = self.glw.mapFromScene(vb.mapViewToScene(QtCore.QPointF(float(xs[j]), yn)))
+                py = min(max(float(pt.y()), r.top()), r.bottom())
+                vor = k["kanal"] + " " if len(je_einheit.get(k["einheit"], ())) > 1 else ""
+                nach = f" {k['einheit']}" if k["einheit"] else ""
+                g = gruppen.setdefault((k["kanal"], k["farbe"]), {"farbe": k["farbe"], "voll": k["voll"],
+                                                                  "vor": vor, "nach": nach, "zahlen": [], "ys": []})
+                g["zahlen"].append(_kurz(v))
+                g["ys"].append(py)
+            cx = float(self.glw.mapFromScene(vb.mapViewToScene(QtCore.QPointF(x, 0.0))).x())
+            fahnen += fahnen_legen(list(gruppen.values()), r, cx, self.glw.font())
+        self.fahnen.setzen(fahnen)
+
+    def fahnen_texte(self) -> List[str]:
+        """Texte der Fähnchen (fuer Tests)."""
+        return self.fahnen.texte()
 
     def keyPressEvent(self, ev: QtGui.QKeyEvent):
         if ev.key() in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Right):
